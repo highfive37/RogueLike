@@ -1,0 +1,91 @@
+{
+    "name": "DebugSkillSwitchActions",
+    "maps": [
+        {
+            "name": "Debug",
+            "id": "15c5cba1-e800-4009-8402-0cb61766e7d2",
+            "actions": [
+                {
+                    "name": "EquipEnhancedShot",
+                    "type": "Button",
+                    "id": "a4af1c7e-7a4d-4c03-ac80-6c0485c77a42",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "EquipGrenade",
+                    "type": "Button",
+                    "id": "1a365a41-4eff-41fe-829e-07d51fb1a570",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "EquipFlamethrower",
+                    "type": "Button",
+                    "id": "8d818643-f12a-4347-9995-696e87d8b242",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "544b7f19-25e2-4bdf-8119-5d9aba64582b",
+                    "path": "<Keyboard>/1",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "EquipEnhancedShot",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "c84f3188-25ae-4bde-b56f-59d93f5c30f5",
+                    "path": "<Keyboard>/2",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "EquipGrenade",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "7bcdf93a-ea92-43d6-8d99-cc76a3fa2026",
+                    "path": "<Keyboard>/3",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "EquipFlamethrower",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        }
+    ],
+    "controlSchemes": [
+        {
+            "name": "Keyboard&Mouse",
+            "bindingGroup": "Keyboard&Mouse",
+            "devices": [
+                {
+                    "devicePath": "<Keyboard>",
+                    "isOptional": false,
+                    "isOR": false
+                },
+                {
+                    "devicePath": "<Mouse>",
+                    "isOptional": false,
+                    "isOR": false
+                }
+            ]
+        }
+    ]
+}

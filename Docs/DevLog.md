@@ -30,6 +30,93 @@
 
 ---
 
+## 2026-08-21
+
+### 진행 내용
+- Docs/ClaudeSessionSummary.md의 Stage 2 범위(7개 항목) 기준으로 실제 구현 상태를
+  재점검 (문서 자체가 Stage 1 시점 스냅샷이라 헤더에 "⏳ 미착수"로 남아있던 것을
+  실제 코드와 대조)
+  - #1 (Dodge/Dash, Skill 시스템), #2 (EnemyStateMachine FSM 및 보스 패턴
+    차별화), #3 (WeaponData/SkillData/EnemyData/CharacterArchetypeData
+    ScriptableObject), #4 (IWeapon/MeleeWeapon/RangedWeapon 다형성)는 전부
+    이전 작업일(2026-08-17, 2026-08-18)에 이미 완료되어 있던 것으로 확인됨 —
+    오늘 새로 구현한 내용이 아니라 기존 완료 상태를 재확인/문서 정리한 것.
+    단, `BossStateMachine`이라는 별도 클래스는 없고 `EnemyStateMachine`을
+    보스와 공유 + `AttackPatternData`로 차별화하는 방식으로 목적만 달성됨,
+    `UpgradeManager`도 별도 클래스 없이 `PlayerSkillInventory`+UI 조합으로 대체.
+  - #5 (`CharacterSelectController`의 런타임 아키타입 선택 UI)는 미완료 상태였음
+    (Inspector에 고정값만 넣어두고 선택 UI 자체가 없었음) — 이번 세션에서 착수.
+  - #6 (여러 종류의 일반 Enemy), #7 (다중 방 콘텐츠 확장)은 여전히 미착수로 확인,
+    이번 세션 범위에서는 보류.
+- 수류탄 스킬 리뷰 및 수정 (별도 대화 흐름, 상세는 `AI_Decision_Log.md` 참고)
+  - 폭발 데미지 판정(OverlapSphere+TakeDamage) 자체는 정상 동작 확인
+  - "적과 충돌하면 공중에 고정되어 보이는" 증상의 원인 파악: 착탄 지점 계산용
+    레이캐스트가 레이어 마스크 없이 모든 콜라이더를 대상으로 해서 적 콜라이더에
+    먼저 맞아버리는 버그였음 → 전용 `Ground` 레이어 신설로 해결
+  - 수류탄을 "1차 E로 들기(플레이어 오른쪽에 부착, 이 순간부터 퓨즈 시작) →
+    2차 E로 던지기" 2단계 상호작용이 실제 씬 오브젝트로 보이도록
+    `GrenadeProjectile`을 `Hold()`/`Throw()`로 재설계, 기존에 중복돼 있던
+    `GrenadeSkill.Explode()`/`GrenadeProjectile.Explode()`를 하나로 통합(owner
+    제외 로직 제거 — 너무 오래 들고 있으면 자기 자신도 피해를 입을 수 있다는
+    의도된 설계를 살림)
+  - 수류탄을 든 채 디버그 스킬 전환(`PrototypeSkillSwitcher`)이 안 되도록
+    `ISkillItem.IsBusy` 추가, `SkillController.Equip()`에서 확인
+  - `IDamageable.TakeDamage`에 `source`(Transform) 파라미터 추가, 데미지
+    수치+가해자 로그를 `HealthComponent` 한 곳에서만 남기도록 중앙화 (기존에
+    무기별로 흩어져 있던 개별 `Debug.Log` 제거)
+- Player가 씬에 직접 배치된 오브젝트였던 것을 `Assets/Prefabs/Player.prefab`으로
+  전환 (`PrefabUtility.SaveAsPrefabAssetAndConnect`로 기존 씬 인스턴스를 그대로
+  유지한 채 연결 — `QuarterViewCameraFollow`/`RoomFlowManager`/
+  `UpgradeSelectionUI`/`PrototypeSkillSwitcher`의 기존 직접 참조가 깨지지 않음을
+  씬 파일의 `PrefabInstance` 블록으로 확인)
+- #5 (`CharacterSelectController` 런타임 아키타입 선택 UI) 구현
+  - `Assets/Scripts/UI/CharacterSelectUI.cs` 신규 — `UpgradeSelectionUI`와
+    동일한 `Show(callback)` 패턴, 근접/원거리 버튼 2개
+  - `CharacterSelectController`를 재작성: `Awake()`에서 `PlayerInputActions`를
+    비활성화(모든 Awake가 모든 OnEnable보다 먼저 실행된다는 Unity의 순서
+    보장을 이용해 입력이 한 프레임도 새지 않도록 함)하고, 선택 콜백에서 무기
+    장착 + 입력 재활성화
+  - Unity 에디터에서 Canvas 하위에 전체 화면을 완전히 가리는 불투명 배경
+    패널 + 제목 텍스트 + "근접 공격"/"원거리 공격" 버튼 2개를 직접 생성하고
+    배선(Player 인스턴스의 `selectUI` 씬 참조 포함, RunCommand로 처리)
+  - 중복 필드 정리: `CharacterSelectController.selectedArchetype`,
+    `PlayerCombat.weaponData` 필드 제거(이제 `CharacterSelectController`가
+    시작 무기 결정의 유일한 경로), `Player.prefab` 재저장으로 잔여 값 정리
+
+### 테스트 결과
+- [x] 위 변경 전부(그레네이드, Player 프리팹화, CharacterSelectUI, 필드 정리)
+      컴파일 에러/경고 없음 (Unity MCP 콘솔 확인)
+- [ ] 실제 Play Mode에서 수류탄 들기→던지기 시각적 확인, 자폭 데미지 로그 출력,
+      스킬 전환 차단 동작 — 미확인/예정
+- [ ] 적 공격으로 플레이어 HP가 실제로 깎이고 로그가 남는지 — 미확인/예정
+      (`HealthComponent`가 Player에 이미 붙어 있고 `EnemyStateMachine`이
+      정상적으로 참조를 찾는 것은 코드로 확인, 실플레이 로그는 아직 안 봄)
+- [ ] 게임 시작 시 캐릭터 선택 화면이 배경을 완전히 가리는지, 버튼 클릭으로
+      근접/원거리가 정상 전환되는지, 선택 전까지 조작이 안 되는지 — 미확인/예정
+      (자동화 세션은 Time.frameCount가 고정되는 한계가 있어 사람 플레이 필요)
+
+### 이슈/메모
+- `ClaudeSessionSummary.md`가 Stage 1 시점 이후 갱신되지 않아 폴더 구조,
+  클래스 목록, Stage 2 진행 상태 헤더가 전부 실제와 어긋나 있던 것을 이번에
+  최신 상태로 재작성함 (Stage 2 진행 상황, 씬/프리팹/태그·레이어 구성, 클래스
+  책임 요약, 미결정 항목·다음 작업 전부 갱신).
+- 문서 4종(`ProjectPlan.md`/`ClaudeSessionSummary.md`/`DevLog.md`/
+  `AI_Decision_Log.md`)의 역할이 헷갈릴 수 있어 `Docs/DocumentationGuide.md`
+  신규 작성. `talk_history.txt`(대화 원문 백업)는 `DevLog.md`+
+  `AI_Decision_Log.md`만으로 충분하다고 판단해 더 이상 유지하지 않기로 함 —
+  가이드 문서에서 관련 언급 제거.
+- `ProjectPlan.md`는 전체를 다시 검토했지만 실제 구현과 어긋나는 내용이 없어
+  (기획 수치까지 현재 스킬 데이터 기본값과 일치) 별도 수정 없음 — 애초에
+  "정적 기획 원본"으로 유지하는 문서라는 원칙과도 부합.
+
+### 다음 작업
+- 위 항목들(수류탄, Player 프리팹화, 캐릭터 선택 UI) 실제 Play Mode 확인
+- #6 (여러 종류의 일반 Enemy), #7 (다중 방 콘텐츠 확장) 착수 여부 결정
+- `PrototypeSkillSwitcher`와 무기 아키타입 디버그 전환의 관계는 우선순위 낮음
+  판단으로 보류 — 필요해지면 재검토
+
+---
+
 ## 2026-08-18
 
 ### 진행 내용

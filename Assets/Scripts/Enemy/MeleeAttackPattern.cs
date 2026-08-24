@@ -18,7 +18,7 @@ public class MeleeAttackPattern : IAttackPattern
 
     public void Execute(EnemyStateMachine machine)
     {
-        machine.PlayerDamageable?.TakeDamage(_data.Damage);
+        machine.PlayerDamageable?.TakeDamage(_data.Damage, machine.transform);
         _cooldownRemaining = _data.Cooldown;
     }
 

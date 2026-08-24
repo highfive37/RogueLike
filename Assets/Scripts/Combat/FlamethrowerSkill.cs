@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 public class FlamethrowerSkill : ISkillItem
@@ -6,7 +5,6 @@ public class FlamethrowerSkill : ISkillItem
     private readonly Transform _owner;
     private readonly FlamethrowerSkillData _data;
     private readonly float _damagePerSecond;
-    private readonly HashSet<IDamageable> _hitThisActivation = new HashSet<IDamageable>();
 
     private bool _isActive;
     private float _activeElapsed;
@@ -21,6 +19,7 @@ public class FlamethrowerSkill : ISkillItem
 
     public float CooldownProgress => _isActive ? 1f : 0f;
     public float CooldownRemaining => 0f;
+    public bool IsBusy => false;
 
     public void OnActivatePressed()
     {
@@ -32,7 +31,6 @@ public class FlamethrowerSkill : ISkillItem
         _isActive = true;
         _activeElapsed = 0f;
         _totalDamageDealt = 0f;
-        _hitThisActivation.Clear();
         Debug.Log("Flamethrower activated");
     }
 
@@ -83,13 +81,8 @@ public class FlamethrowerSkill : ISkillItem
 
             if (hit.TryGetComponent<IDamageable>(out var damageable))
             {
-                if (_hitThisActivation.Add(damageable))
-                {
-                    Debug.Log($"Flamethrower hit: {hit.name}");
-                }
-
                 float damage = _damagePerSecond * deltaTime;
-                damageable.TakeDamage(damage);
+                damageable.TakeDamage(damage, _owner);
                 _totalDamageDealt += damage;
             }
         }

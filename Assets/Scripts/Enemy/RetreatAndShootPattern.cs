@@ -80,6 +80,6 @@ public class RetreatAndShootPattern : IAttackPattern
         direction.y = 0f;
         direction = direction.sqrMagnitude > 0.0001f ? direction.normalized : machine.transform.forward;
 
-        ProjectileSpawner.Spawn(_projectilePool, machine.transform.position, direction, _data.ProjectileSpawnDistance, _data.Damage);
+        ProjectileSpawner.Spawn(_projectilePool, machine.transform.position, direction, _data.ProjectileSpawnDistance, _data.Damage, machine.transform);
     }
 }

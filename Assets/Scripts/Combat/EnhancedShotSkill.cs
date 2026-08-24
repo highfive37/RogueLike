@@ -19,6 +19,7 @@ public class EnhancedShotSkill : ISkillItem
 
     public float CooldownProgress => _data.Cooldown > 0f ? Mathf.Clamp01(_cooldownRemaining / _data.Cooldown) : 0f;
     public float CooldownRemaining => Mathf.Max(0f, _cooldownRemaining);
+    public bool IsBusy => false;
 
     public void OnActivatePressed()
     {
@@ -32,7 +33,7 @@ public class EnhancedShotSkill : ISkillItem
 
         if (instance.TryGetComponent<Projectile>(out var projectile))
         {
-            projectile.Initialize(_owner.forward, _damage);
+            projectile.Initialize(_owner.forward, _damage, _owner);
         }
 
         _cooldownRemaining = _data.Cooldown;

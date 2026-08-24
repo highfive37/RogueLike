@@ -4,7 +4,6 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(PlayerInputActions))]
 public class PlayerCombat : MonoBehaviour
 {
-    [SerializeField] private WeaponData weaponData;
     [SerializeField] private GameObjectPool projectilePool;
 
     private InputAction _attackAction;
@@ -13,11 +12,6 @@ public class PlayerCombat : MonoBehaviour
     private void Awake()
     {
         _attackAction = GetComponent<PlayerInputActions>().FindAction("Attack");
-
-        if (weaponData != null)
-        {
-            EquipWeapon(weaponData);
-        }
     }
 
     private void OnEnable()

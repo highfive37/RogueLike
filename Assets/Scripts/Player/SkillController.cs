@@ -43,9 +43,16 @@ public class SkillController : MonoBehaviour
         _equippedSkill?.Tick(Time.deltaTime);
     }
 
-    public void Equip(SkillItemData data, int level)
+    public bool Equip(SkillItemData data, int level)
     {
+        if (_equippedSkill != null && _equippedSkill.IsBusy)
+        {
+            Debug.Log("Cannot switch skills while the current skill is busy.");
+            return false;
+        }
+
         _equippedSkill = data.CreateSkill(transform, _context, level);
+        return true;
     }
 
     private void OnSkillPressed(InputAction.CallbackContext context)

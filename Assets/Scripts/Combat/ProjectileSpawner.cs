@@ -2,7 +2,7 @@ using UnityEngine;
 
 public static class ProjectileSpawner
 {
-    public static void Spawn(GameObjectPool pool, Vector3 origin, Vector3 direction, float spawnDistance, float damage)
+    public static void Spawn(GameObjectPool pool, Vector3 origin, Vector3 direction, float spawnDistance, float damage, Transform owner)
     {
         if (pool == null)
         {
@@ -14,7 +14,7 @@ public static class ProjectileSpawner
 
         if (instance.TryGetComponent<Projectile>(out var projectile))
         {
-            projectile.Initialize(direction, damage);
+            projectile.Initialize(direction, damage, owner);
         }
     }
 }

@@ -30,8 +30,9 @@ public class HealthComponent : MonoBehaviour, IDamageable
         Health.Died -= HandleDied;
     }
 
-    public void TakeDamage(float amount)
+    public void TakeDamage(float amount, Transform source)
     {
+        Debug.Log($"{name} took {amount} damage from {(source != null ? source.name : "unknown")}.");
         Health.TakeDamage(amount);
     }
 

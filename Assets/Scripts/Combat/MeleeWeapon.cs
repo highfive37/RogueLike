@@ -25,8 +25,7 @@ public class MeleeWeapon : IWeapon
 
             if (hit.TryGetComponent<IDamageable>(out var damageable))
             {
-                damageable.TakeDamage(_data.Damage);
-                Debug.Log($"Melee hit: {hit.name}");
+                damageable.TakeDamage(_data.Damage, _owner);
             }
         }
     }

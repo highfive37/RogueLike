@@ -9,6 +9,7 @@ public class Projectile : MonoBehaviour
     private PooledObject _pooledObject;
     private Vector3 _direction = Vector3.forward;
     private float _damage;
+    private Transform _owner;
     private float _elapsed;
 
     private void Awake()
@@ -16,10 +17,11 @@ public class Projectile : MonoBehaviour
         _pooledObject = GetComponent<PooledObject>();
     }
 
-    public void Initialize(Vector3 direction, float damage)
+    public void Initialize(Vector3 direction, float damage, Transform owner)
     {
         _direction = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
         _damage = damage;
+        _owner = owner;
         _elapsed = 0f;
     }
 
@@ -38,8 +40,7 @@ public class Projectile : MonoBehaviour
     {
         if (other.TryGetComponent<IDamageable>(out var damageable))
         {
-            damageable.TakeDamage(_damage);
-            Debug.Log($"Projectile hit: {other.name}");
+            damageable.TakeDamage(_damage, _owner);
         }
 
         _pooledObject.ReturnToPool();

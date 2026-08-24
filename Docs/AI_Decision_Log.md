@@ -44,6 +44,256 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-08-21 — 캐릭터 선택 UI: 입력 잠금 방식과 표시 시점
+
+### 배경 / 문제
+- `CharacterSelectController`가 Inspector 고정값만 적용하고 실제 "선택" UI가
+  없던 상태(Stage 2 #5 미완료 항목)를 채우는 작업. 요구사항: 근접/원거리
+  버튼 2개, 게임 시작 시 1회, 하나의 씬에서 오버레이로 표시, 선택 전까지
+  배경이 안 보이고 플레이어 조작도 안 되어야 함.
+
+### 검토한 대안 (입력 잠금 방식)
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| `Time.timeScale = 0`으로 전체 일시정지 | 구현 1줄, UI 버튼 클릭은 timeScale 무관하게 동작 | `Attack`/`Skill`/`DodgeRoll` 같은 즉시성 입력 액션은 deltaTime에 의존하지 않아 timeScale=0에서도 그대로 발동됨 — 예를 들어 대시 중간에 `_isDodgeRolling=true`만 켜진 채 `FixedUpdate`가 멈춰서 상태가 꼬일 수 있음 |
+| `PlayerInputActions.enabled = false`로 입력 액션 자체를 비활성화 | `PlayerInputActions.OnDisable()`이 `InputActionAsset.Disable()`을 호출해서 모든 액션이 완전히 죽음(값 읽기도 0 반환, `.performed` 콜백도 아예 안 옴), 다른 시스템(적 AI 등)에는 영향 없음 | Player 하위 컴포넌트들이 이미 `FindAction()`으로 참조를 캐시해두는 구조라 타이밍을 잘못 잡으면 한 프레임 새어나갈 여지 이론상 존재 |
+
+### Claude 제안
+- 두 번째 대안 채택 제안. Unity의 "같은 프레임 내 모든 Awake가 모든 OnEnable보다
+  먼저 실행된다"는 보장을 근거로, `CharacterSelectController.Awake()`에서
+  비활성화하면 `PlayerInputActions.OnEnable()`이 애초에 그 프레임에 호출되지
+  않아 새는 프레임 없이 안전하다는 점을 확인.
+
+### 선택한 방향
+- 두 번째 대안 채택. `CharacterSelectController.Awake()`에서
+  `GetComponent<PlayerInputActions>().enabled = false`, 아키타입 선택 콜백에서
+  `true`로 복구.
+- 표시 시점: 별도 씬 분리 없이 현재 씬의 Canvas 위에 전체 화면을 덮는 불투명
+  `Image` 오버레이(`CharacterSelectPanel`)로 구현, `CharacterSelectController.
+  Start()`에서 즉시 `Show()`.
+- UI 구조는 `UpgradeSelectionUI`와 동일한 `Show(Action<T> onChosen)` 콜백
+  패턴을 그대로 재사용(`CharacterSelectUI`).
+
+### 선택 이유
+- 게임 전체를 멈추는 대신 "플레이어 입력만" 끊는 게 요구사항(적 AI 등 다른
+  시스템은 언급 없음)에 더 정확히 맞고, 즉시성 입력 액션이 얼어붙은 상태값을
+  남기는 timeScale 방식의 부작용을 원천적으로 피할 수 있음.
+- 별도 씬 분리는 사용자가 명시적으로 "일단 하나의 씬으로 진행"이라고 지정.
+
+### 관련 파일
+- `Assets/Scripts/UI/CharacterSelectUI.cs`
+- `Assets/Scripts/Player/CharacterSelectController.cs`
+- `Assets/Scripts/Player/PlayerInputActions.cs`
+
+---
+
+## 2026-08-21 — `PlayerCombat.weaponData` / `CharacterSelectController.selectedArchetype` 중복 필드 제거
+
+### 배경 / 문제
+- 캐릭터 선택 UI 도입 전에는 시작 무기를 결정하는 값이 두 군데
+  (`PlayerCombat.weaponData`, `CharacterSelectController.selectedArchetype`)에
+  각각 Inspector로 하드코딩되어 있었음(둘 다 Ranged로 우연히 일치). 선택 UI가
+  생기면 이 둘 중 하나가 실질적으로 무의미해짐.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| `PlayerCombat.weaponData`를 기본값(폴백)으로 유지 | `CharacterSelectController` 없이 `PlayerCombat` 단독 테스트 가능 | 두 값이 다시 어긋날 경우 어느 쪽이 실제로 적용됐는지 헷갈리는 원래 문제가 재발 가능 |
+| `PlayerCombat.weaponData` 필드 자체를 제거, `CharacterSelectController`를 시작 무기 결정의 유일한 경로로 단일화 | 중복 원천 차단 | `PlayerCombat` 단독으로는 무기 없이 시작(단, `CharacterSelectController`가 입력을 선택 전까지 잠가두므로 실제 위험은 없음) |
+
+### Claude 제안
+- 두 번째 대안 채택 제안. `CharacterSelectController`가 입력을 잠가두는 구조상
+  `EquipWeapon()`이 항상 선택 콜백에서 호출되도록 보장되므로, `PlayerCombat`
+  쪽의 기본값을 안전장치로 남겨둘 실익이 없다고 판단.
+
+### 선택한 방향
+- 그대로 채택. `PlayerCombat.weaponData` 필드와 `Awake()`의 자동 장착 로직
+  삭제. `CharacterSelectController.selectedArchetype`도 이미 이전 결정으로
+  제거되어 있어, 이제 시작 무기는 `CharacterSelectUI`가 들고 있는
+  `meleeArchetype`/`rangedArchetype` 두 애셋 참조가 유일한 출처.
+- `Player.prefab`을 재저장해서 더 이상 존재하지 않는 필드의 잔여 직렬화 값도
+  제거.
+
+### 선택 이유
+- "값을 두 곳에서 따로 관리하다 어긋난다"는 게 애초에 이 정리 작업의 출발점이었던
+  문제라, 폴백을 남기는 것보다 출처를 하나로 강제하는 쪽이 재발을 막음. 지금은
+  `PlayerCombat`이 `CharacterSelectController` 없이 단독으로 쓰이는 경로가 없어
+  안전.
+
+### 관련 파일
+- `Assets/Scripts/Player/PlayerCombat.cs`
+- `Assets/Scripts/Player/CharacterSelectController.cs`
+- `Assets/Prefabs/Player.prefab`
+
+---
+
+## 2026-08-21 — Player를 씬 전용 오브젝트에서 프리팹으로 전환
+
+### 배경 / 문제
+- `Player`가 프리팹이 아니라 `SampleScene`에 직접 배치된 오브젝트였음.
+  `QuarterViewCameraFollow`/`RoomFlowManager`/`UpgradeSelectionUI`/
+  `PrototypeSkillSwitcher` 4개 스크립트가 이 인스턴스를 직접 인스펙터 참조로
+  물고 있어, 손대는 범위에 따라 위험도가 달라지는 상황.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 그대로 둠 | 지금 당장 작업 없음, 기존 참조 안전 | 씬 diff 노이즈, 재사용/버전관리 이점 없음, 향후 캐릭터 선택으로 인한 멀티 아키타입 확장과 방향이 어긋남 |
+| 지금 프리팹으로만 전환(씬은 그대로) | 낮은 위험(같은 인스턴스 ID 유지되어 기존 4개 스크립트 참조 안 깨짐), 즉시 diff/재사용 이점 | 런타임 Instantiate화는 아직 안 됨(추후 별도 작업 필요) |
+| 프리팹 전환 + 런타임 Instantiate까지 전환 | 멀티 씬/캐릭터 선택 흐름에 최종적으로 필요한 구조 | 4개 스크립트의 직접 참조를 전부 동적 탐색으로 재배선해야 하는 더 큰 작업, 아직 필요해지지 않은 시점 |
+
+### Claude 제안
+- 두 번째 대안(지금 프리팹으로만 전환) 제안. `PrefabUtility.
+  SaveAsPrefabAssetAndConnect`를 쓰면 기존 씬 인스턴스의 identity가 유지되어
+  기존 참조가 전혀 깨지지 않는다는 점을 근거로 제시.
+
+### 선택한 방향
+- 두 번째 대안 채택. `Assets/Prefabs/Player.prefab` 생성 및 연결, 런타임
+  Instantiate 전환은 보류.
+
+### 선택 이유
+- 캐릭터 선택 UI(아키타입 선택) 작업이 예정돼 있어 프리팹화 자체는 필요한
+  방향이지만, 지금 시점에 런타임 Instantiate까지 가면 4개 스크립트 재배선이라는
+  범위가 불필요하게 커짐 — 필요해지는 시점(멀티 씬/런 재시작 등)에 재검토.
+
+### 관련 파일
+- `Assets/Prefabs/Player.prefab`
+- `Assets/Scenes/SampleScene.unity`
+
+---
+
+## 2026-08-21 — 그레네이드 착탄 지점 레이캐스트가 적 콜라이더를 맞히는 버그
+
+### 배경 / 문제
+- 던진 수류탄이 적과 가까운 곳에 착탄할 때 "공중에 고정된 것처럼" 보인다는
+  제보. 원인은 `GrenadeSkill.GroundHeight()`의 `Physics.Raycast`가 레이어
+  마스크 없이 모든 콜라이더를 대상으로 해서, 목표 지점 위에 적이 서 있으면
+  바닥이 아니라 적의 콜라이더 상단에 먼저 맞아 착탄 y좌표가 적의 몸통 높이로
+  잘못 계산되는 것이었음.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 전용 `Ground` 레이어 신설 + 레이캐스트를 그 레이어로만 제한 | Unity에서 일반적인 방식, 다른 투사체/스킬에도 재사용 가능 | 프로젝트에 새 레이어 추가 + 바닥 오브젝트 레이어 재지정 필요 |
+| 레이어 변경 없이 `Physics.RaycastAll`로 모든 히트를 구한 뒤 `IDamageable`을 가진 콜라이더는 건너뛰기 | 씬 설정 변경 불필요 | 데미지 가능 오브젝트가 아닌 다른 소품(상자 등)이 생기면 다시 뚫림, 히트 정렬/필터링 코드 추가 필요 |
+
+### Claude 제안
+- 두 대안을 제시하고 사용자에게 선택 요청.
+
+### 선택한 방향
+- 첫 번째 대안(전용 `Ground` 레이어) 채택. `ProjectSettings/TagManager.asset`에
+  레이어 6 `Ground` 추가(Unity MCP `AddLayer` API로 등록), 씬의 `Ground`
+  오브젝트를 그 레이어로 지정, `GrenadeSkill.GroundHeight()`가
+  `LayerMask.GetMask("Ground")`만 대상으로 레이캐스트하도록 수정.
+
+### 선택 이유
+- Unity에서 "바닥 판정"에 전용 레이어를 쓰는 게 표준적인 방식이고, 지금은
+  바닥 오브젝트가 씬에 하나뿐이라 레이어 재지정 비용이 매우 낮음. 필터링
+  기반 대안은 당장은 더 적은 설정으로 끝나지만 "데미지 불가 소품"이 늘어날
+  때마다 다시 뚫릴 여지가 있어 근본적이지 않다고 판단.
+
+### 관련 파일
+- `Assets/Scripts/Combat/GrenadeSkill.cs`
+- `ProjectSettings/TagManager.asset`
+- `Assets/Scenes/SampleScene.unity` (Ground 오브젝트 레이어)
+
+---
+
+## 2026-08-21 — 그레네이드 "들고 있다가 던지기" 시각화 및 폭발 로직 통합
+
+### 배경 / 문제
+- 기존엔 1차 E(무장)와 2차 E(투척) 사이에 실제 씬 오브젝트가 없어서, 손에
+  들고 있다는 게 시각적으로 표현되지 않았음. 또한 "들고 있다가 퓨즈가 다 되어
+  터지는 경우"(`GrenadeSkill.Explode()`)와 "던진 후 터지는 경우"
+  (`GrenadeProjectile.Explode()`)에 동일한 OverlapSphere+TakeDamage 로직이
+  중복돼 있었고, 그 과정에서 전자만 owner를 제외하는 등 동작이 갈라져 있었음.
+  요구사항: 1차 E 시점에 수류탄이 실제로 플레이어 오른쪽에 부착되어 보이고,
+  너무 오래 들고 있으면(자폭 데모용 설계 의도) 실제로 자기 자신도 피해를
+  입을 수 있어야 함.
+
+### 검토한 대안
+- 별도 대안 비교 없이 사용자가 방향을 직접 지정(1차 E 시점에 실제 오브젝트를
+  플레이어 오른쪽에 부착, 2차 E에 분리해서 기존 포물선으로 투척).
+
+### Claude 제안
+- 지정된 방향을 구현하면서, 겸사겸사 두 곳에 중복돼 있던 폭발 로직을 하나로
+  합칠 것을 제안: `GrenadeProjectile`에 `Hold(holder, localOffset, ...)` /
+  `Throw(target, duration)` 두 생명주기 메서드를 추가해서 "들고 있음"과
+  "던져짐"을 같은 오브젝트의 두 상태로 표현하면, 폭발 판정이 `Explode()`
+  하나로 자연스럽게 합쳐지고 owner 제외 로직 없이 둬도(자폭 가능) 일관됨.
+
+### 선택한 방향
+- 그대로 채택. `GrenadeSkill.Explode()` 삭제, `GrenadeProjectile.Explode()`
+  하나로 통합(owner 제외 없음). 수류탄을 든 채 디버그 스킬 전환이 되지 않도록
+  `ISkillItem.IsBusy`(최초엔 `CanUnequip`으로 이름 붙였다가, "허가"가 아니라
+  "상태" 관점이 맞다는 사용자 피드백으로 `IsBusy`로 변경 — 기존
+  `IAttackPattern.IsBusy`와 이름 통일) 추가, `SkillController.Equip()`에서 확인.
+
+### 선택 이유
+- 폭발 로직을 하나로 합치는 게 중복 코드 제거일 뿐 아니라, "들고 있다가
+  터지면 자기 피해가 가능해야 한다"는 설계 의도를 두 곳에서 따로 챙길
+  필요 없이 자동으로 만족시킴.
+- `IsBusy`로 이름을 바꾼 이유: `CanUnequip`은 "장착 해제 가능 여부"라는 좁은
+  의미라 이 플래그를 스킬 전환 판단 외의 다른 용도(예: 향후 UI 표시)로
+  재사용하기 어려움. `IsBusy`는 상태를 그대로 노출하므로 범용적이고, 기존
+  `IAttackPattern.IsBusy`(보스 후퇴 중 패턴 차단 용도)와 같은 어휘를 씀.
+
+### 관련 파일
+- `Assets/Scripts/Combat/GrenadeProjectile.cs`
+- `Assets/Scripts/Combat/GrenadeSkill.cs`
+- `Assets/Scripts/Combat/ISkillItem.cs`
+- `Assets/Scripts/Player/SkillController.cs`
+
+---
+
+## 2026-08-21 — 데미지 판정에 가해자(source) 정보 추가 및 로그 중앙화
+
+### 배경 / 문제
+- 수류탄 자폭이 실제로 가능한지 검토하던 중, Player에 `HealthComponent`가
+  이미 붙어 있어 자폭이 실제로 가능하다는 게 확인됨. 이걸 눈으로 확인할
+  방법(로그)이 필요했고, 기존엔 무기마다(`MeleeWeapon`, `FlamethrowerSkill`,
+  `Projectile`) 각자 다른 형식으로 `Debug.Log`를 찍거나 아예 안 찍는 곳
+  (`GrenadeProjectile`, `MeleeAttackPattern`)이 섞여 있었음.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 각 무기/스킬 호출부에 `Debug.Log(damage, hit.name)` 개별 추가 | `IDamageable` 인터페이스 변경 불필요, 호출부 몇 줄만 추가 | "가해자가 누구인지"는 호출부마다 다시 챙겨야 함, 형식이 또 제각각이 될 위험 |
+| `IDamageable.TakeDamage`에 `source` 파라미터를 추가하고 로그를 구현체(`HealthComponent`) 한 곳에서만 남김 | 모든 데미지 경로가 강제로 같은 형식의 로그를 남기게 됨, 향후 데미지 관련 공통 처리(예: 데미지 감소 버프)도 같은 자리에 추가 가능 | `IDamageable`의 유일한 구현체(`HealthComponent`)는 하나뿐이라 안전하지만, 호출부 6곳(+누락됐던 `RangedWeapon` 1곳) 전부 `source` 인자를 추가해야 하는 더 넓은 변경 |
+
+### Claude 제안
+- 두 번째 대안 채택 제안. 사용자가 명시적으로 "IDamageable이든지 데미지
+  처리하는 상위 클래스에서" 로그를 남기라고 지정했고, `IDamageable` 구현체가
+  `HealthComponent` 하나뿐이라 인터페이스 변경의 파급 범위가 통제 가능하다고
+  판단.
+
+### 선택한 방향
+- 그대로 채택. `IDamageable.TakeDamage(float amount, Transform source)`로
+  변경, `HealthComponent.TakeDamage`에서
+  `Debug.Log($"{name} took {amount} damage from {source.name}.")` 형태로
+  로그. 각 호출부(`GrenadeProjectile`, `MeleeWeapon`, `FlamethrowerSkill`,
+  `Projectile`/`ProjectileSpawner`, `RangedWeapon`, `MeleeAttackPattern`)에
+  owner/source Transform 전달하도록 수정, 기존에 흩어져 있던 개별
+  `Debug.Log` 제거(`FlamethrowerSkill`의 "1회만 로그" 용 `HashSet` 필드도
+  같이 정리 — 더 이상 쓸 곳이 없어짐).
+- `Health`(순수 C# 클래스, UnityEngine 비의존)에는 `source` 개념을 넣지 않고
+  어댑터인 `HealthComponent`에서만 처리 — Unity 의존성을 낮은 레이어로
+  누출시키지 않기 위함.
+
+### 선택 이유
+- 무기 개수가 늘어날수록 "로그 형식 통일"을 호출부마다 강제하기 어려워지므로,
+  강제성이 있는 인터페이스 레벨에서 처리하는 쪽이 장기적으로 더 안전.
+
+### 관련 파일
+- `Assets/Scripts/Combat/IDamageable.cs`, `HealthComponent.cs`
+- `Assets/Scripts/Combat/GrenadeProjectile.cs`, `MeleeWeapon.cs`,
+  `FlamethrowerSkill.cs`, `Projectile.cs`, `ProjectileSpawner.cs`,
+  `RangedWeapon.cs`
+- `Assets/Scripts/Enemy/MeleeAttackPattern.cs`, `RangedAttackPattern.cs`,
+  `RetreatAndShootPattern.cs`
+
+---
+
 ## 2026-08-18 — 풀 스폰 인스턴스가 씬 전용 참조(ProjectilePool)를 받는 방식
 
 ### 배경 / 문제

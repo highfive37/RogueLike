@@ -2,13 +2,17 @@ using UnityEngine;
 
 public class GrenadeSkill : ISkillItem
 {
+    // Local-space offset from the owner used to hold the grenade at their right hand
+    // while it is armed, and as the throw's visual starting point.
+    private static readonly Vector3 HoldLocalOffset = new Vector3(0.4f, 0.9f, 0f);
+    private static readonly int GroundLayerMask = LayerMask.GetMask("Ground");
+
     private readonly Transform _owner;
     private readonly GrenadeSkillData _data;
     private readonly GameObjectPool _grenadePool;
     private readonly float _damage;
 
-    private bool _isArmed;
-    private float _fuseRemaining;
+    private GrenadeProjectile _heldGrenade;
     private float _cooldownRemaining;
 
     public GrenadeSkill(Transform owner, GrenadeSkillData data, GameObjectPool grenadePool, int level)
@@ -22,17 +26,20 @@ public class GrenadeSkill : ISkillItem
     public float CooldownProgress => _data.Cooldown > 0f ? Mathf.Clamp01(_cooldownRemaining / _data.Cooldown) : 0f;
     public float CooldownRemaining => Mathf.Max(0f, _cooldownRemaining);
 
+    // A held/cooking grenade is a live, fused explosive riding on the owner - switching
+    // skills must not be able to make it vanish out from under them.
+    public bool IsBusy => _heldGrenade != null;
+
     public void OnActivatePressed()
     {
-        if (!_isArmed)
+        if (_heldGrenade == null)
         {
             if (_cooldownRemaining > 0f)
             {
                 return;
             }
 
-            _isArmed = true;
-            _fuseRemaining = _data.FuseTime;
+            Arm();
             return;
         }
 
@@ -45,72 +52,58 @@ public class GrenadeSkill : ISkillItem
 
     public void Tick(float deltaTime)
     {
+        // The fuse itself is now ticked by the held/thrown GrenadeProjectile instance
+        // (it's a live scene object from the moment it's armed), so this only needs
+        // to track the skill's own cooldown.
         if (_cooldownRemaining > 0f)
         {
             _cooldownRemaining -= deltaTime;
         }
-
-        if (!_isArmed)
-        {
-            return;
-        }
-
-        _fuseRemaining -= deltaTime;
-        if (_fuseRemaining <= 0f)
-        {
-            Explode(_owner.position);
-        }
     }
 
-    private void Throw()
+    private void Arm()
     {
-        _isArmed = false;
-        _cooldownRemaining = _data.Cooldown;
-
         if (_grenadePool == null)
         {
             return;
         }
 
-        Vector3 spawnPosition = _owner.position + _owner.forward * 0.5f + Vector3.up * 0.5f;
-        Vector3 targetPosition = spawnPosition + _owner.forward * _data.ThrowDistance;
-        targetPosition.y = GroundHeight(targetPosition);
-
-        GameObject instance = _grenadePool.Get(spawnPosition, Quaternion.identity);
+        GameObject instance = _grenadePool.Get(_owner.position, Quaternion.identity);
 
         if (instance.TryGetComponent<GrenadeProjectile>(out var grenade))
         {
-            grenade.Initialize(targetPosition, _data.ThrowTravelTime, _fuseRemaining, _damage, _data.ExplosionRadius);
+            grenade.Hold(_owner, HoldLocalOffset, _data.FuseTime, _damage, _data.ExplosionRadius);
+            _heldGrenade = grenade;
         }
+    }
+
+    private void Throw()
+    {
+        GrenadeProjectile grenade = _heldGrenade;
+        _heldGrenade = null;
+        _cooldownRemaining = _data.Cooldown;
+
+        if (grenade == null)
+        {
+            return;
+        }
+
+        Vector3 aimOrigin = _owner.position + _owner.forward * 0.5f + Vector3.up * 0.5f;
+        Vector3 targetPosition = aimOrigin + _owner.forward * _data.ThrowDistance;
+        targetPosition.y = GroundHeight(targetPosition);
+
+        grenade.Throw(targetPosition, _data.ThrowTravelTime);
     }
 
     private static float GroundHeight(Vector3 position)
     {
-        if (Physics.Raycast(position + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 20f))
+        // Restricted to the Ground layer so a raycast aimed at an enemy doesn't hit
+        // the enemy's own collider (e.g. its capsule) instead of the floor beneath it.
+        if (Physics.Raycast(position + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 20f, GroundLayerMask))
         {
             return hit.point.y;
         }
 
         return position.y;
-    }
-
-    private void Explode(Vector3 position)
-    {
-        Collider[] hits = Physics.OverlapSphere(position, _data.ExplosionRadius);
-        foreach (Collider hit in hits)
-        {
-            if (hit.transform == _owner)
-            {
-                continue;
-            }
-
-            if (hit.TryGetComponent<IDamageable>(out var damageable))
-            {
-                damageable.TakeDamage(_damage);
-            }
-        }
-
-        _isArmed = false;
-        _cooldownRemaining = _data.Cooldown;
     }
 }

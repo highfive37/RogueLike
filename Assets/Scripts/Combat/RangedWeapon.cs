@@ -15,6 +15,6 @@ public class RangedWeapon : IWeapon
 
     public void Attack()
     {
-        ProjectileSpawner.Spawn(_projectilePool, _owner.position, _owner.forward, _data.ProjectileSpawnDistance, _data.Damage);
+        ProjectileSpawner.Spawn(_projectilePool, _owner.position, _owner.forward, _data.ProjectileSpawnDistance, _data.Damage, _owner);
     }
 }

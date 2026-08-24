@@ -11,8 +11,8 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6c36d5884cbd71d469be64bc0ae129cb, type: 3}
   m_Name: EnemyBasicData
-  m_EditorClassIdentifier:
-  moveSpeed: 3
+  m_EditorClassIdentifier: 
+  moveSpeed: 1.5
   patrolSpeed: 1.5
   patrolRadius: 3
   idleDuration: 1.5

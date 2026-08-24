@@ -1,23 +1,25 @@
 using UnityEngine;
 
-// Prototype room loop: clear the room -> upgrade pick -> equip swap -> confirm
-// respawns a room. There is no real multi-room content yet, so "next room"
-// alternates between a normal-enemy stage and a boss stage on repeat.
+// Stage progression is data-driven via StageManager/EnemySpawner. This class
+// only orchestrates the flow around a room clear: show the upgrade pick,
+// then the equip screen, then hand off to StageManager for the next stage
+// (or the Clear overlay if the stage just cleared was the final one). All UI
+// display goes through UIManager rather than direct panel references.
 public class RoomFlowManager : MonoBehaviour
 {
     [SerializeField] private RoomManager roomManager;
-    [SerializeField] private UpgradeSelectionUI upgradeSelectionUI;
-    [SerializeField] private EquipSelectionUI equipSelectionUI;
+    [SerializeField] private UIManager uiManager;
     [SerializeField] private PlayerSkillInventory playerInventory;
-    [SerializeField] private GameObjectPool enemyPool;
-    [SerializeField] private Vector3 enemySpawnPosition = new Vector3(10f, 1f, 10f);
-    [SerializeField] private GameObjectPool bossPool;
-    [SerializeField] private Vector3 bossSpawnPosition = new Vector3(-10f, 1.5f, 10f);
-    [SerializeField] private GameObjectPool projectilePool;
+    [SerializeField] private StageManager stageManager;
+    [SerializeField] private EnemySpawner enemySpawner;
+    [SerializeField] private PlayerInputActions playerInputActions;
 
-    // The very first stage (already placed in the scene) is a normal enemy,
-    // so the first pool-spawned stage after that should be the boss.
-    private bool _nextStageIsBoss = true;
+    private void Start()
+    {
+        StageData firstStage = stageManager.BeginFirstStage();
+        enemySpawner.SpawnStage(firstStage);
+        roomManager.BeginRoom();
+    }
 
     private void OnEnable()
     {
@@ -31,30 +33,32 @@ public class RoomFlowManager : MonoBehaviour
 
     private void HandleRoomCleared()
     {
-        upgradeSelectionUI.Show(OnUpgradeChosen);
+        if (stageManager.IsCurrentStageFinal)
+        {
+            uiManager.ShowClearOverlay();
+            return;
+        }
+
+        playerInputActions.enabled = false;
+        uiManager.ShowUpgradeSelection(OnUpgradeChosen);
     }
 
     private void OnUpgradeChosen(SkillItemData chosen)
     {
         playerInventory.Acquire(chosen);
-        equipSelectionUI.Show(playerInventory, OnEquipConfirmed);
+        uiManager.ShowEquipSelection(playerInventory, OnEquipConfirmed);
     }
 
     private void OnEquipConfirmed()
     {
-        GameObjectPool poolToSpawn = _nextStageIsBoss ? bossPool : enemyPool;
-        Vector3 spawnPosition = _nextStageIsBoss ? bossSpawnPosition : enemySpawnPosition;
-
-        if (poolToSpawn != null)
+        if (!stageManager.TryAdvance(out StageData nextStage))
         {
-            GameObject instance = poolToSpawn.Get(spawnPosition, Quaternion.identity);
-            if (instance.TryGetComponent<EnemyStateMachine>(out var enemyStateMachine))
-            {
-                enemyStateMachine.SetProjectilePool(projectilePool);
-            }
+            Debug.LogWarning("RoomFlowManager: no next stage available after equip confirm.");
+            return;
         }
 
-        _nextStageIsBoss = !_nextStageIsBoss;
+        playerInputActions.enabled = true;
+        enemySpawner.SpawnStage(nextStage);
         roomManager.BeginRoom();
     }
 }

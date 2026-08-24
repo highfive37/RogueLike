@@ -44,6 +44,141 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-08-24 — Stage 2 #6/#7 구조: 적 풀, 스테이지 데이터 공급자, 적-풀 연결 방식
+
+### 배경 / 문제
+- Stage 2 남은 두 항목(#6 여러 종류의 일반 Enemy, #7 다중 방 콘텐츠 확장) 구현.
+  세 가지 서로 연결된 구조 결정이 필요했음: (a) 여러 종류의 적을 스폰하는 풀
+  구조, (b) 스테이지별 적 구성 데이터를 어디서/어떻게 공급할지, (c) 데이터가
+  실제 씬의 적 프리팹/풀을 어떻게 가리킬지.
+
+### 검토한 대안 (a) 적 풀 구조
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `GameObjectPool` 인스턴스를 종류별로 여러 개 두고 신규 `EnemySpawner`가 풀 선택만 담당 | 기존 `GameObjectPool`(`UnityEngine.Pool.ObjectPool<T>` 래퍼, 이미 Projectile/Enemy/Boss/Grenade 4곳에서 검증됨) 무수정 재사용 | 적 종류가 늘수록 씬 오브젝트 개수 증가 |
+| B. `GameObjectPool` 자체를 확장해 여러 프리팹을 관리하도록 리팩터 | 씬 오브젝트 수 절약 | 이미 4곳에서 공용으로 쓰는 컴포넌트를 건드려야 해 회귀 리스크 |
+| C. 전용 스포너가 풀링 로직을 처음부터 재구현 | 유연 | 사용자가 명시한 "여러 오브젝트를 생성하는 타입은 전부 ObjectPool 기반이어야 한다"는 원칙과 충돌, 기존 코드와 중복 |
+
+### 검토한 대안 (b) 스테이지 데이터 공급 방식
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `StageDataAsset`(ScriptableObject)을 `StageManager`/`EnemySpawner`가 직접 참조 | 구현 간단 | 사용자가 이미 갖고 있던 로드맵(중반: 외부 파일 로드, 최종: 서버 데이터)을 반영하려면 그때 가서 `StageManager`/`EnemySpawner` 코드까지 다시 손대야 함 |
+| B. `IStageDataProvider` 인터페이스 뒤에 `StageDataAsset` 구현체(`ScriptableObjectStageDataProvider`)를 두고, 나중에 파일/서버 구현체로 교체 | `StageManager`/`EnemySpawner`는 데이터 출처가 바뀌어도 무수정 | 지금 당장은 인터페이스 + 얇은 어댑터 클래스가 추가로 필요 |
+
+### 검토한 대안 (c) 적 종류-풀 연결 방식
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `StageData`가 씬의 `GameObjectPool` 컴포넌트를 직접 참조 | 추가 코드 없음 | 서버/JSON 데이터는 애초에 Unity 씬 오브젝트를 참조할 수 없어, (b)에서 만든 추상화가 무의미해짐 — 마이그레이션 시점에 다시 설계해야 함 |
+| B. `EnemyVariantType` enum으로 적 종류를 표현하고, `EnemySpawner`가 enum→풀 매핑을 인스펙터에서 보유 | 서버/JSON에서도 문자열/enum 값 하나로 표현 가능, 데이터와 씬 참조가 분리됨 | enum 값 추가 시 `EnemySpawner`의 매핑도 같이 갱신해야 함(사소) |
+
+### Claude 제안
+- (a) A안: 사용자가 "`GameObjectPool`이 Unity 기본 제공 풀링 클래스인지" 먼저
+  질문해서, `UnityEngine.Pool.ObjectPool<T>` 래퍼임을 확인시키고 `EnemySpawner`는
+  풀 선택만 담당하는 얇은 오케스트레이터로 제안.
+- (b) B안: 사용자가 "중반엔 외부 파일, 최종엔 서버 데이터"라는 구체적
+  마이그레이션 계획을 이미 갖고 있다고 밝혀, 이 경우의 인터페이스 추상화는
+  추측이 아니라 실제 요구에서 나온 것이라 판단해 제안. 기존
+  `Health`/`HealthComponent`(순수 C# 로직 + Unity 어댑터 분리) 패턴과 같은
+  성격이라는 점도 근거로 제시.
+- (c) B안: (b)의 추상화 목적(데이터가 Unity 전용 참조에 묶이지 않게)과 같은
+  맥락이라 세트로 제안, 사용자도 enum 방식으로 확정.
+
+### 선택한 방향
+- (a) A안, (b) B안, (c) B안 전부 그대로 채택.
+- 신규: `EnemyVariantType`, `StageEnemyEntry`, `StageData`,
+  `IStageDataProvider`, `StageDataAsset`, `ScriptableObjectStageDataProvider`,
+  `StageManager`, `EnemySpawner`.
+
+### 선택 이유
+- (a): 기존 컴포넌트 재사용 원칙 유지 + 사용자가 사전에 명시한 요구사항에
+  정확히 부합.
+- (b): 인터페이스 1개 + 얇은 어댑터 1개 정도의 낮은 비용으로, 실제로 예정된
+  마이그레이션(파일→서버) 시점에 `StageManager`/`EnemySpawner`를 다시 건드리지
+  않아도 되는 이득이 훨씬 큼 — 추측성 추상화가 아니라 확정된 로드맵에 근거.
+- (c): (b)가 의미 있으려면 데이터 자체가 Unity 씬 참조를 전혀 포함하지 않아야
+  함 — enum으로 결정.
+
+### 관련 파일
+- `Assets/Scripts/Stage/*.cs` (신규 전체)
+- `Assets/Scripts/Enemy/EnemySpawner.cs`
+- `Assets/Scripts/Room/RoomFlowManager.cs`, `RoomManager.cs`
+
+---
+
+## 2026-08-24 — UIManager 구조: 상속 없는 단일 클래스 vs base+파생(StageUIManager)
+
+### 배경 / 문제
+- 적 체력 바 + 스테이지 텍스트 + 기존 UI 5종(`HealthBarUI`/`SkillCooldownUI`/
+  `UpgradeSelectionUI`/`EquipSelectionUI`/`CharacterSelectUI`/`ClearOverlayUI`)을
+  묶어 관리할 `UIManager` 도입 논의. 사용자가 처음 제안한 방향은 게임 전체
+  UI를 관장하는 base `UIManager`와, 이 씬(스테이지)에서만 쓰는 파생
+  `StageUIManager`(is-a) — 스테이지 진입 전 로딩 시점에 `StageUIManager`를
+  셋업하는 흐름까지 염두에 둠. "최대한 현업 구조로 연습해보고 싶다"는 목적을
+  명시.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 상속 없는 단일 flat `UIManager` | 이 프로젝트에 지금까지 MonoBehaviour 상속 계층이 하나도 없는 기존 스타일(전부 합성+인터페이스)과 100% 일관, 지금 씬이 하나뿐이라 당장 필요한 만큼만 구현됨 | 씬이 여러 개로 늘어나면 그때 재설계 필요 |
+| B. base `UIManager` + 씬 전용 파생 `StageUIManager`(is-a), 로딩 시점 셋업 훅 포함 | "현업 구조" 연습 목적에 부합, 향후 로딩 흐름을 겨냥한 API 모양을 미리 잡아둠 | 지금 씬이 하나뿐이라 base에 넣을 내용을 실제 중복에서 뽑아낸 게 아니라 추측으로 채워야 함. 로딩 씬 자체가 프로젝트에 아직 없어(Phase 5 미착수) 셋업 훅을 걸 실제 지점이 없음 — 지금 만들면 가짜 훅이 됨 |
+
+### Claude 제안
+- A안을 우선 제안하되, 사용자의 "현업 구조를 연습해보고 싶다"는 동기 자체는
+  이 프로젝트의 포트폴리오 목적(트레이드오프를 이해하고 설명할 수 있는가)에
+  정당한 이유라고 인정. 다만 base/파생 분리는 지금 실제 중복 없이 추측으로
+  설계되는 점, 로딩 시점 셋업은 그 훅을 걸 로딩 씬 자체가 없다는 점을 각각
+  구체적으로 짚어 재검토를 요청.
+
+### 선택한 방향
+- 사용자가 직접 재검토 후 A안(상속 없는 단일 `UIManager`)으로 최종 결정,
+  로딩 시점 셋업도 완전히 보류하기로 함. 정적 `Instance` 싱글톤 접근점도
+  도입하지 않음(지금 당장 멀리서 접근할 필요가 있는 곳이 없음).
+
+### 선택 이유
+- 사용자 본인 판단: "먼저 구조를 키우면 나중에 바꾸기 쉽지 않을 것 같다" —
+  규모가 실제로 커질 때(두 번째 구체적인 UI 매니저 사례, 예: 별도 메인 메뉴
+  씬이 실제로 생길 때) 그때의 진짜 중복을 보고 구조를 키우는 쪽으로 합의.
+  로딩 시점 셋업도 같은 논리로, Phase 5(Addressables/로딩 씬)가 실제로 도입될
+  때 재검토하기로 함.
+
+### 관련 파일
+- `Assets/Scripts/UI/UIManager.cs`
+- `Assets/Scripts/Room/RoomFlowManager.cs`, `Assets/Scripts/Player/CharacterSelectController.cs`
+
+---
+
+## 2026-08-24 — 적 체력 바: 프리팹 자체 소속 vs UIManager 중앙 관리
+
+### 배경 / 문제
+- 적 캐릭터 머리 위에 따라다니는 체력 바 요구사항(사망 시 자동으로 안 보여야
+  함). `UIManager` 도입 논의와 맞물려, 이것도 `UIManager`가 관리할지 결정
+  필요.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. Enemy 프리팹의 자식으로 World Space `Canvas` 배치, 기존 `HealthBarUI` 재사용 + 신규 `BillboardUI`(카메라 향해 회전) | 위치 추적과 사망 시 숨김이 부모-자식 관계만으로 자동 해결(적 GameObject가 풀에 반환되며 비활성화될 때 자식인 체력 바도 같이 꺼짐) — 별도 코드 불필요. 기존 `HealthBarUI`가 이미 `Health.Changed` 이벤트만으로 동작해 World/Screen Space 무관하게 그대로 재사용 가능 | 프리팹 3종(`Enemy_Basic`/`Enemy_Ranged`/`Boss_Basic`) 각각에 계층 추가 필요 |
+| B. `UIManager`가 스폰된 적 목록을 추적하며 매 프레임 `WorldToScreenPoint`로 Screen Space 체력 바 위치를 갱신 | 체력 바를 한 Canvas에서 중앙 관리 | 매 프레임 N마리를 추적하는 코드가 별도로 필요, 사망 시 숨김도 목록에서 수동으로 제거해야 함, 기존 이벤트 기반 패턴(§4 "이벤트 기반 결합도 관리")과 다른 방식이 되어 일관성 저하 |
+
+### Claude 제안
+- A안. 기존 `HealthBarUI`가 이미 `Health.Changed` 이벤트만으로 동작한다는
+  점, 그리고 이 프로젝트가 이미 채택한 "이벤트 기반 결합도 관리" 원칙과 맞는
+  방향이라는 점을 근거로 제시.
+
+### 선택한 방향
+- 그대로 채택.
+
+### 선택 이유
+- `UIManager`가 매 프레임 N마리를 추적하는 책임을 지지 않아도 됨. 적 사망
+  처리(`PooledObject.ReturnToPool()`)가 이미 부모 GameObject를 비활성화하므로
+  체력 바 숨김이 "우연히 되는 것"이 아니라 "구조적으로 보장되는 것"이 됨.
+
+### 관련 파일
+- `Assets/Scripts/UI/BillboardUI.cs`
+- `Assets/Prefabs/Enemy_Basic.prefab`, `Enemy_Ranged.prefab`, `Boss_Basic.prefab`
+
+---
+
 ## 2026-08-21 — 캐릭터 선택 UI: 입력 잠금 방식과 표시 시점
 
 ### 배경 / 문제

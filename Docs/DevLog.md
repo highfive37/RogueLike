@@ -30,6 +30,144 @@
 
 ---
 
+## 2026-08-24
+
+### 진행 내용
+- Stage 2 남은 두 항목(#6 여러 종류의 일반 Enemy, #7 다중 방 콘텐츠 확장) 구현.
+  설계는 이전 대화에서 먼저 합의: 적 풀은 기존 `GameObjectPool`(=
+  `UnityEngine.Pool.ObjectPool<T>` 래퍼)을 종류별로 여러 개 두고 신규
+  `EnemySpawner`가 오케스트레이션만 담당(풀링 로직 자체는 재구현하지 않음),
+  스테이지 데이터는 `IStageDataProvider` 인터페이스 뒤에 `StageDataAsset`
+  (ScriptableObject) 기반 구현체를 두어 추후 외부 파일/서버 공급자로 교체
+  가능하게 함, 적 종류-풀 연결은 `EnemyVariantType` enum 방식.
+  - 신규 스크립트: `EnemyVariantType`, `StageEnemyEntry`, `StageData`,
+    `IStageDataProvider`, `StageDataAsset`, `ScriptableObjectStageDataProvider`,
+    `StageManager`(`Assets/Scripts/Stage/`), `EnemySpawner`
+    (`Assets/Scripts/Enemy/`), `ClearOverlayUI`(`Assets/Scripts/UI/`)
+  - `RoomFlowManager` 리팩터: `_nextStageIsBoss` bool 및 고정 스폰 좌표 필드
+    전부 제거, `StageManager`/`EnemySpawner`/`ClearOverlayUI` 기반 흐름으로 교체
+  - `RoomManager.Start()`의 자동 `BeginRoom()` 호출 제거 — 이제
+    `RoomFlowManager.Start()`가 스테이지 1을 스폰한 뒤 명시적으로 호출
+  - 적 변종 2종: 근접(`EnemyBasicData`, moveSpeed 3→1.5로 변경) / 원거리
+    (신규 `EnemyRangedData.asset`, 기존에 있었지만 아무도 안 쓰던
+    `RangedAttack.asset` 패턴 재사용), 신규 `Enemy_Ranged.prefab`
+    (`Enemy_Basic.prefab` 복제 + 파란색 톤 신규 머티리얼로 시각 구분)
+  - `Assets/Data/Stages/Stage01~10.asset` 10개 생성 — Stage 1~9는 일반 웨이브
+    (마리 수 2~10, 근접/원거리 교대 배치는 애셋에 직접 authoring, 스테이지
+    인덱스로부터 계산하지 않음), Stage 10은 보스 1마리 + `isFinalStage=true`
+  - 씬: 사전 배치돼 있던 `Enemy_Basic` 인스턴스 제거, `EnemyPool`을
+    `EnemyPool_Melee`로 개명 + `EnemyPool_Ranged`/`EnemySpawner`/`StageManager`
+    신규 배치, `Canvas` 하위에 `ClearOverlayPanel`(50% 알파 검정 오버레이 +
+    흰색 "Clear" 텍스트, `PlayerInputActions` 잠금) 추가
+- 테스트/UI 기반 작업: 적 머리 위 월드스페이스 체력 바, 화면 상단 중앙
+  스테이지 텍스트, `UIManager` 파사드 도입.
+  - 설계 논의: 처음엔 base `UIManager` + 씬 전용 파생 `StageUIManager`(is-a),
+    로딩 시점 셋업까지 고려했으나 검토 끝에 보류 — 지금은 씬이 하나뿐이라
+    base를 실제 중복 없이 추측으로 채워야 하고, 로딩 씬 자체가 아직 없어서
+    셋업 훅을 걸 지점도 없음. "규모 커지면 그때 구조를 키운다" 원칙에 따라
+    상속 없는 단일 `UIManager`로 축소, 정적 `Instance` 싱글톤도 도입하지 않음
+    (지금은 필요한 곳이 없음)
+  - 신규 스크립트: `BillboardUI`(월드스페이스 캔버스가 카메라 향하도록
+    회전), `UIManager`(`Assets/Scripts/UI/`)
+  - `HealthBarUI`는 기존 스크립트 그대로 재사용(수정 없음) — 이미
+    `Health.Changed` 이벤트만으로 동작해 World Space든 Screen Space든
+    상관없었음. 사망 시 숨김 로직도 별도로 안 만듦 — 적이 죽으면
+    `PooledObject.ReturnToPool()`로 부모 GameObject 자체가 비활성화되고
+    체력 바는 그 자식이라 자동으로 같이 꺼짐
+  - `Enemy_Basic`/`Enemy_Ranged`/`Boss_Basic` 3개 프리팹에 `HealthBarCanvas`
+    (World Space Canvas + Background/Fill Image + `BillboardUI` +
+    `HealthBarUI`) 추가
+  - `StageManager`에 `event Action<int> StageChanged` 추가 (`LoadCurrentStage()`
+    에서 발생, `BeginFirstStage()`/`TryAdvance()` 양쪽 다 커버)
+  - `UIManager`를 `UpgradeSelectionUI`/`EquipSelectionUI`/`CharacterSelectUI`/
+    `ClearOverlayUI`/`StageManager.StageChanged`(스테이지 텍스트)를 감싸는
+    파사드로 도입 — `RoomFlowManager`(`upgradeSelectionUI`/`equipSelectionUI`/
+    `clearOverlayUI` 3개 필드 제거)와 `CharacterSelectController`(`selectUI`
+    필드 제거)가 이제 `UIManager` 참조 하나만 들고 `ShowXxx(...)` 메서드로
+    호출. `HealthBarUI`(플레이어)/`SkillCooldownUI`는 원래도 외부에서 호출되지
+    않는 수동적 컴포넌트라 `UIManager`가 참조를 들지 않음(포워딩할 대상이
+    없음) — 이미 `Canvas/HUD` 아래 있어 씬 계층 이동도 불필요
+  - `UIManager` 컴포넌트는 기존 `Canvas` 오브젝트에 추가(모든 UI가 이미 그
+    하위라 씬 계층 이동 없이 참조만 배선)
+- 방 클리어 후 업그레이드/장착 UI가 떠 있는 동안 플레이어 조작 잠금, 다음
+  스테이지 시작 시 재활성화 추가. `CharacterSelectController`/`ClearOverlayUI`가
+  이미 쓰던 `PlayerInputActions.enabled = false/true` 패턴을 그대로 재사용 —
+  새 구조 없이 `RoomFlowManager`에 `playerInputActions` 필드 하나만 추가.
+  `HandleRoomCleared()`(업그레이드 표시 직전)에서 잠그고 `OnEquipConfirmed()`
+  (다음 스테이지 스폰 직전)에서 해제
+- 버그 수정: 10스테이지 보스 처치 후 Clear 오버레이가 안 뜨고 조작만 잠기는
+  문제. 원인은 `ClearOverlayPanel`을 처음 생성할 때 씬에서 **비활성 상태로
+  시작**하도록 만들어둔 것 — Unity는 오브젝트가 처음 활성화되는 시점에
+  `Awake()`를 실행하므로, `ClearOverlayUI.Show()`의 첫 호출이 곧 그 "첫
+  활성화"가 되어 `panel.SetActive(true)` 도중에 밀려있던 `Awake()`(내부에
+  `panel.SetActive(false)` 포함)가 동기적으로 실행되며 방금 켠 패널을 다시
+  꺼버림. 그 다음 줄인 입력 잠금은 이 흐름과 무관해서 정상 실행됨 — 그래서
+  "조작은 잠기는데 화면은 안 뜨는" 증상으로 나타남. `UpgradePanel`/
+  `EquipPanel`은 원래 씬에 활성 상태로 배치돼 있어 게임 시작 시 `Awake()`가
+  정상적으로 한 번 실행되고 끝나기 때문에 이 문제가 없었음. 수정은
+  `ClearOverlayPanel`을 나머지 둘과 동일하게 **씬에서 활성 상태로 시작**하도록
+  변경(코드 변경 없음, 씬 파일의 초기 활성 상태만 수정)
+
+### 테스트 결과
+- [x] 전체 스크립트 컴파일 에러/경고 없음 (Unity MCP 콘솔 확인, 두 세션 다)
+- [x] Play Mode 진입 직후 콘솔에 `Room started with 2 enemies.` 로그 확인,
+      씬에 `Enemy_Basic(Clone)`(근접)·`Enemy_Ranged(Clone)`(원거리) 각 1마리가
+      각자의 풀 아래 정상 스폰됨을 하이어라키로 확인 — 에러/경고 없음
+- [x] `UIManager` 경유로 `CharacterSelectPanel`이 정상 표시됨(Play Mode 진입 시
+      `CharacterSelectPanel`만 활성, `Upgrade`/`Equip`/`ClearOverlay`는 비활성)
+      확인
+- [x] `StageText`가 "Stage 1"로 정상 표시됨을 Play Mode에서 컴포넌트 값으로 확인
+- [x] 적 체력 바(`HealthBarCanvas`)가 스폰된 `Enemy_Basic(Clone)`/
+      `Enemy_Ranged(Clone)`에 자식으로 정상 생성되고, `BillboardUI`가 카메라
+      각도에 맞춰 회전(`QuarterViewCameraFollow`의 약 59° 틸트와 일치)하는 것을
+      Fill 오브젝트의 월드 회전값으로 확인
+- [x] 스테이지 1→2→3 진행 확인 — RunCommand로 캐릭터 선택 완료 후 스테이지별
+      적 전원에 `HealthComponent.TakeDamage(9999f, null)`로 즉사 처리 +
+      업그레이드/장착 버튼의 `onClick.Invoke()`로 실제 클릭 흐름 재현.
+      스테이지 2 적 3마리(Stage02.asset 저작값과 일치) 정상 스폰 확인,
+      클리어 직후 `input enabled = False` + `UpgradePanel active = True`,
+      장착 확정 직후 `input enabled = True` + `StageText = 'Stage 3'`까지
+      로그로 확인 — 콘솔 에러/경고 없음
+- [x] 보스 스테이지 전환, 10스테이지 클리어 후 Clear 오버레이 표시+입력 잠금
+      — RunCommand로 캐릭터 선택→1~9스테이지 클리어(업그레이드/장착 버튼 실제
+      클릭)→보스 즉사까지 전체 재현. 수정 전: `ClearOverlayPanel active=False`
+      (버그), 수정 후: `IsCurrentStageFinal=True`, `ClearOverlayPanel
+      active=True`, `input enabled=False`, `ClearText.text='Clear'`, 패널
+      색상 `RGBA(0,0,0,0.5)`까지 전부 정상 확인. 콘솔 에러 없음
+      (자동화 세션 특성상 강제 즉사 시뮬레이션으로 확인, 실제 전투 흐름 자체는
+      아직 미확인)
+- [ ] 원거리 변종의 실제 사격 동작, 근접 변종의 절반 이동속도 체감 — 미확인/예정
+- [ ] 적이 실제로 데미지를 입었을 때 체력 바가 줄어드는지, 사망 시 자연스럽게
+      사라지는지 — 미확인/예정 (구조상 되어야 하지만 실제 전투로는 아직 안 봄)
+
+### 이슈/메모
+- RunCommand 스크립트에서 `Image`/`Text`를 bare로 썼다가 기존에 알려진
+  네임스페이스 충돌(`UnityEngine.UI.Image`/`Text` 완전 정규화 필요)을 다시
+  겪음 — 기존 메모와 동일한 원인.
+- `AssetDatabase.CreateAsset`은 상위 폴더가 없으면 예외 없이 실패만 로그로
+  남기고 조용히 실패함 — `Assets/Materials` 폴더가 없어 첫 시도가 부분
+  실행된 채 끝남, 폴더 생성 후 애셋을 정리하고 재실행해서 해결.
+- 자기 자신을 `Awake()`에서 비활성화하는 UI 패널 패턴(`XxxUI.Awake(){
+  panel.SetActive(false); }`, `panel`이 자기 자신 참조)을 쓸 때는 **그 패널이
+  씬에서 처음부터 활성 상태로 시작해야** `Awake()`가 게임 시작 시 정상적으로
+  한 번 실행되고 끝난다. 씬에서 비활성 상태로 시작하면 `Show()`의 첫
+  `SetActive(true)` 호출이 그 자체로 "첫 활성화"가 되어 밀려있던 `Awake()`가
+  `SetActive(true)` 도중에 실행되며 방금 켠 것을 다시 꺼버림. 새 UI 패널을
+  이 패턴으로 만들 때마다 초기 활성 상태를 반드시 켜두고 시작할 것 —
+  `HealthBarUI`처럼 `Awake()`에서 자기 자신을 끄지 않는 패턴이면 무관.
+
+### 다음 작업
+- 실제 전투로 적 체력 바 감소/사망 시 숨김 확인
+- `Docs/ClaudeSessionSummary.md` 전체 재작성 완료(2026-08-24 세션 종료 시점) —
+  폴더/씬 구조, 클래스 책임 표, Stage 2 상태, 설계 방향, 미결정 항목/다음
+  작업까지 전부 반영함
+- Stage 3 잔여 항목(`EnemyAIManager`, `GetComponent` 캐싱, `BenchmarkSpawner`,
+  Profiler 기반 Before/After)은 여전히 미착수
+- `UIManager`가 두 번째 구체 사례(예: 별도 메인 메뉴 씬)가 실제로 생기기 전까지는
+  상속 구조로 확장하지 않기로 함 — 그 시점이 오면 재검토
+
+---
+
 ## 2026-08-21
 
 ### 진행 내용

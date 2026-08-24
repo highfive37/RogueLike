@@ -5,7 +5,7 @@
 `Docs/AI_Decision_Log.md`를 참고. 원본 기획 문서는 `Docs/ProjectPlan.md`.
 각 문서의 역할 구분은 `Docs/DocumentationGuide.md` 참고.
 
-마지막 갱신: 2026-08-21 (Stage 2 상당 부분 완료 시점 기준).
+마지막 갱신: 2026-08-24 (Stage 2 완료 시점 기준).
 
 ---
 
@@ -41,34 +41,48 @@ Assets/Scripts/
 │              PlayerInputActions, SkillController, PlayerSkillInventory,
 │              CharacterSelectController, PrototypeSkillSwitcher 등)
 ├─ Enemy/     (EnemyStateMachine + FSM 상태 6종, IAttackPattern 구현체 3종,
-│              EnemyData / AttackPatternData ScriptableObject)
+│              EnemyData / AttackPatternData ScriptableObject, EnemySpawner)
+├─ Stage/     (StageManager, StageData, StageDataAsset, StageEnemyEntry,
+│              EnemyVariantType, IStageDataProvider,
+│              ScriptableObjectStageDataProvider) — 2026-08-24 신규
 ├─ Combat/    (IDamageable, Health, HealthComponent, IWeapon 구현체 2종,
 │              ISkillItem 구현체 3종, Projectile류, SkillItemData류)
 ├─ Camera/    (QuarterViewCameraFollow)
 ├─ Room/      (RoomManager, RoomFlowManager — 같은 GameObject에 함께 배치)
-├─ UI/        (UpgradeSelectionUI, EquipSelectionUI, CharacterSelectUI,
-│              HealthBarUI, SkillCooldownUI 등)
+├─ UI/        (UIManager, UpgradeSelectionUI, EquipSelectionUI,
+│              CharacterSelectUI, ClearOverlayUI, HealthBarUI,
+│              SkillCooldownUI, BillboardUI 등)
 └─ Pooling/   (GameObjectPool, PooledObject)
 ```
 asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 규모상 과설계로 판단.
 
-### 씬 구성 (SampleScene)
+### 씬 구성 (`Assets/Scenes/Prototype.unity` — 씬 이름이 `Prototype`이지 `SampleScene`이
+아님, 이전 버전 문서의 오기 정정)
 - `Ground`(Ground 레이어 지정), `Player`(**프리팹 인스턴스**, 2026-08-21부터 —
   이전에는 씬에 직접 배치된 오브젝트였음), `Main Camera`
-- `Enemy_Basic`/`Boss_Basic`은 씬에 고정 배치가 아니라 각각 `EnemyPool`/
-  `BossPool`에서 `RoomFlowManager`가 스폰 (단, 씬에 비활성 테스트용
-  `Boss_Basic` 플레이스홀더 인스턴스가 하나 남아있음 — 정리 여부 미결정)
-- 풀 4종: `EnemyPool`, `BossPool`, `GrenadePool`, `ProjectilePool`
-  (전부 `GameObjectPool` 컴포넌트 공용)
-- `RoomManager` 오브젝트 하나에 `RoomManager`+`RoomFlowManager` 컴포넌트가
-  함께 붙어 있음
-- `Canvas`(UGUI 1개) 아래에 HUD(`HealthBarUI`/`SkillCooldownUI`),
-  `UpgradePanel`, `EquipPanel`, `CharacterSelectPanel`이 전부 자식으로 배치,
-  `EventSystem` 별도
+- 씬에 고정 배치된 적은 없음 — 스테이지 1을 포함해 모든 적/보스는
+  `EnemySpawner`가 `StageManager`로부터 받은 `StageData`를 기준으로 스폰
+  (2026-08-24부터: 이전엔 스테이지 1 적 1마리가 씬에 직접 배치돼 있었음).
+  단, 씬에 비활성 테스트용 `Boss_Basic` 플레이스홀더 인스턴스가 하나 남아있음
+  — 정리 여부 미결정
+- 풀 5종: `EnemyPool_Melee`, `EnemyPool_Ranged`, `BossPool`, `GrenadePool`,
+  `ProjectilePool` (전부 `GameObjectPool` 컴포넌트 공용). `EnemySpawner`가
+  `EnemyVariantType`(Melee/Ranged/Boss) → 풀 매핑을 인스펙터로 보유
+- top-level 매니저 오브젝트: `RoomManager`(`RoomManager`+`RoomFlowManager`
+  컴포넌트 함께 배치), `EnemySpawner`, `StageManager`
+- `Canvas`(UGUI 1개, `UIManager` 컴포넌트가 이 오브젝트에 직접 붙어 있음) 하위에
+  `HUD`(`HealthBarUI`/`SkillCooldownUI`/`StageText`), `UpgradePanel`,
+  `EquipPanel`, `CharacterSelectPanel`, `ClearOverlayPanel`(50% 알파 검정 +
+  흰색 "Clear" 텍스트, 2026-08-24 신규)이 자식으로 배치, `EventSystem` 별도.
+  `RoomFlowManager`/`CharacterSelectController`는 이 패널들을 직접 참조하지
+  않고 `UIManager`를 경유(파사드 패턴, 아래 §4 참고)
 
 ### 프리팹
 - `Assets/Prefabs/Player.prefab` (2026-08-21 신규 — 이전엔 씬 전용 오브젝트)
-- `Assets/Prefabs/Enemy_Basic.prefab`, `Boss_Basic.prefab`
+- `Assets/Prefabs/Enemy_Basic.prefab`(근접), `Enemy_Ranged.prefab`(원거리,
+  2026-08-24 신규), `Boss_Basic.prefab`
+- 위 3개 전부 자식으로 `HealthBarCanvas`(World Space, `BillboardUI`+
+  `HealthBarUI`) 포함 — 머리 위 체력 바, 2026-08-24 신규
 - `Assets/Prefabs/Projectile_Basic.prefab`, `Grenade.prefab`
 
 ### 태그 / 레이어
@@ -85,10 +99,12 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 | 캐릭터 선택 | `CharacterSelectController`, `CharacterSelectUI`, `CharacterArchetypeData` | 런 시작 시 근접/원거리 아키타입 선택 UI, 선택 전까지 입력 잠금 |
 | 스킬 보유/장착 | `PlayerSkillInventory`, `OwnedSkill` | 스킬 소지/레벨 추적, 장착 전환 |
 | 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`RetreatAndShootPattern`) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화 (별도 `BossStateMachine` 클래스는 없음) |
+| 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss) → `GameObjectPool` 매핑만 보유, 풀링 로직 자체는 재구현하지 않고 기존 `GameObjectPool`에 위임 |
+| 스테이지 진행 | `StageManager`, `IStageDataProvider`+`ScriptableObjectStageDataProvider`, `StageDataAsset`(10개, Stage01~10) | 현재 스테이지 인덱스 추적, 다음 스테이지 데이터 공급. 스테이지 1~9 적 마리 수(2~10)는 각 애셋에 authoring된 값이며 코드에서 인덱스로부터 계산하지 않음. Stage10만 `isFinalStage=true`+보스 |
 | 데미지 | `IDamageable`, `Health`(순수 C#), `HealthComponent` | 데미지 판정 + 수치·가해자 로그(2026-08-21 중앙화), 체력 상태, 사망 이벤트 |
-| 방 진행 | `RoomManager`, `RoomFlowManager` | 전멸 판정 → 업그레이드 선택 → 장착 선택 → 다음 방(일반/보스 교대) 스폰 |
-| 풀링 | `GameObjectPool`, `PooledObject` | Projectile/Enemy/Boss/Grenade 공용 재사용 풀 |
-| UI | `HealthBarUI`, `SkillCooldownUI`, `UpgradeSelectionUI`, `EquipSelectionUI`, `CharacterSelectUI` | HUD 및 3종 선택 화면(업그레이드/장착/캐릭터) |
+| 방 진행 | `RoomManager`, `RoomFlowManager` | 전멸 판정 → 업그레이드 선택 → 장착 선택 → `StageManager`/`EnemySpawner`로 다음 스테이지 스폰(또는 마지막 스테이지면 Clear 오버레이). 업그레이드/장착 UI가 떠 있는 동안 `PlayerInputActions` 잠금, 다음 스테이지 시작 시 해제 |
+| 풀링 | `GameObjectPool`, `PooledObject` | Projectile/Enemy(근접·원거리)/Boss/Grenade 공용 재사용 풀 |
+| UI | `UIManager`(파사드), `HealthBarUI`, `SkillCooldownUI`, `UpgradeSelectionUI`, `EquipSelectionUI`, `CharacterSelectUI`, `ClearOverlayUI`, `BillboardUI` | `UIManager`가 4종 선택/오버레이 화면(업그레이드/장착/캐릭터/Clear)을 감싸 `ShowXxx(...)` 메서드로 노출, `StageManager.StageChanged` 구독해 스테이지 텍스트 갱신. 상속 없는 단일 클래스(§4 참고). `HealthBarUI`(플레이어)/`SkillCooldownUI`는 외부에서 호출되지 않는 수동적 컴포넌트라 `UIManager`가 참조를 들지 않음 |
 
 ---
 
@@ -101,7 +117,7 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 최소 플레이 가능한 전투 루프. Player 이동/조준/근접·원거리 공격, Enemy 추적,
 데미지·사망 처리, Room Cleared 판정까지 구현 완료.
 
-### Stage 2 — 핵심 시스템 (🔶 대부분 완료, 2개 항목 남음)
+### Stage 2 — 핵심 시스템 (✅ 완료, 2026-08-24)
 
 ✅ 완료:
 - Dodge/Dash(`PlayerDodgeRoll`), 단일 슬롯 스킬 시스템(`SkillController`/
@@ -119,12 +135,17 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
   `UpgradeManager` 클래스 없이 대체), HUD(`HealthBarUI`/`SkillCooldownUI`)
 - `CharacterSelectController`+`CharacterSelectUI`(런 시작 시 근접/원거리 선택,
   2026-08-21 완료)
-
-⏳ 남음:
-- 여러 종류의 일반 Enemy — 지금은 `EnemyBasicData` 하나뿐, 데이터만 다른 변종
-  추가 필요 (스크립트 변경은 불필요한 구조)
-- 다중 방 콘텐츠 — 지금은 방마다 적 1마리, 일반/보스를 무한 교대하는 최소
-  프로토타입 루프뿐
+- 여러 종류의 일반 Enemy(2026-08-24 완료) — 근접(`EnemyBasicData`, moveSpeed
+  1.5)/원거리(`EnemyRangedData`+`Enemy_Ranged.prefab`) 2종, `EnemyVariantType`
+  enum으로 `EnemySpawner`가 풀 선택
+- 다중 방 콘텐츠(2026-08-24 완료) — `StageDataAsset` 10개(Stage 1~9 일반 웨이브
+  2~10마리, Stage 10 보스)를 `StageManager`+`IStageDataProvider`가 순서대로
+  공급, `RoomFlowManager`가 `EnemySpawner`로 스폰 후 마지막 스테이지 클리어 시
+  `ClearOverlayUI` 표시
+- Stage 2 완료 이후 같은 날 추가된 테스트/UI 기반 작업(2026-08-24): 적 머리 위
+  월드스페이스 체력 바, 화면 상단 중앙 스테이지 텍스트, 이 둘과 기존 UI 5종을
+  감싸는 `UIManager` 파사드 도입, 업그레이드/장착 UI 표시 중 플레이어 조작
+  잠금. 자세한 설계 근거는 `AI_Decision_Log.md`의 2026-08-24 항목 3건 참고
 
 ### Stage 3 — 최적화 (부분 착수)
 - ✅ Object Pooling — `Projectile`/`Enemy`/`Boss`/`Grenade` 4종 전부 적용
@@ -171,20 +192,41 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   기능 도입을 계기로, 기존 씬 인스턴스를 그대로 유지한 채(`PrefabUtility.
   SaveAsPrefabAssetAndConnect`) `Assets/Prefabs/Player.prefab`으로 연결.
   런타임 Instantiate 전환은 아직 하지 않음.
+- **스테이지 데이터는 `IStageDataProvider` 인터페이스 뒤에 둠**(2026-08-24):
+  현재 구현체는 `ScriptableObjectStageDataProvider`(SO 배열 래핑)뿐이지만,
+  사용자가 이미 갖고 있는 로드맵(중반: 외부 파일 로드, 최종: 서버 데이터)에
+  맞춰 구현체만 교체 가능하도록 설계. `Health`/`HealthComponent` 분리(순수
+  로직 + Unity 어댑터)와 같은 성격의 패턴 재사용.
+- **적 종류-풀 연결은 `EnemyVariantType` enum**(2026-08-24): `StageData`가
+  씬의 `GameObjectPool`을 직접 참조하면 서버/JSON 데이터가 애초에 Unity 씬
+  오브젝트를 참조할 수 없어 위 추상화가 무의미해지므로, 데이터는 enum 값만
+  갖고 실제 씬 참조 해석은 `EnemySpawner`(씬에 있는 컴포넌트)가 전담.
+- **`UIManager`는 상속 없는 단일 클래스로 도입**(2026-08-24): 사용자가 처음엔
+  게임 전체를 관장하는 base `UIManager` + 씬 전용 파생 `StageUIManager`(is-a)
+  구조를 "현업 구조 연습" 목적으로 제안했으나, 검토 후 사용자 본인이
+  "먼저 구조를 키우면 나중에 바꾸기 쉽지 않다"는 판단으로 상속 없는 단일
+  클래스로 축소 — 이 프로젝트에 지금까지 MonoBehaviour 상속 계층이 없는
+  기존 스타일과도 일관됨. 두 번째 구체적인 UI 매니저 사례(예: 별도 메인 메뉴
+  씬)가 실제로 생기기 전까지는 상속으로 확장하지 않기로 합의. 정적 `Instance`
+  싱글톤도 같은 이유로 도입하지 않음.
+- **적 체력 바는 Enemy 프리팹에 직접 포함**(2026-08-24): `UIManager`가 매
+  프레임 스폰된 적 목록을 추적하며 `WorldToScreenPoint`로 위치를 갱신하는
+  중앙 관리 방식 대신, 각 Enemy 프리팹의 자식으로 World Space `Canvas`를 두고
+  기존 `HealthBarUI`(이벤트 기반, 무수정 재사용)+신규 `BillboardUI`(카메라
+  향해 회전)로 처리. 위치 추적과 사망 시 숨김이 부모-자식 관계만으로 자동
+  해결됨 — 별도 추적/정리 코드가 필요 없음.
 
 ---
 
 ## 5. 아직 결정하지 않은 항목
 
 - **Game Over 흐름**: Player 사망 시 어떻게 처리할지(씬 재시작? UI?) 여전히
-  미정. 이제 적 공격(근접/원거리/키팅)이 실제로 Player의 `HealthComponent`에
-  데미지를 줄 수 있다는 것까지 확인된 상태라(2026-08-21), 이 결정이 더 급해짐.
-- **여러 종류의 일반 Enemy 데이터 설계**: 구조(EnemyData ScriptableObject +
-  공유 스크립트)는 준비돼 있으나, 실제로 어떤 변종(빠르고 약함/느리고
-  단단함 등)을 추가할지는 미정.
-- **Room 진행/멀티룸 흐름 세부 설계**: 지금의 `RoomFlowManager`는 방마다 적
-  1마리, 일반/보스 무한 교대뿐인 최소 루프. 실제 5~10개 스테이지 흐름이나
-  종료 조건은 미정.
+  미정. 적 공격(근접/원거리/키팅)이 실제로 Player의 `HealthComponent`에
+  데미지를 줄 수 있다는 것까지 확인된 상태라(2026-08-21), 이 결정이 급함.
+- **런 종료(10스테이지 Clear) 이후 흐름**: 지금은 Clear 오버레이(반투명 검정 +
+  "Clear" 텍스트, 입력 잠금)까지만 구현되어 있고, 이후 재시작이나 별도 결과/
+  메인 메뉴 씬으로의 전환은 의도적으로 보류 중 — 실제로 그런 씬이 필요해지는
+  시점에 결정.
 - **카메라 시스템에 Cinemachine 도입 여부**: 지금은 수동 스크립트로 충분하지만
   연출이 복잡해지면(줌, 화면 흔들림 등) 재검토 필요.
 - **`FlamethrowerSkill.CooldownRemaining`이 항상 0을 반환하는 갭**: 쿨다운
@@ -194,19 +236,21 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 - **`PrototypeSkillSwitcher`와 무기 아키타입 디버그 전환의 관계**: 스킬은
   숫자키로 디버그 전환이 가능한데 무기 아키타입도 비슷한 단축키를 둘지 —
   우선순위 낮음으로 보류 중.
+- **`UIManager`를 상속 구조로 확장할지**: 두 번째 구체적인 UI 매니저 사례(예:
+  별도 메인 메뉴 씬)가 실제로 생기기 전까지는 보류하기로 합의(§4,
+  `AI_Decision_Log.md` 2026-08-24 참고) — 그 시점이 오면 재검토.
 
 ---
 
 ## 6. 앞으로 해야 할 작업 (우선순위 순)
 
 1. **Game Over 흐름 추가** — 적 공격이 실제로 작동하는 게 확인된 만큼 가장 시급
-2. **여러 종류의 일반 Enemy 데이터 추가** — 스크립트 변경 없이 `EnemyData`
-   애셋만 추가하면 되는 구조라 상대적으로 작은 작업
-3. **Room 진행 방식 확장 여부 결정** — 방당 다중 스폰/종료 조건 등 범위 논의
-   필요
-4. **잔여 정리 항목**: Flamethrower 쿨다운 UI 처리 방식, 비활성 `Boss_Basic`
+2. **실플레이 검증** — 자동화 세션 한계(Time.frameCount 고정)로 강제 즉사
+   시뮬레이션으로만 확인한 항목들을 실제 플레이로 재확인: 원거리 변종 사격,
+   근접 변종 절반 이동속도, 적 체력 바가 데미지에 따라 실제로 줄어드는지
+3. **잔여 정리 항목**: Flamethrower 쿨다운 UI 처리 방식, 비활성 `Boss_Basic`
    플레이스홀더 정리
-5. **Stage 3 잔여 항목**: `EnemyAIManager`(AI tick 분산), `GetComponent` 캐싱
+4. **Stage 3 잔여 항목**: `EnemyAIManager`(AI tick 분산), `GetComponent` 캐싱
    정리, `BenchmarkSpawner`(20/50/100/200 적), Profiler 기반 Before/After 측정
-6. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이
+5. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이
    안정화된 이후 별도로 진행

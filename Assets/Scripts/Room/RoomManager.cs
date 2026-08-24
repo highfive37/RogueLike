@@ -10,11 +10,6 @@ public class RoomManager : MonoBehaviour
 
     public event Action RoomCleared;
 
-    private void Start()
-    {
-        BeginRoom();
-    }
-
     private void OnDestroy()
     {
         UnsubscribeAll();

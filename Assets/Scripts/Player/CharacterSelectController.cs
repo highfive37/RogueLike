@@ -7,7 +7,7 @@ using UnityEngine;
 [RequireComponent(typeof(PlayerInputActions))]
 public class CharacterSelectController : MonoBehaviour
 {
-    [SerializeField] private CharacterSelectUI selectUI;
+    [SerializeField] private UIManager uiManager;
 
     private PlayerCombat _playerCombat;
     private PlayerInputActions _inputActions;
@@ -25,9 +25,9 @@ public class CharacterSelectController : MonoBehaviour
 
     private void Start()
     {
-        if (selectUI != null)
+        if (uiManager != null)
         {
-            selectUI.Show(HandleArchetypeChosen);
+            uiManager.ShowCharacterSelect(HandleArchetypeChosen);
         }
         else
         {

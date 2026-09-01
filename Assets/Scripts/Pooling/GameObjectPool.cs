@@ -70,6 +70,10 @@ public class GameObjectPool : MonoBehaviour
     private static void OnGetFromPool(GameObject instance)
     {
         instance.SetActive(true);
+        if (instance.TryGetComponent<PooledObject>(out var pooledObject))
+        {
+            pooledObject.NotifyTakenFromPool();
+        }
     }
 
     private static void OnReleaseToPool(GameObject instance)

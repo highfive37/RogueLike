@@ -15,16 +15,14 @@ public class RoomManager : MonoBehaviour
         UnsubscribeAll();
     }
 
-    public void BeginRoom()
+    public void BeginRoom(IEnumerable<HealthComponent> enemies)
     {
         UnsubscribeAll();
         _enemies.Clear();
 
-        GameObject[] enemyObjects = GameObject.FindGameObjectsWithTag("Enemy");
-
-        foreach (GameObject enemyObject in enemyObjects)
+        foreach (HealthComponent health in enemies)
         {
-            if (!enemyObject.TryGetComponent<HealthComponent>(out var health))
+            if (health == null)
             {
                 continue;
             }

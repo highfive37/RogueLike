@@ -1,9 +1,17 @@
+using System;
 using UnityEngine;
 
 public class HealthComponent : MonoBehaviour, IDamageable
 {
     [SerializeField] private float maxHealth = 100f;
     [SerializeField] private bool destroyOnDeath = true;
+
+    // Fires whenever damage actually lands (not blocked by invulnerability/
+    // death/a non-positive amount) on ANY HealthComponent in the scene -
+    // static so debug/observability tooling (DebugOverlayController) can
+    // subscribe once regardless of when enemies spawn or which pool they
+    // come from, instead of subscribing per-instance.
+    public static event Action<HealthComponent, float, Transform> AnyDamageTaken;
 
     private Health _health;
 
@@ -33,6 +41,12 @@ public class HealthComponent : MonoBehaviour, IDamageable
     public void TakeDamage(float amount, Transform source)
     {
         Debug.Log($"{name} took {amount} damage from {(source != null ? source.name : "unknown")}.");
+
+        if (amount > 0f && !Health.IsDead && !Health.IsInvulnerable)
+        {
+            AnyDamageTaken?.Invoke(this, amount, source);
+        }
+
         Health.TakeDamage(amount);
     }
 

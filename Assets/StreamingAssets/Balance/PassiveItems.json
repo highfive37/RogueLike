@@ -1,0 +1,16 @@
+{
+  "_guide": "패시브 아이템 4종의 밸런스 설정 파일입니다. 각 아이템을 1개 먹을 때마다 amount만큼 증가하고, capCount개를 먹으면 ESC 메뉴의 Pip 바(10칸)가 꽉 찹니다(다만 capCount를 넘어서도 실제 효과는 계속 쌓입니다 - Pip 바만 꽉 찬 채로 유지됨). type 값은 절대 바꾸지 마세요(AttackPower/MoveSpeed/ProjectileRange/AttackSpeed 중 하나여야 코드가 인식함). amount 단위는 종류마다 다르니 아래 _fieldGuide 참고하세요.",
+  "_fieldGuide": {
+    "AttackPower.amount": "공격력 증가량(데미지 그대로 더해짐). 기본 2.5",
+    "MoveSpeed.amount": "이동 속도 증가량(유닛/초). 기본 1.5",
+    "ProjectileRange.amount": "발사체 사거리 증가량, 단위는 '유닛'(내부적으로 PlayerBaseStats.json의 projectileSpeed로 나눠서 초 단위로 자동 환산됨, 직접 초 단위로 안 적어도 됨). 기본 2.0",
+    "AttackSpeed.amount": "공격 속도 증가량, 단위는 '초당 공격 횟수'(다른 스탯과 동일하게 그냥 더해짐 - 예: 기본 초당 1.54회에 0.15을 더하면 1.69회). 기본 0.15",
+    "capCount": "이 아이템을 몇 개 먹으면 Pip 바가 꽉 차는지(정수). 작을수록 빨리 꽉 참"
+  },
+  "items": [
+    { "type": "AttackPower", "amount": 2, "capCount": 8 },
+    { "type": "MoveSpeed", "amount": 1.5, "capCount": 6 },
+    { "type": "ProjectileRange", "amount": 2.0, "capCount": 6 },
+    { "type": "AttackSpeed", "amount": 0.15, "capCount": 24 }
+  ]
+}

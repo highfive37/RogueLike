@@ -5,7 +5,12 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(PlayerInputActions))]
 public class PlayerMovement : MonoBehaviour
 {
-    [SerializeField] private float moveSpeed = 5f;
+    [SerializeField] private PlayerPassiveStats passiveStats;
+
+    // Hand-tunable balance number, pulled from GameBalance (Assets/
+    // StreamingAssets/Balance/PlayerBaseStats.json) instead of a serialized
+    // field.
+    public float BaseMoveSpeed => GameBalance.Player.moveSpeed;
 
     private Rigidbody _rigidbody;
     private InputAction _moveAction;
@@ -25,7 +30,8 @@ public class PlayerMovement : MonoBehaviour
             direction.Normalize();
         }
 
-        Vector3 nextPosition = _rigidbody.position + direction * moveSpeed * Time.fixedDeltaTime;
+        float speed = BaseMoveSpeed + (passiveStats != null ? passiveStats.MoveSpeedBonus : 0f);
+        Vector3 nextPosition = _rigidbody.position + direction * speed * Time.fixedDeltaTime;
         _rigidbody.MovePosition(nextPosition);
     }
 }

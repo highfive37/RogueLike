@@ -3,12 +3,12 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Single point of contact for the game's UI screens. Gameplay code
-// (RoomFlowManager, CharacterSelectController) goes through this instead of
-// holding direct references to each individual UI component.
+// (RoomFlowManager, CharacterSelectController, EquipMenuController) goes
+// through this instead of holding direct references to each individual UI
+// component.
 public class UIManager : MonoBehaviour
 {
-    [SerializeField] private UpgradeSelectionUI upgradeSelectionUI;
-    [SerializeField] private EquipSelectionUI equipSelectionUI;
+    [SerializeField] private ActiveItemEquipUI equipSelectionUI;
     [SerializeField] private CharacterSelectUI characterSelectUI;
     [SerializeField] private ClearOverlayUI clearOverlayUI;
     [SerializeField] private StageManager stageManager;
@@ -24,14 +24,14 @@ public class UIManager : MonoBehaviour
         stageManager.StageChanged -= HandleStageChanged;
     }
 
-    public void ShowUpgradeSelection(Action<SkillItemData> onChosen)
+    public void ShowEquipSelection(PlayerActiveItemInventory inventory, PlayerPassiveStats passiveStats, Action onConfirmed)
     {
-        upgradeSelectionUI.Show(onChosen);
+        equipSelectionUI.Show(inventory, passiveStats, onConfirmed);
     }
 
-    public void ShowEquipSelection(PlayerSkillInventory inventory, Action onConfirmed)
+    public void HideEquipSelection()
     {
-        equipSelectionUI.Show(inventory, onConfirmed);
+        equipSelectionUI.Hide();
     }
 
     public void ShowCharacterSelect(Action<CharacterArchetypeData> onChosen)

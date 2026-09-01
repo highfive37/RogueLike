@@ -1,0 +1,51 @@
+{
+    "name": "EquipMenuActions",
+    "maps": [
+        {
+            "name": "Menu",
+            "id": "6f6c7c1a-6f1a-4d2e-9b0a-2a6f6e9c1a3b",
+            "actions": [
+                {
+                    "name": "ToggleEquip",
+                    "type": "Button",
+                    "id": "9c2e4d5f-1b3a-4c6d-8e7f-3a5b7c9d1e2f",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+                    "path": "<Keyboard>/escape",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "ToggleEquip",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        }
+    ],
+    "controlSchemes": [
+        {
+            "name": "Keyboard&Mouse",
+            "bindingGroup": "Keyboard&Mouse",
+            "devices": [
+                {
+                    "devicePath": "<Keyboard>",
+                    "isOptional": false,
+                    "isOR": false
+                },
+                {
+                    "devicePath": "<Mouse>",
+                    "isOptional": false,
+                    "isOR": false
+                }
+            ]
+        }
+    ]
+}

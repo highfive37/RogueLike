@@ -53,7 +53,7 @@ public class PlayerDodgeRoll : MonoBehaviour
 
     private void OnDodgeRollPerformed(InputAction.CallbackContext context)
     {
-        if (_isDodgeRolling || _cooldownRemaining > 0f)
+        if (PauseState.IsPaused || _isDodgeRolling || _cooldownRemaining > 0f)
         {
             return;
         }

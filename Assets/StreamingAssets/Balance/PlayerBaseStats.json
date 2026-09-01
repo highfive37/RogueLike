@@ -1,0 +1,19 @@
+{
+  "_guide": "플레이어 기본 능력치 설정 파일입니다. 숫자만 수정하고 Unity에서 Play를 누르면 바로 반영됩니다(에디터를 켜둔 채로 값만 저장해도 됨). 필드 하나하나 설명은 아래 _fieldGuide를 참고하세요. 이 파일이 없거나 형식이 깨지면 게임은 죽지 않고 코드에 내장된 기본값으로 대신 동작합니다(콘솔에 경고만 뜸).",
+  "_fieldGuide": {
+    "moveSpeed": "플레이어 이동 속도(유닛/초). 클수록 빠르게 움직임. 기본 5.0",
+    "rangedDamage": "원거리 무기 기본 공격력(발사체 1발당 데미지). 기본 8.0",
+    "rangedFireCooldown": "원거리 무기 발사 간격(초). 작을수록 빠르게 연사함. 기본 0.65 (초당 약 1.54발)",
+    "meleeDamage": "근접 무기 기본 공격력. 기본 15.0",
+    "meleeRange": "근접 무기 공격 범위(유닛). 기본 1.5",
+    "projectileSpeed": "발사체가 날아가는 속도(유닛/초). 기본 15.0",
+    "projectileLifetime": "발사체가 사라지기까지 유지되는 기본 시간(초). 실제 이동 거리 = projectileSpeed × projectileLifetime. 기본 0.2 (=3유닛)"
+  },
+  "moveSpeed": 5.0,
+  "rangedDamage": 8.0,
+  "rangedFireCooldown": 0.65,
+  "meleeDamage": 15.0,
+  "meleeRange": 1.5,
+  "projectileSpeed": 15.0,
+  "projectileLifetime": 0.2
+}

@@ -3,12 +3,14 @@ using UnityEngine;
 [CreateAssetMenu(fileName = "MeleeWeaponData", menuName = "RogueLike/Weapons/Melee Weapon")]
 public class MeleeWeaponData : WeaponData
 {
-    [SerializeField] private float range = 1.5f;
+    // Damage/Range are hand-tunable balance numbers, so they read from
+    // GameBalance (Assets/StreamingAssets/Balance/PlayerBaseStats.json)
+    // instead of a serialized field - see WeaponData.Damage.
+    public override float Damage => GameBalance.Player.meleeDamage;
+    public float Range => GameBalance.Player.meleeRange;
 
-    public float Range => range;
-
-    public override IWeapon CreateWeapon(Transform owner, GameObjectPool projectilePool)
+    public override IWeapon CreateWeapon(Transform owner, GameObjectPool projectilePool, PlayerPassiveStats passiveStats)
     {
-        return new MeleeWeapon(owner, this);
+        return new MeleeWeapon(owner, this, passiveStats);
     }
 }

@@ -11,7 +11,8 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f6164de99c0cf124992e651ab4667305, type: 3}
   m_Name: RangedGun
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   weaponName: Ranged Gun
   damage: 8
   projectileSpawnDistance: 1
+  fireCooldown: 0.65

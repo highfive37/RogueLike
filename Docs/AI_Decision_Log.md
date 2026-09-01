@@ -44,6 +44,348 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-08-31 — 방 지오메트리: 방향 조합 프리팹 vs 런타임 절차적 생성
+
+### 배경 / 문제
+- Stage 2.5(룸 시스템 전환) 중 각 방의 바닥/벽/문을 어떻게 만들지 결정 필요.
+  방마다 문이 열린 방향 조합이 다름(예: 시작방은 1방향만, 중간방은 2방향).
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 방향 조합별 프리팹을 미리 다 만들어둠(2^4=16가지) | 프리팹만 배치하면 끝, 런타임 코드 불필요 | 조합 폭발(최대 16종) — 문/벽 배치를 조합마다 수작업으로 만들어야 함, `RoomData`의 연결 정보와 별도로 프리팹 선택 로직도 필요해 데이터가 두 곳(연결 정보 + 프리팹 종류)으로 갈라짐 |
+| `RoomController.Initialize()`가 `RoomData`(연결 방향 목록)를 보고 그 자리에서 바닥/벽/문을 직접 생성 | 조합 폭발 없음 — 이미 있는 `RoomData` 연결 정보를 그대로 재사용, `Room_Base.prefab`은 빈 껍데기 하나로 충분 | 지오메트리 생성 코드를 직접 작성/유지해야 함 |
+
+### Claude 제안
+- 두 번째 대안 채택 제안. "여러 방향 조합 프리팹을 따로 만들 필요가 있냐"는
+  질문에 대해, 이미 `RoomData`가 문 방향별 연결 리스트를 authoring하고 있으므로
+  그 정보를 프리팹 선택이 아니라 지오메트리 생성 입력으로 그대로 재사용하면
+  조합 폭발을 피할 수 있다는 점을 근거로 제시.
+
+### 선택한 방향
+- 그대로 채택. `Room_Base.prefab`을 `RoomManager`+`RoomController`만 있는 빈
+  껍데기로 축소, 바닥/벽/문 지오메트리는 전부 `RoomController.Initialize()`
+  에서 코드로 생성.
+
+### 선택 이유
+- 데이터(연결 정보)와 비주얼(지오메트리)을 분리하지 않고 하나의 소스에서
+  파생시키는 쪽이, 프리팹 조합을 따로 관리하는 것보다 향후 방 크기/모양이
+  다양해질 때도 확장 비용이 낮음.
+
+### 관련 파일
+- `Assets/Scripts/Room/RoomController.cs`
+- `Assets/Prefabs/Room_Base.prefab`
+- `Assets/Data/Rooms/Room01_Start~Room05_Boss.asset`
+
+---
+
+## 2026-08-31 — 방-방 이동: 물리적 도보 이동 vs 카메라 연출 전환
+
+### 배경 / 문제
+- 문을 통과해 다음 방으로 넘어가는 방식을 실플레이 피드백으로 재검토.
+  기존엔 플레이어가 물리적으로 걸어서 다음 방 위치까지 이동해야 했음.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 물리적으로 계속 걸어서 이동(기존 방식) | 구현 이미 되어 있음, 추가 작업 없음 | 방 사이 빈 공간을 걸어서 지나가야 해 템포가 늘어짐, 방 배치 간격(`roomGap`)을 넓게 잡을수록 더 길어짐 |
+| 문 트리거 통과 시 플레이어 조작을 잠그고 카메라만 목표 방 입구까지 보간 이동(`SmoothStep`), 도착 후 플레이어 재배치 | 방 사이 이동 템포가 즉시로 줄어듦, 로딩/전환 연출로 방 경계를 자연스럽게 가릴 수 있음 | 전환 중 렌더러/입력/물리(`Rigidbody.isKinematic`) 상태를 임시로 바꿨다가 정확히 원복해야 함 — 상태 복원을 빠뜨리면 버그로 이어짐 |
+
+### Claude 제안
+- 두 대안을 제시, 보간 방식 중에서도 즉시 컷 vs 부드러운 이동 중 사용자가
+  부드러운 이동(`SmoothStep`)을 선택.
+
+### 선택한 방향
+- 카메라 연출 전환 채택. 신규 `RoomTransitionController`(최상위 씬 오브젝트)
+  — 문 트리거 통과 시 플레이어 렌더러 비활성화+입력 잠금+`Rigidbody` kinematic
+  전환 후 카메라를 0.6초간 `SmoothStep`으로 이동, 도착 시 전부 원복.
+
+### 선택 이유
+- 방이 40x40 유닛으로 커지면서 물리 도보 이동의 템포 저하가 더 뚜렷해질
+  것으로 판단, 연출 전환이 다음 방으로의 진입감도 함께 살릴 수 있어 선택.
+
+### 관련 파일
+- `Assets/Scripts/Room/RoomTransitionController.cs`
+- `Assets/Scripts/Room/DoorController.cs`
+- `Assets/Scripts/Camera/QuarterViewCameraFollow.cs`
+
+---
+
+## 2026-08-31 — 문 잠금 정책: 방별 사전 잠금 vs 아이작 방식(기본 열림 + 입장 시 잠금)
+
+### 배경 / 문제
+- 기존엔 "미클리어 방은 처음부터 잠김, 클리어 시 연결된 문만 해제" 정책이었음.
+  사용자가 실플레이 후 이 정책을 뒤집기로 요청.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 기존: 미클리어 방은 authoring 시점부터 문이 잠김 상태로 시작, 클리어 시 연결된 문만 해제 | 구현이 이미 되어 있음 | 아직 들어가지 않은 방의 문도 미리 잠겨 있어, 플레이어가 진입 자체를 시도하기 전부터 "잠김"이 보여서 아이작 특유의 "들어가자마자 갇힌다"는 긴장감이 약함 |
+| 아이작 방식: 기본적으로 모든 문은 열림, 미클리어 방에 **입장하는 순간** 그 방의 모든 문이 잠기고, 클리어하면 다시 전부 열림 | 아이작 원작과 동일한 "입장=감금" 긴장감, 변경 지점이 2곳뿐(문 생성 시 기본값, `EnterRoom()`에 `LockAllDoors()` 추가)으로 구현 비용 낮음 | `HandleCleared()`의 기존 `door.IsConnected` 체크가 사실상 무의미해짐(안전장치로만 유지) |
+
+### Claude 제안
+- 사용자가 아이작 방식으로 직접 방향을 지정, 변경 지점이 `RoomController.
+  BuildSide()`(기본값 열림)와 `EnterRoom()`(입장 시 전체 잠금) 2곳뿐이라는 점을
+  확인해 그대로 구현.
+
+### 선택한 방향
+- 아이작 방식 채택.
+
+### 선택 이유
+- 사용자가 참고 대상으로 삼은 아이작 본가의 룰과 실제 체감을 일치시키는 것이
+  목적이었고, 변경 비용도 낮아 트레이드오프가 명확했음.
+
+### 관련 파일
+- `Assets/Scripts/Room/RoomController.cs`
+
+---
+
+## 2026-08-31 — 미니맵 안개 시스템: 아이작 방식(전체 공개) vs 엔터 더 겅전 방식(3단계 발견)
+
+### 배경 / 문제
+- 미니맵 도입 초기엔 아이작 스타일로 층의 모든 방을 처음부터 다 보여주는
+  방식으로 구현했음. 사용자가 재검토를 요청해 "엔터 더 겅전(Enter the
+  Gungeon)" 스타일 — 안개 효과 + 방 연결선 + 배경 패널 — 로 재작업.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 아이작 방식: 층 전체 방을 처음부터 다 노출(안개 없음) | 구현 이미 되어 있음, 전체 구조를 한눈에 파악 가능 | 아직 가보지 않은 방의 타입(전투/보스 등)까지 미리 다 알 수 있어 탐험 긴장감이 떨어짐 |
+| 엔터 더 겅전 방식: `RevealState` 3단계(`Hidden`→`Discovered`(인접 방문 시 타입 비공개 회색)→`Visited`(실제 입장 시 진짜 색 공개)) + 방 연결선 + 배경 패널 | 인접 발견 방식이 탐험 긴장감을 살림, 연결선으로 미로 구조를 시각적으로 보여줌 | `Dictionary<int, RevealState>` 및 연결선 프리팹(`MinimapConnector`) 추가 관리 필요, 기존 아이콘 prefab의 pivot도 좌표 계산 통일을 위해 재조정 필요 |
+
+### Claude 제안
+- 사용자가 엔터 더 겅전 스타일로 직접 방향 지정. `RoomEntered` 이벤트에서
+  해당 방을 `Visited`로, 그 방의 모든 인접 방(`Doors[].TargetRoom`)을
+  `Discovered`로 승격시키는 방식을 제안해 구현.
+
+### 선택한 방향
+- 엔터 더 겅전 방식 채택. `MinimapUI.cs` 전면 재작성, `MinimapConnector.prefab`
+  신규, `MinimapIcon.prefab` pivot 재조정.
+
+### 선택 이유
+- 사용자가 참고하려는 대상 자체가 바뀌었고("아이작→겅전"), 안개 효과가
+  탐험 긴장감이라는 로그라이트 장르 특성과 더 맞는다고 판단.
+
+### 관련 파일
+- `Assets/Scripts/UI/MinimapUI.cs`
+- `Assets/Prefabs/UI/MinimapIcon.prefab`, `MinimapConnector.prefab`
+
+---
+
+## 2026-08-31 — 패시브 아이템 데이터 모델: 타입별 서브클래스 vs 단일 클래스 + enum 판별자
+
+### 배경 / 문제
+- 패시브 아이템(공격력/이동속도/사거리/공격속도 4종) 도입 시, 액티브 아이템은
+  `IActiveItem` 구현체를 종류마다 따로 두는 다형성 구조였는데 패시브도 같은
+  방식으로 갈지 결정 필요.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 액티브처럼 타입별 서브클래스(`AttackPassiveData`/`MoveSpeedPassiveData`...) + 공통 인터페이스 | 타입마다 동작이 크게 달라져도 확장이 깔끔, 액티브와 구조 일관성 | 4종이 전부 "플레이어 스탯에 값 하나 더하기"로 동일 — 클래스 4개가 사실상 상수만 다른 껍데기, 에셋 생성 메뉴도 4개로 갈라짐 |
+| 단일 concrete `PassiveItemData` + `PassiveItemType` enum으로 분기 | 클래스 1개·에셋 메뉴 1개, authoring이 "타입 고르고 수치 입력"으로 단순 | enum에 없는 완전히 새로운 종류의 패시브(예: 조건부 발동)가 생기면 그때 리팩터 필요 |
+
+### Claude 제안
+- 두 번째 대안 추천. 4종의 행동이 전부 "스탯 += 값"으로 동형이라 다형성이
+  실제로 분기하는 지점이 없고, 서브클래스는 지금 시점엔 상수 테이블을 클래스로
+  부풀리는 것뿐이라는 점을 근거로 제시.
+
+### 선택한 방향
+- 단일 `PassiveItemData` + `PassiveItemType` enum 채택. 액티브/패시브 공통
+  상위 타입으로 추상 `ItemData : ScriptableObject`(`OnAcquired(GameObject)`)
+  신설, `ActiveItemData`도 이를 상속하도록 정리해 `ItemPickup`이 종류 분기
+  없이 `_item.OnAcquired(...)` 하나로 처리.
+
+### 선택 이유
+- "실제로 다르게 동작하는 게 없는데 구조만 나누는" 과설계를 피함. 조건부/특수
+  패시브가 실제로 필요해지는 시점에 그 요구를 보고 서브클래스로 승격하기로 함
+  — `ItemData` 공통 베이스가 이미 있어 그때 확장 비용도 낮음.
+
+### 관련 파일
+- `Assets/Scripts/Combat/ItemData.cs`, `PassiveItemData.cs`, `PassiveItemType.cs`,
+  `ActiveItemData.cs`
+- `Assets/Scripts/Combat/ItemPickup.cs`, `ItemDropManager.cs`
+- `Assets/Scripts/Player/PlayerPassiveStats.cs`
+- `Assets/Data/PassiveItems/*.asset`
+
+---
+
+## 2026-08-31 — 패시브 스탯 Pip 바: 아이작 제곱근 소프트캡 공식 vs 개수 기준 캡 + 기본값 포함 비율
+
+### 배경 / 문제
+- ESC 장비 메뉴 좌측의 패시브 스탯 표시를 "공격력 증가: +0%" 문장형에서
+  바인딩 오브 아이작 스타일의 10칸 Pip 바로 바꿔달라는 요청. 아이작을
+  리서치했으나 우리 시스템(아이템당 고정값 + 덧셈, 무제한 스택)과 스탯
+  모델이 달라 원작 공식을 그대로 못 씀.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 아이작 원작 공식(`기본 × √(아이템수 × 1.2 + 1)` 제곱근 소프트캡) 이식 | 원작과 동일한 체감 곡선 | 아이작은 곱연산/소프트캡 기반, 우리는 고정값 덧셈이라 공식 전제가 안 맞음 — 이식하려면 스탯 시스템 자체를 갈아야 함 |
+| 스탯별로 "몇 개면 만땅"인지를 에셋에 직접 authoring(`capCount`), 채움 = `(기본값 + 보너스) / (기본값 + capCount × 아이템당증가량)` | 드랍 시스템과 같은 소스(`PassiveItemData`)를 공유해 UI에 캡을 중복 보관 안 함, 기본 스탯도 분자·분모에 얹어 아이템 0개에서도 기본 비율만큼 차 있음, 튜닝이 "개수 하나 바꾸기"로 직관적 | 퍼센트/곡선이 아니라 선형 근사(아이작 위키도 자기네 걸 "imprecise scale"이라 표현) |
+
+### Claude 제안
+- 두 번째 대안. 아이작도 실제로는 정밀 스케일이 아니라 구간 근사이고,
+  `capCount`를 데이터 소스에 두면 UI가 별도 상수를 안 들고 가도 된다는 점을
+  근거로 제시. 이후 "기본 스탯이 빠져 있다"는 피드백을 받아 분자·분모에
+  기본값을 동일하게 더하는 형태로 보정(기존 튜닝 개수는 그대로 유지되도록 역산).
+
+### 선택한 방향
+- 개수 기준 캡 + 기본값 포함 선형 비율 채택. `PassiveItemData.capCount` 필드
+  신설, `PlayerStatsPanelUI`가 `PlayerCombat`/`PlayerMovement`/`Projectile`
+  기본값을 라이브로 읽어 재계산. 중간에 뒀던 타입별 획득 개수 카운터는 이
+  공식으로 안 쓰이게 되어 제거.
+
+### 선택 이유
+- 포트폴리오 프로토타입 단계에서 Pip 바는 "대충 얼마나 강해졌나"를 보여주면
+  충분하고, 정밀 곡선보다 튜닝 편의(개수 하나로 조정)와 데이터 단일 소스가
+  더 중요하다고 판단.
+
+### 관련 파일
+- `Assets/Scripts/UI/PlayerStatsPanelUI.cs`
+- `Assets/Scripts/Combat/PassiveItemData.cs`, `Projectile.cs`
+- `Assets/Scripts/Player/PlayerPassiveStats.cs`, `PlayerMovement.cs`,
+  `Assets/Scripts/Player/PlayerCombat.cs`
+
+---
+
+## 2026-08-31 — 일시정지(ESC 메뉴): 플레이어 입력만 차단 vs `Time.timeScale = 0`
+
+### 배경 / 문제
+- ESC 장비 메뉴가 열려 있어도 적/발사체가 계속 움직임 — 플레이어 입력만
+  잠그고 있었기 때문. 게임 전체를 멈추고 싶다는 요청.
+- 2026-08-21 "캐릭터 선택 UI" 결정에서는 즉시성 입력 액션이 얼어붙은 상태를
+  남길 수 있다는 이유로 `timeScale=0`을 **일부러 피하고** 입력 비활성화를
+  택했었음 — 그 판단을 이 맥락에서 다시 검토.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 시스템별로 개별 정지(적 AI, 발사체, 스폰 타이머 등을 각각 멈춤) | `timeScale`을 슬로우모션 연출용으로 따로 남겨둘 수 있음 | 멈춰야 할 대상을 매번 빠짐없이 챙겨야 함 — 새 시스템이 생길 때마다 정지 목록에 추가를 잊으면 조용히 안 멈춤 |
+| `Time.timeScale = 0` (정확히 0) | 한 줄로 전부 정지, 누락 위험 없음 | Input System 버튼 이벤트(`performed`)는 `timeScale`과 무관하게 계속 발동 → 정지 중 공격/구르기/스킬 버튼이 실행되는 허점 |
+| `timeScale`을 0에 가까운 아주 작은 값 | 완전 정지의 부작용을 회피하려는 시도 | 메뉴를 오래 열수록 쿨다운/수명이 미세하게 누적되는 드리프트 버그 |
+
+### Claude 제안
+- 정확히 `0` 추천. 코드베이스의 모든 `Time.deltaTime`/`fixedDeltaTime` 사용처가
+  곱셈·누적뿐이고 나눗셈이 없어 0으로 멈춰도 0-나누기 위험이 없음을 먼저 확인.
+  0이 아닌 값은 드리프트를 남기므로 배제. 남는 허점(버튼 이벤트)은 별도
+  가드로 막기로 함.
+
+### 선택한 방향
+- `EquipMenuController`가 `Time.timeScale` 0/1을 토글, 입력 비활성화 토글은
+  제거. 후속으로 `PauseState`(정적, `IsPaused => Time.timeScale <= 0f`) 신설,
+  `PlayerCombat`/`PlayerDodgeRoll`/`ActiveItemController`의 버튼 핸들러 맨
+  앞에 `if (PauseState.IsPaused) return;` 가드 추가.
+
+### 선택 이유
+- 08-21에 `timeScale=0`을 피했던 이유(즉시성 액션이 얼어붙은 상태값을 남김)는
+  이번엔 `PauseState` 가드로 정면 차단할 수 있어 트레이드오프가 뒤집힘.
+  "멈출 대상을 빠짐없이 나열"하는 방식은 시스템이 늘수록 유지가 깨지기 쉬워,
+  누락 불가능한 전역 정지 + 좁은 예외 가드가 더 안전하다고 판단.
+
+### 관련 파일
+- `Assets/Scripts/Player/EquipMenuController.cs`, `PauseState.cs`
+- `Assets/Scripts/Player/PlayerCombat.cs`, `PlayerDodgeRoll.cs`
+- `Assets/Scripts/Combat/ActiveItemController.cs`
+
+---
+
+## 2026-08-31 — 밸런스 수치 외부화: 파일 포맷(JSON vs CSV/key=value/YAML)과 주입 방식
+
+### 배경 / 문제
+- 플레이어 기본 능력치와 패시브 아이템 효과를 매번 Claude/Unity를 거치지 않고
+  텍스트 파일만 고쳐 조정하고 싶다는 요청. 포맷과, 그 값을 코드가 어떻게
+  읽을지 둘 다 결정 필요.
+
+### 검토한 대안 (포맷)
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| CSV | 표 형태로 한눈에, diff 깔끔 | 중첩 구조 표현이 약함, 값별 설명 주석을 넣을 자리가 없음 |
+| key=value(.ini류) | 사람이 쓰기 가장 쉬움 | 파서를 직접 짜야 함, 타입/구조 검증 부재 |
+| YAML | 주석 지원, 가독성 좋음 | Unity 기본 파서 없음(외부 라이브러리 필요) |
+| JSON + `JsonUtility` | Unity 내장 파서, DTO로 타입 안전, 매칭 안 되는 여분 필드는 무시되므로 `_guide` 필드를 "주석"처럼 넣을 수 있음 | 순수 JSON은 진짜 주석(`//`)이 없음 |
+
+### 검토한 대안 (주입 방식)
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 로드한 값을 ScriptableObject/`[SerializeField]`에 써넣기 | 기존 인스펙터 워크플로 유지 | 에디터 Play 중 SO를 mutate하면 Play 종료 후에도 안 되돌아갈 위험(`unity63-architecture` 가이드 경고) |
+| 각 값의 프로퍼티 getter가 `GameBalance`를 직접 읽음, 원래 `[SerializeField]` 수치 필드는 제거 | SO를 절대 mutate 안 함, 호출부(`RangedWeapon`/`PlayerCombat` 등)는 무수정으로 JSON을 따라감 | `WeaponData.Damage`를 abstract로 바꾸는 등 프로퍼티 구조를 손봐야 함, 인스펙터에서 값이 안 보임 |
+
+### Claude 제안
+- 포맷은 JSON + `JsonUtility`(내장 파서 + `_guide` 주석 트릭), 위치는
+  `StreamingAssets/Balance/`(빌드 포함 읽기 전용 시드 데이터의 공식 권장
+  위치, `unity63-architecture` 스킬 확인). 주입은 프로퍼티 getter 방식 +
+  원본 `[SerializeField]` 제거(인스펙터에 남기면 "고쳐도 반영 안 됨" 혼란).
+  파싱 실패 시 내장 기본값 폴백.
+
+### 선택한 방향
+- 그대로 채택. 신규 `GameBalance`(정적 로더, lazy load +
+  `[RuntimeInitializeOnLoadMethod]`로 Play/빌드마다 캐시 강제 리셋),
+  `PlayerBaseStatsData`/`PassiveItemBalanceData` DTO,
+  `PlayerBaseStats.json`/`PassiveItems.json`. `ProjectileRange`는 JSON에
+  "유닛" 단위로 적고 내부에서 초 단위로 자동 환산.
+
+### 선택 이유
+- JSON은 이 프로젝트가 유일하게 추가 의존성 없이 타입 안전하게 다룰 수 있는
+  포맷이고, `_guide` 필드 트릭으로 "포맷 안 깨는 주석" 요구도 만족. getter
+  주입은 SO mutate 금지 가이드를 지키면서 호출부를 하나도 안 건드려도 되는
+  유일한 방법이었음.
+- 캐시 리셋 훅: lazy 캐시만 두면 이 자동화 환경에서 Stop→Play 후에도 정적
+  필드가 리셋 안 되는 경우가 실측돼(= "JSON 고치고 Play만 다시" 약속이
+  깨짐), 도메인 리로드 여부와 무관하게 항상 도는
+  `[RuntimeInitializeOnLoadMethod(BeforeSceneLoad)]`로 방어.
+
+### 관련 파일
+- `Assets/Scripts/Balance/GameBalance.cs`, `PlayerBaseStatsData.cs`,
+  `PassiveItemBalanceData.cs`
+- `Assets/StreamingAssets/Balance/PlayerBaseStats.json`, `PassiveItems.json`
+- `Assets/Scripts/Combat/WeaponData.cs`, `RangedWeaponData.cs`,
+  `MeleeWeaponData.cs`, `PassiveItemData.cs`, `Projectile.cs`
+- `Assets/Scripts/Player/PlayerMovement.cs`
+
+---
+
+## 2026-08-31 — 패시브 스탯 "공격 속도": 배율(퍼센트) vs 고정값 덧셈
+
+### 배경 / 문제
+- 패시브 아이템 4종(공격력/이동속도/사거리/공격속도) 중 공격속도만 배율
+  방식(아이템 1개당 +10%, `AttackSpeedMultiplier` 곱연산)으로 구현돼 있었고,
+  나머지 3개는 전부 고정값 덧셈이었음. 사용자가 관리 측면에서 이 불일치가
+  맞는지 검토를 요청.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 배율 방식 유지 | 변경 작업 없음 | 나머지 3개 스탯과 스택 방식이 달라, Pip 바 채움 계산식도 공격속도만 별도 공식(`AttackSpeedRatio`/`AttackSpeedMaxRate`)을 따로 둬야 했음(배율은 base 대비 비율로 표현하면 base가 약분되어 사라지므로, base-상대 공식이 성립하지 않음) — 관리 포인트가 스탯마다 다름 |
+| B. 고정값 덧셈으로 전환(초당 공격 횟수를 그대로 더함) | 나머지 3개와 완전히 동일한 `AdditiveRatio` 공식 하나로 통일 가능, 관리 포인트 단일화 | 기존 "0.1=10%" 감각의 수치를 "초당 0.15회"라는 다른 단위로 재계산해서 재설계해야 함(기존 배율 기준으로 튜닝했던 `capCount` 등도 함께 재계산 필요) |
+
+### Claude 제안
+- B안 추천. 나머지 3개 스탯이 전부 "base + 고정값 보너스"라는 동일한 모델을
+  따르는데 공격속도만 배율이라, Pip 바 공식이 스탯별로 갈라지는 근본 원인이
+  바로 이 불일치라는 점을 근거로 제시.
+
+### 선택한 방향
+- B안 채택. `PlayerPassiveStats.AttackSpeedMultiplier`(배율, 1.0 시작) →
+  `AttackSpeedBonus`(고정값, 0 시작)로 교체, 아이템 1개당 초당 0.15회 증가로
+  확정. `PlayerStatsPanelUI`의 전용 특수 공식 삭제, 나머지 3개와 동일한
+  `AdditiveRatio` 하나로 통일. `capCount`를 8→24로 재계산(0개 아이템 상태의
+  Pip 바가 이전과 동일하게 3/10이 나오도록 새 공식 기준 역산).
+
+### 선택 이유
+- 4개 스탯이 전부 같은 "base + 고정값 보너스" 모델을 공유하면 코드(공식
+  하나, 특수 케이스 없음)와 데이터(JSON의 `amount` 단위 설명) 양쪽에서 관리
+  포인트가 하나로 줄어듦 — 배율을 유지하려면 계속 스탯 하나만 예외로 다뤄야
+  했음.
+
+### 관련 파일
+- `Assets/Scripts/Player/PlayerPassiveStats.cs`
+- `Assets/Scripts/Combat/RangedWeapon.cs`
+- `Assets/Scripts/UI/PlayerStatsPanelUI.cs`
+- `Assets/Scripts/Balance/GameBalance.cs`
+- `Assets/StreamingAssets/Balance/PassiveItems.json`
+
+---
+
 ## 2026-08-24 — Stage 2 #6/#7 구조: 적 풀, 스테이지 데이터 공급자, 적-풀 연결 방식
 
 ### 배경 / 문제

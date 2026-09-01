@@ -7,8 +7,14 @@ public class RangedWeaponData : WeaponData
 
     public float ProjectileSpawnDistance => projectileSpawnDistance;
 
-    public override IWeapon CreateWeapon(Transform owner, GameObjectPool projectilePool)
+    // Damage/FireCooldown are hand-tunable balance numbers, so they read
+    // from GameBalance (Assets/StreamingAssets/Balance/PlayerBaseStats.json)
+    // instead of a serialized field - see WeaponData.Damage.
+    public override float Damage => GameBalance.Player.rangedDamage;
+    public float FireCooldown => GameBalance.Player.rangedFireCooldown;
+
+    public override IWeapon CreateWeapon(Transform owner, GameObjectPool projectilePool, PlayerPassiveStats passiveStats)
     {
-        return new RangedWeapon(owner, this, projectilePool);
+        return new RangedWeapon(owner, this, projectilePool, passiveStats);
     }
 }

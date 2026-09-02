@@ -8,8 +8,10 @@ using UnityEngine.UI;
 public class ActiveItemCooldownUI : MonoBehaviour
 {
     [SerializeField] private ActiveItemController skillController;
+    [SerializeField] private PlayerActiveItemInventory activeItemInventory;
     [SerializeField] private Image cooldownOverlay;
     [SerializeField] private Text cooldownText;
+    [SerializeField] private Text itemNameText;
     [SerializeField] private float readyTextHoldDuration = 0.5f;
 
     private float _readyElapsed;
@@ -21,6 +23,11 @@ public class ActiveItemCooldownUI : MonoBehaviour
 
     private void Update()
     {
+        if (itemNameText != null && activeItemInventory != null)
+        {
+            itemNameText.text = activeItemInventory.EquippedItem != null ? activeItemInventory.EquippedItem.ItemName : string.Empty;
+        }
+
         if (skillController == null || cooldownOverlay == null)
         {
             return;

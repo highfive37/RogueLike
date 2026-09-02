@@ -57,8 +57,16 @@ public class EquipMenuController : MonoBehaviour
 
     private void Open()
     {
+        // Don't steal pause ownership from another source (e.g. the Floor Complete result
+        // screen) that's already paused the game - opening the equip menu on top of it and
+        // later closing it would otherwise resume play while that other screen is still shown.
+        if (PauseState.IsPaused)
+        {
+            return;
+        }
+
         _isOpen = true;
-        Time.timeScale = 0f;
+        PauseState.RequestPause(this);
         uiManager.ShowEquipSelection(playerInventory, playerPassiveStats, Close);
     }
 
@@ -66,6 +74,6 @@ public class EquipMenuController : MonoBehaviour
     {
         _isOpen = false;
         uiManager.HideEquipSelection();
-        Time.timeScale = 1f;
+        PauseState.ReleasePause(this);
     }
 }

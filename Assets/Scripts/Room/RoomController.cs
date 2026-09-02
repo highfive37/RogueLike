@@ -27,6 +27,7 @@ public class RoomController : MonoBehaviour
     private RoomManager _roomManager;
     private RoomData _roomData;
     private EnemySpawner _enemySpawner;
+    private ItemDropManager _itemDropManager;
     private bool _isActivated;
     private readonly Dictionary<DoorDirection, DoorController> _doorsByDirection = new Dictionary<DoorDirection, DoorController>();
 
@@ -54,10 +55,11 @@ public class RoomController : MonoBehaviour
         _roomManager.RoomCleared -= HandleCleared;
     }
 
-    public void Initialize(RoomData data, EnemySpawner enemySpawner)
+    public void Initialize(RoomData data, EnemySpawner enemySpawner, ItemDropManager itemDropManager)
     {
         _roomData = data;
         _enemySpawner = enemySpawner;
+        _itemDropManager = itemDropManager;
         RoomId = data.RoomId;
         RoomType = data.Type;
         GridPosition = data.GridPosition;
@@ -196,6 +198,7 @@ public class RoomController : MonoBehaviour
 
     public void EnterRoom()
     {
+        Debug.Log($"Entered Room {RoomId} ({RoomType}) at grid {GridPosition}.");
         RoomEntered?.Invoke(this);
 
         if (_isActivated)
@@ -204,6 +207,11 @@ public class RoomController : MonoBehaviour
         }
 
         _isActivated = true;
+
+        if (RoomType == RoomType.Item)
+        {
+            _itemDropManager.SpawnGuaranteedRewards(transform);
+        }
 
         if (_roomData.Enemies.Count == 0)
         {

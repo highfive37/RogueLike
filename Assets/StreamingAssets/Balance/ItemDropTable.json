@@ -1,0 +1,34 @@
+{
+  "_guide": "적을 처치했을 때 아이템이 드랍되는 규칙을 정하는 파일입니다. 한 번의 처치에서 최대 1개까지만 드랍됩니다(액티브+패시브 동시 드랍 없음). 두 단계로 나뉩니다: (1) 이번 킬에서 애초에 뭔가 드랍되긴 하는지(dropChance), (2) 드랍이 결정됐다면 액티브/패시브 중 어느 쪽인지(activeCategoryWeight/passiveCategoryWeight 비율), 그리고 그 안에서 구체적으로 어떤 아이템인지(activeWeights/passiveWeights). 숫자만 수정하고 저장하면 다음 Play(또는 빌드 실행) 시 바로 반영됩니다 - Unity를 켜둔 채로 저장해도 됩니다. 이 파일이 없거나 형식이 깨지면 dropChance=0.5, active:passive 비율=1:5, 모든 아이템 가중치=1로 대체되며, 콘솔에 경고만 뜨고 게임은 죽지 않습니다.",
+  "_howToEdit": [
+    "1. dropChance는 '적 1마리를 죽였을 때, 뭔가(액티브든 패시브든) 하나라도 드랍될 확률'입니다. 0.0(0%)~1.0(100%) 사이 값.",
+    "2. dropChance를 통과하면, activeCategoryWeight와 passiveCategoryWeight의 '상대 비율'로 액티브/패시브 중 하나만 선택됩니다. 예: active=1, passive=5면 드랍될 때마다 액티브일 확률 1/6, 패시브일 확률 5/6 - 이 둘이 동시에 나오는 일은 없습니다.",
+    "3. 남은 액티브 아이템이 하나도 없으면(이번 런에서 이미 다 나왔으면) activeCategoryWeight와 무관하게 항상 패시브 쪽으로 넘어갑니다.",
+    "4. 카테고리가 정해진 다음, activeWeights/passiveWeights의 weight로 그 안에서 구체적으로 어떤 아이템인지 정해집니다. 이것도 절대 확률이 아니라 상대 비율입니다. 예: 후보가 3개(A=1, B=1, C=1)면 각각 1/3. C만 10으로 올리면(A=1, B=1, C=10) A=1/12, B=1/12, C=10/12.",
+    "5. weight류는 전부 0 이상의 숫자만 사용하세요(정수/소수 모두 가능). 음수는 0으로 취급됩니다. 목록에 없는 아이템은 자동으로 기본 가중치 1을 받습니다.",
+    "6. 빠른 테스트 팁: 특정 액티브 아이템(예: Flamethrower)을 몇 판 안에 확실히 보고 싶다면 - dropChance를 1(100%)에 가깝게, activeCategoryWeight를 passiveCategoryWeight보다 훨씬 크게(예: active=100, passive=1), 그리고 그 아이템의 activeWeights 항목도 크게 올리세요. 세 군데 다 걸려 있으니 하나만 올려서는 확 체감되지 않을 수 있습니다. 테스트가 끝나면 전부 원래 값으로 되돌리는 것을 잊지 마세요."
+  ],
+  "_fieldGuide": {
+    "dropChance": "적 1마리 처치당 '뭔가 하나' 드랍될 확률(0~1). 기본 0.5(50%)",
+    "activeCategoryWeight": "드랍이 결정됐을 때 그게 액티브 아이템일 상대 비율. 기본 1",
+    "passiveCategoryWeight": "드랍이 결정됐을 때 그게 패시브 아이템일 상대 비율. 기본 5 (액티브보다 5배 흔함)",
+    "activeWeights[].name": "액티브 아이템 데이터 에셋의 skillName(ItemName)과 정확히 일치해야 합니다. 현재 값: \"Grenade\", \"Enhanced Shot\", \"Flamethrower\"",
+    "activeWeights[].weight": "액티브로 결정됐을 때, 이 아이템이 뽑힐 상대 가중치. 기본 1",
+    "passiveWeights[].type": "PassiveItemType 이넘 이름과 정확히 일치해야 합니다: AttackPower / MoveSpeed / ProjectileRange / AttackSpeed 중 하나",
+    "passiveWeights[].weight": "패시브로 결정됐을 때, 이 아이템이 뽑힐 상대 가중치. 기본 1"
+  },
+  "dropChance": 0.35,
+  "activeCategoryWeight": 1,
+  "passiveCategoryWeight": 2,
+  "activeWeights": [
+    { "name": "Grenade", "weight": 1 },
+    { "name": "Enhanced Shot", "weight": 1 },
+    { "name": "Flamethrower", "weight": 1 }
+  ],
+  "passiveWeights": [
+    { "type": "AttackPower", "weight": 1 },
+    { "type": "MoveSpeed", "weight": 1 },
+    { "type": "ProjectileRange", "weight": 1 },
+    { "type": "AttackSpeed", "weight": 1 }
+  ]
+}

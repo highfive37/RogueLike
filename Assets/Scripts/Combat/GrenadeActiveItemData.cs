@@ -3,19 +3,15 @@ using UnityEngine;
 [CreateAssetMenu(fileName = "GrenadeActiveItemData", menuName = "RogueLike/Active Items/Grenade")]
 public class GrenadeActiveItemData : ActiveItemData
 {
-    [SerializeField] private float fuseTime = 2.5f;
-    [SerializeField] private float throwDistance = 2.5f;
-    [SerializeField] private float throwTravelTime = 0.25f;
-    [SerializeField] private float explosionRadius = 1f;
-    [SerializeField] private float damage = 15f;
-    [SerializeField] private float cooldown = 3f;
-
-    public float FuseTime => fuseTime;
-    public float ThrowDistance => throwDistance;
-    public float ThrowTravelTime => throwTravelTime;
-    public float ExplosionRadius => explosionRadius;
-    public float Damage => damage;
-    public float Cooldown => cooldown;
+    // Every gameplay number is pulled from GameBalance
+    // (Assets/StreamingAssets/Balance/ActiveSkills.json) instead of serialized fields, so the
+    // JSON stays the sole authority - only skillName/Color (identity/visual) stay on this asset.
+    public float FuseTime => GameBalance.GrenadeSkill.fuseTime;
+    public float ThrowDistance => GameBalance.GrenadeSkill.throwDistance;
+    public float ThrowTravelTime => GameBalance.GrenadeSkill.throwTravelTime;
+    public float ExplosionRadius => GameBalance.GrenadeSkill.explosionRadius;
+    public float Damage => GameBalance.GrenadeSkill.damage;
+    public float Cooldown => GameBalance.GrenadeSkill.cooldown;
 
     public override IActiveItem CreateActiveItem(Transform owner, ActiveItemContext context, int level)
     {

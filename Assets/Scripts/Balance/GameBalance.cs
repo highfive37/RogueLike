@@ -22,10 +22,27 @@ public static class GameBalance
     private const string BalanceFolder = "Balance";
     private const string PlayerStatsFileName = "PlayerBaseStats.json";
     private const string PassiveItemsFileName = "PassiveItems.json";
+    private const string ItemDropTableFileName = "ItemDropTable.json";
+    private const string ActiveSkillsFileName = "ActiveSkills.json";
+    private const float DefaultDropWeight = 1f;
+    private const float DefaultDropChance = 0.5f;
+
+    // 1:5 mirrors the old independent 0.1/0.5 active/passive chances' relative rarity - active
+    // items are the rarer, bigger deal, passives are the common stat trickle.
+    private const float DefaultActiveCategoryWeight = 1f;
+    private const float DefaultPassiveCategoryWeight = 5f;
 
     private static bool _loaded;
     private static PlayerBaseStatsData _player;
     private static Dictionary<PassiveItemType, PassiveItemEntryData> _passiveByType;
+    private static Dictionary<string, float> _activeDropWeightsByName;
+    private static Dictionary<PassiveItemType, float> _passiveDropWeightsByType;
+    private static float _dropChance;
+    private static float _activeCategoryWeight;
+    private static float _passiveCategoryWeight;
+    private static GrenadeSkillData _grenadeSkill;
+    private static EnhancedShotSkillData _enhancedShotSkill;
+    private static FlamethrowerSkillData _flamethrowerSkill;
 
     // Static fields aren't guaranteed to reset between Play sessions purely
     // from a domain reload (observed directly in this project's automation
@@ -41,6 +58,14 @@ public static class GameBalance
         _loaded = false;
         _player = null;
         _passiveByType = null;
+        _activeDropWeightsByName = null;
+        _passiveDropWeightsByType = null;
+        _dropChance = DefaultDropChance;
+        _activeCategoryWeight = DefaultActiveCategoryWeight;
+        _passiveCategoryWeight = DefaultPassiveCategoryWeight;
+        _grenadeSkill = null;
+        _enhancedShotSkill = null;
+        _flamethrowerSkill = null;
     }
 
     public static PlayerBaseStatsData Player
@@ -49,6 +74,38 @@ public static class GameBalance
         {
             EnsureLoaded();
             return _player;
+        }
+    }
+
+    // GrenadeActiveItemData/EnhancedShotActiveItemData/FlamethrowerActiveItemData read every
+    // gameplay number through these instead of their own serialized fields, so
+    // Assets/StreamingAssets/Balance/ActiveSkills.json is the sole authority - same pattern as
+    // Player above. skillName/Color stay on the ScriptableObject asset since those are
+    // identity/visual, not balance.
+    public static GrenadeSkillData GrenadeSkill
+    {
+        get
+        {
+            EnsureLoaded();
+            return _grenadeSkill;
+        }
+    }
+
+    public static EnhancedShotSkillData EnhancedShotSkill
+    {
+        get
+        {
+            EnsureLoaded();
+            return _enhancedShotSkill;
+        }
+    }
+
+    public static FlamethrowerSkillData FlamethrowerSkill
+    {
+        get
+        {
+            EnsureLoaded();
+            return _flamethrowerSkill;
         }
     }
 
@@ -67,6 +124,46 @@ public static class GameBalance
         return _passiveByType.TryGetValue(type, out PassiveItemEntryData entry) ? entry.capCount : DefaultCapCount(type);
     }
 
+    // ItemDropManager calls these instead of hand-rolling its own weights, so
+    // Assets/StreamingAssets/Balance/ItemDropTable.json stays the sole
+    // authority for how likely each item is to drop relative to the others.
+    // Missing entries (item not listed in the file) fall back to the neutral
+    // weight of 1 rather than a per-item hardcoded default, since there's no
+    // "correct" balance value to fall back to here the way there is for
+    // stats - 1 just means "no special treatment".
+    public static float ResolveActiveDropWeight(string itemName)
+    {
+        EnsureLoaded();
+        return _activeDropWeightsByName.TryGetValue(itemName, out float weight) ? weight : DefaultDropWeight;
+    }
+
+    public static float ResolvePassiveDropWeight(PassiveItemType type)
+    {
+        EnsureLoaded();
+        return _passiveDropWeightsByType.TryGetValue(type, out float weight) ? weight : DefaultDropWeight;
+    }
+
+    // Per-kill chance that anything drops at all (active or passive, never both - see
+    // ItemDropManager.TryDrop). Which of the two it is, if it does, is then decided by
+    // ResolveActiveCategoryWeight/ResolvePassiveCategoryWeight below.
+    public static float ResolveDropChance()
+    {
+        EnsureLoaded();
+        return _dropChance;
+    }
+
+    public static float ResolveActiveCategoryWeight()
+    {
+        EnsureLoaded();
+        return _activeCategoryWeight;
+    }
+
+    public static float ResolvePassiveCategoryWeight()
+    {
+        EnsureLoaded();
+        return _passiveCategoryWeight;
+    }
+
     private static void EnsureLoaded()
     {
         if (_loaded)
@@ -77,6 +174,8 @@ public static class GameBalance
         _loaded = true;
         _player = LoadPlayerBaseStats();
         _passiveByType = LoadPassiveItems();
+        LoadItemDropTable(out _activeDropWeightsByName, out _passiveDropWeightsByType, out _dropChance, out _activeCategoryWeight, out _passiveCategoryWeight);
+        LoadActiveSkills(out _grenadeSkill, out _enhancedShotSkill, out _flamethrowerSkill);
     }
 
     private static PlayerBaseStatsData LoadPlayerBaseStats()
@@ -144,6 +243,99 @@ public static class GameBalance
         return result;
     }
 
+    private static void LoadItemDropTable(out Dictionary<string, float> activeWeights, out Dictionary<PassiveItemType, float> passiveWeights, out float dropChance, out float activeCategoryWeight, out float passiveCategoryWeight)
+    {
+        activeWeights = new Dictionary<string, float>();
+        passiveWeights = new Dictionary<PassiveItemType, float>();
+        dropChance = DefaultDropChance;
+        activeCategoryWeight = DefaultActiveCategoryWeight;
+        passiveCategoryWeight = DefaultPassiveCategoryWeight;
+        string path = Path.Combine(Application.streamingAssetsPath, BalanceFolder, ItemDropTableFileName);
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            ItemDropTableData data = JsonUtility.FromJson<ItemDropTableData>(json);
+            if (data == null)
+            {
+                throw new Exception("Parsed data was null.");
+            }
+
+            dropChance = data.dropChance;
+            activeCategoryWeight = data.activeCategoryWeight;
+            passiveCategoryWeight = data.passiveCategoryWeight;
+
+            if (data.activeWeights != null)
+            {
+                foreach (ActiveDropWeightEntry entry in data.activeWeights)
+                {
+                    activeWeights[entry.name] = entry.weight;
+                }
+            }
+
+            if (data.passiveWeights != null)
+            {
+                foreach (PassiveDropWeightEntry entry in data.passiveWeights)
+                {
+                    if (!Enum.TryParse(entry.type, out PassiveItemType type))
+                    {
+                        Debug.LogWarning($"GameBalance: unrecognized passive item type '{entry.type}' in '{path}', skipping.");
+                        continue;
+                    }
+
+                    passiveWeights[type] = entry.weight;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            dropChance = DefaultDropChance;
+            activeCategoryWeight = DefaultActiveCategoryWeight;
+            passiveCategoryWeight = DefaultPassiveCategoryWeight;
+            Debug.LogWarning($"GameBalance: failed to load '{path}' ({e.Message}). Using built-in fallback drop chance ({DefaultDropChance}), active/passive category weight ({DefaultActiveCategoryWeight}/{DefaultPassiveCategoryWeight}), and the neutral drop weight of {DefaultDropWeight} for all items.");
+        }
+    }
+
+    private static void LoadActiveSkills(out GrenadeSkillData grenade, out EnhancedShotSkillData enhancedShot, out FlamethrowerSkillData flamethrower)
+    {
+        grenade = DefaultGrenadeSkill();
+        enhancedShot = DefaultEnhancedShotSkill();
+        flamethrower = DefaultFlamethrowerSkill();
+        string path = Path.Combine(Application.streamingAssetsPath, BalanceFolder, ActiveSkillsFileName);
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            ActiveSkillBalanceData data = JsonUtility.FromJson<ActiveSkillBalanceData>(json);
+            if (data == null)
+            {
+                throw new Exception("Parsed data was null.");
+            }
+
+            // Each sub-object defaults to null (not the field's own defaults) when its key is
+            // missing from the JSON entirely, so fall back per-item rather than per-field -
+            // matching LoadPlayerBaseStats' all-or-nothing fallback for the same reason.
+            if (data.grenade != null)
+            {
+                grenade = data.grenade;
+            }
+
+            if (data.enhancedShot != null)
+            {
+                enhancedShot = data.enhancedShot;
+            }
+
+            if (data.flamethrower != null)
+            {
+                flamethrower = data.flamethrower;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"GameBalance: failed to load '{path}' ({e.Message}). Using built-in fallback active skill values.");
+        }
+    }
+
     // Built-in fallbacks below mirror the last hand-tuned values agreed on
     // this session, so a missing/broken JSON file degrades to "the game
     // still plays the way it did" rather than default/placeholder numbers.
@@ -183,5 +375,41 @@ public static class GameBalance
             case PassiveItemType.AttackSpeed: return 24;
             default: return 1;
         }
+    }
+
+    private static GrenadeSkillData DefaultGrenadeSkill()
+    {
+        return new GrenadeSkillData
+        {
+            fuseTime = 2.5f,
+            throwDistance = 2.5f,
+            throwTravelTime = 0.25f,
+            explosionRadius = 1f,
+            damage = 15f,
+            cooldown = 3f
+        };
+    }
+
+    private static EnhancedShotSkillData DefaultEnhancedShotSkill()
+    {
+        return new EnhancedShotSkillData
+        {
+            damage = 16f,
+            cooldown = 2f,
+            range = 25f
+        };
+    }
+
+    private static FlamethrowerSkillData DefaultFlamethrowerSkill()
+    {
+        return new FlamethrowerSkillData
+        {
+            damagePerTick = 3f,
+            maxDuration = 7f,
+            zoneLength = 4.5f,
+            zoneWidth = 2.25f,
+            cooldown = 3f,
+            tickInterval = 1f
+        };
     }
 }

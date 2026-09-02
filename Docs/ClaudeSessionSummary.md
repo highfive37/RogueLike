@@ -6,7 +6,13 @@
 각 문서의 역할 구분은 `Docs/DocumentationGuide.md` 참고.
 
 마지막 갱신: 2026-08-31 (Stage 2.5 — 아이작 스타일 방/문 시스템 전환 +
-액티브/패시브 아이템 시스템 도입 시점 기준).
+액티브/패시브 아이템 시스템 도입 시점 기준); 2026-09-01 실플레이 검증 결과 반영;
+2026-09-02 로드맵 개정 — 다음 층 제작(목표 총 3층) + 3층 완성 후 UI Scene 전체
+플레이 루프 구성으로 §3·§5·§6 갱신; 2026-09-02 (2) `FloorCompleteUI` 자기-비활성
+패널 함정 재발 → CanvasGroup 방식으로 수정, §4 노트 갱신; 2026-09-02 (3) 층2("ㅂ"자
+10개 방) authoring 완료 + 층1→층2 자동 진행(씬 리로드 없이 제자리 재빌드) 구현,
+그 과정에서 발견한 잠복 버그 3건(Floor Exit 콜라이더/플레이어 시작 위치/미니맵
+오프스크린) 수정, 미니맵을 로컬 스크롤 뷰포트 방식으로 개편 — §2·§3·§4·§6 갱신.
 
 ---
 
@@ -61,8 +67,9 @@ Assets/Scripts/
 ├─ Balance/   (GameBalance — JSON 밸런스 파일 로더, 실패 시 내장 기본값 폴백)
 ├─ Camera/    (QuarterViewCameraFollow)
 ├─ UI/        (UIManager, ActiveItemEquipUI, PlayerStatsPanelUI,
-│              CharacterSelectUI, ClearOverlayUI, HealthBarUI,
-│              ActiveItemCooldownUI, BillboardUI, MinimapUI,
+│              CharacterSelectUI, FloorCompleteUI(구 ClearOverlayUI),
+│              FloorTransitionUI(2026-09-02 (3) 신규, 층 전환 검은 페이드),
+│              HealthBarUI, ActiveItemCooldownUI, BillboardUI, MinimapUI,
 │              PickupNotificationUI, DebugOverlayController 등)
 └─ Pooling/   (GameObjectPool, PooledObject)
 ```
@@ -111,7 +118,9 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
   `HUD`(`HealthBarUI`/`ActiveItemCooldownUI`/`StageText`),
   `EquipPanel`(ESC로 토글, 자식으로 액티브 아이템 슬롯 목록 +
   `StatsPanel`(패시브 스탯 Pip 바 4종)), `CharacterSelectPanel`,
-  `ClearOverlayPanel`, `Minimap`(우상단, 안개 효과 — §4 참고)이 자식으로 배치,
+  `ClearOverlayPanel`(컴포넌트명은 `FloorCompleteUI`), `Minimap`(우상단, 현재 방
+  중심 로컬 스크롤 뷰포트 + 안개 효과 — §4 참고), `FloorTransition`(화면 전체
+  검은 페이드, Canvas 마지막 자식이라 다른 패널 위에 그려짐)이 자식으로 배치,
   `EventSystem` 별도. Player 자식으로 `PickupNotificationCanvas`(월드 스페이스,
   `BillboardUI`) 추가.
   - `UpgradePanel`은 삭제됨(업그레이드 선택 UI 폐기, §3 참고)
@@ -151,12 +160,12 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 | 밸런스 수치 | `GameBalance`, `Assets/StreamingAssets/Balance/*.json` | 플레이어 기본 스탯/패시브 아이템 효과를 JSON에서 로드, 파일 없거나 파싱 실패 시 내장 기본값으로 폴백 |
 | 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`RetreatAndShootPattern`) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화 |
 | 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거 |
-| 방/문 진행 | `StageManager`(층/방 그래프 빌드+현재 방 추적), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, 지오메트리 생성, 문 배선), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커), `RoomTransitionController`(문 통과 시 카메라 연출 전환) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31) |
+| 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, 지오메트리 생성, 문 배선), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커), `RoomTransitionController`(문 통과 시 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)) |
 | 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거), 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시 |
 | 데미지 | `IDamageable`, `Health`(순수 C#), `HealthComponent` | 데미지 판정 + 수치·가해자 로그, 체력 상태, 사망 이벤트 |
 | 방 클리어 후 흐름 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3) — 지금은 `FloorCompleted`(보스 클리어 → Clear 오버레이) 처리만 담당 |
 | 풀링 | `GameObjectPool`, `PooledObject` | Projectile/Enemy(근접·원거리)/Boss/Grenade 공용 재사용 풀. 같은 프레임 중복 반환(`_hasReturned`/`_isReleased` 가드, 2026-08-31)으로 `InvalidOperationException` 방지 |
-| UI | `UIManager`(파사드), `HealthBarUI`, `ActiveItemCooldownUI`, `ActiveItemEquipUI`, `PlayerStatsPanelUI`, `CharacterSelectUI`, `ClearOverlayUI`, `MinimapUI`, `PickupNotificationUI`, `BillboardUI`, `DebugOverlayController` | `UIManager`가 선택/오버레이 화면을 감싸 `ShowXxx(...)` 메서드로 노출. 상속 없는 단일 클래스. `BillboardUI`가 실제 카메라 추적 회전(`LateUpdate`)을 전담해 데미지 팝업/HP바/미니 알림이 항상 카메라를 향함(2026-08-31 — 이전엔 무회전 근사에 의존) |
+| UI | `UIManager`(파사드), `HealthBarUI`, `ActiveItemCooldownUI`(쿨다운 아이콘 + 장착 아이템 이름 텍스트 — 2026-09-02 (3)), `ActiveItemEquipUI`, `PlayerStatsPanelUI`, `CharacterSelectUI`, `FloorCompleteUI`(구 ClearOverlayUI — 마지막 층이면 Retry 버튼, 아니면 3→0 카운트다운 후 자동 층 전환), `FloorTransitionUI`(층 전환 검은 페이드), `MinimapUI`(현재 방 중심 로컬 스크롤 뷰포트, `RectMask2D` — 2026-09-02 (3)에 전체-뷰 방식에서 개편), `PickupNotificationUI`, `BillboardUI`, `DebugOverlayController` | `UIManager`가 선택/오버레이 화면을 감싸 `ShowXxx(...)` 메서드로 노출. 상속 없는 단일 클래스. `BillboardUI`가 실제 카메라 추적 회전(`LateUpdate`)을 전담해 데미지 팝업/HP바/미니 알림이 항상 카메라를 향함(2026-08-31 — 이전엔 무회전 근사에 의존) |
 
 ---
 
@@ -175,7 +184,7 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
 (`StageManager`+`StageDataAsset` 10개), 캐릭터 선택, 여러 종류의 일반 Enemy,
 적 체력 바 + `UIManager` 파사드. 자세한 내용은 `DevLog.md` 2026-08-24 항목 참고.
 
-### Stage 2.5 — 아이작 스타일 방/문 시스템 전환 (✅ 대부분 완료, 2026-08-31)
+### Stage 2.5 — 아이작 스타일 방/문 시스템 전환 (✅ 대부분 완료, 2026-08-31 / 실플레이 검증 2026-09-01)
 
 "웨이브 반복" 방식이던 Stage 진행을 아이작(Binding of Isaac) 스타일의 공간형
 방/문 시스템으로 전환. Stage 3(최적화)는 이 작업이 끝날 때까지 보류.
@@ -200,15 +209,34 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
   공식으로 통일(2026-08-31, `AI_Decision_Log.md` 참고)
 - 밸런스 수치를 코드/씬이 아니라 JSON 파일로 분리(`GameBalance`)
 - F1 디버그 오버레이(FPS + 데미지 숫자 팝업), 실제 카메라 추적 빌보딩
+- **층2 authoring 완료 + 층1→층2 자동 진행 구현(2026-09-02 (3))**: 층2를
+  "ㅂ"자 모양(10개 방, 좌상단 시작/우상단·정중앙 등 authoring — 상세는
+  `DevLog.md` 2026-09-02 (3))으로 구성. 층1 클리어 시 기존 Retry 대신
+  3초 카운트다운 → 자동으로 씬 리로드 없이 층2로 전환(플레이어 진행 상황
+  유지), 마지막 층(현재 층2) 클리어 시에만 기존 Retry(전체 재시작) 유지.
+  이 과정에서 잠복 버그 3건(Floor Exit 콜라이더 스케일, 플레이어 시작
+  위치 미설정, 미니맵 좌표계) 발견·수정, 미니맵을 전체-뷰에서 현재 방
+  중심 로컬 스크롤 뷰포트로 개편.
 
 ⏳ 남은 작업:
 - 아이템 방(#3) — 바닥 드롭 아이템 로직은 만들어졌으니, "전투 없이 보장된
   픽업 배치"만 추가하면 될 것으로 예상
 - 방 안 장애물(#2) — 지형 애셋 교체 시점까지 보류
-- 테스트 층(5개 방)을 원래 목표(5~7개 이상)로 확장
-- 방-방 카메라 전환 연출, 방 경계 재프레이밍 필요 여부, 미니맵/빌보딩/공격
-  속도 체감 등 여러 항목이 실플레이 최종 확인 대기 중(`DevLog.md` "다음
-  작업" 참고)
+- **3층 제작** — 층2와 동일한 authoring 패턴(방/문 메커니즘 변경 없음),
+  `StageManager.floors`에 세 번째 `FloorDefinition` 추가
+- **1~3층 방 데이터 JSON 외부화**(2026-09-02 (3) 신규 요청) — 현재
+  `RoomDataAsset`(ScriptableObject)로 authoring된 방 위치/연결/몬스터 구성을
+  `GameBalance`/`ItemDropTable.json`처럼 텍스트 에디터로 수정 가능한 JSON으로
+  뺄지, 방식 미정
+- 3층 완성 후 **UI Scene 신설 → 전체 플레이 루프**(타이틀 → 캐릭터 선택 →
+  런(3층 주파) → 클리어/게임오버 → 재시작·타이틀 복귀) 구성. Game Over
+  흐름도 이 작업에 통합(2026-09-02) — 단, 층간 전환 자체는 2026-09-02 (3)에
+  UI Scene 신설 없이 앞당겨 구현됨(위 참고)
+- (2026-09-01 실플레이 검증 완료) 방-방 카메라 전환 연출 완주, 시작방/40×40
+  방 크기와 카메라 구도, 미니맵 안개·연결선, 빌보딩, ESC 메뉴 + Pip 바
+  레이아웃, 패시브 픽업 배치, 기본 공격 사거리 3유닛/공격속도 체감 — 전부
+  문제 없음 확인. 방 경계 재프레이밍/Cinemachine은 당장 불필요로 판단
+  (`DevLog.md` 2026-09-01 참고)
 
 ### Stage 3 — 최적화 (부분 착수, 재개 시점 미정)
 - ✅ Object Pooling — `Projectile`/`Enemy`/`Boss`/`Grenade` 4종 전부 적용
@@ -274,41 +302,84 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   자세한 원인/수정은 `DevLog.md` 참고). 이 패턴을 쓰는 새 UI는 패널의 씬
   저장 상태(활성/비활성)와 `Awake()`의 자기-비활성화 호출이 서로 상충하지
   않는지 확인할 것.
+  - **재발 3회차 + 근본 대응(2026-09-02)**: 같은 함정이
+    `ClearOverlayPanel`(8/24 최초 발견·수정)에서 Stage 2.5 / FloorExit 작업 중
+    다시 `m_IsActive: 0`으로 되돌아가 재발("보스 클리어 → Floor Exit 진입 시
+    조작 불가 + 결과 화면 안 뜸"). 이번엔 씬 활성 플래그만 되돌리는 대신
+    `FloorCompleteUI`를 **`CanvasGroup` 방식**으로 전환: GameObject active를
+    아예 토글하지 않고 `alpha`/`interactable`/`blocksRaycasts`로만 표시·숨김,
+    컴포넌트의 GameObject는 씬 내내 활성 → `Awake()`가 로드 시 1회만 정상
+    실행됨. 이 패턴이 필요한 UI는 앞으로 `SetActive` 토글 대신 CanvasGroup을
+    우선 검토(`ActiveItemEquipUI`/`PickupNotificationUI`도 이관 후보).
+    자세한 내용은 `DevLog.md` 2026-09-02 (2) 참고.
+- **다층 진행은 씬 리로드가 아니라 제자리 재빌드(2026-09-02 (3))**: 층1→층2
+  전환 시 씬을 다시 로드하지 않고 `StageManager.AdvanceToNextFloor()`가 현재
+  층의 방 GameObject만 파괴하고 다음 층을 재빌드. 씬 리로드안(정적 상태로
+  층 인덱스 전달)도 검토했으나, 리로드 시 Player가 재생성돼 패시브/액티브
+  아이템 진행 상황이 초기화되고 캐릭터 선택도 재등장 억제용 로직이 추가로
+  필요해짐 — 반면 제자리 재빌드는 Player를 그대로 두므로 둘 다 별도 처리
+  없이 자연히 해결됨(오브젝트 풀은 적을 방이 아닌 풀 자신의 자식으로 관리해
+  방 파괴에 안전함을 확인 후 채택). 마지막 층 클리어 시의 기존 Retry(완전
+  재시작 의도)만 예외적으로 씬 리로드 유지.
+- **미니맵을 전체-뷰에서 로컬 스크롤 뷰포트로 개편(2026-09-02 (3))**: 층 전체를
+  고정 패널에 다 그리던 방식에서, 현재 방이 항상 패널 정중앙에 오도록 매 방
+  입장마다 콘텐츠 컨테이너만 재배치하고 `RectMask2D`로 뷰포트 밖은 잘라내는
+  방식으로 변경. 이 개편 과정에서 기존 좌표 계산이 3열 이상(여러 행)일 때
+  화면 밖으로 밀려나는 잠복 버그를 발견해 같이 고침(층1은 1행뿐이라 한 번도
+  발현 안 됐던 버그).
 
 ---
 
 ## 5. 아직 결정하지 않은 항목
 
-- **Game Over 흐름**: Player 사망 시 어떻게 처리할지 여전히 미정.
-- **런 종료 이후 흐름**: Clear 오버레이까지만 구현, 이후 재시작/메인 메뉴
-  전환은 보류 중.
-- **카메라 시스템에 Cinemachine 도입 여부**: 방이 40x40으로 커지면서 방 경계
-  재프레이밍이 필요한지도 함께 재검토 대상.
+- **Game Over 흐름 / 런 종료 이후 흐름**: Player 사망 처리도, Clear 오버레이
+  이후 재시작·타이틀 복귀도 미정 — 3층 완성 후 신설할 **UI Scene + 전체 플레이
+  루프** 작업에서 함께 설계하기로 함(2026-09-02, §3·§6 참고).
+- **카메라 시스템에 Cinemachine 도입 여부**: 2026-09-01 실플레이에서 현재
+  `QuarterViewCameraFollow`(단순 오프셋 추적)로 40×40 방도 구도가 적절함을
+  확인 — 방 경계 재프레이밍/Cinemachine은 당장 불필요, 필요해지면 재논의.
 - **아이템 방(#3) 구체 설계**: 바닥 드롭 인프라는 있으니 "전투 없이 보장된
   픽업 배치"만 추가하면 될 것으로 예상되나 미착수.
 - **방 안 장애물(#2)**: 지형 애셋 교체 시점까지 보류.
 - **아이콘 스와치 → 실제 픽토그램 교체**: 우선순위 낮음으로 이월 중.
-- **Enhanced Shot 스킬 사거리가 다른 변경과 함께 짧아진 게 의도한 바인지**:
-  미확인.
-- **`FlamethrowerActiveItem.CooldownRemaining`이 항상 0을 반환하는 갭**:
-  의도된 설계인지 결정 필요.
+- ~~**Enhanced Shot 스킬 사거리**~~: 해결됨(2026-09-01) — 기본 공격과 분리,
+  `EnhancedShotActiveItemData.range`(기본 45유닛)로 스킬이 독립 소유.
+  `Projectile.Initialize`에 `rangeOverride` 인자 추가.
+- ~~**`FlamethrowerActiveItem.CooldownRemaining` 항상 0 갭**~~: 해결됨
+  (2026-09-01) — `FlamethrowerActiveItemData.cooldown`(기본 3초) 추가,
+  분사 종료 시점부터 쿨다운 시작 + 재분사 차단.
 - **씬에 남은 비활성 `Boss_Basic` 플레이스홀더 인스턴스**: 정리 여부 미결정.
 - **`UIManager`를 상속 구조로 확장할지**: 두 번째 구체적인 UI 매니저 사례가
   실제로 생기기 전까지는 보류(2026-08-24 결정 유지).
+- **1~3층 방 데이터 JSON 외부화 방식(2026-09-02 (3) 신규)**: `RoomDataAsset`
+  (ScriptableObject) 그대로 두고 JSON은 값 오버레이만 할지, 아니면 방 authoring
+  자체를 JSON 1차 소스로 옮길지 미정 — 착수 전 설계 검토 필요.
+- **대시(구르기) 무적 판정 여부(2026-09-02 (3) 신규)**: 스페이스바 대시 이동
+  중 실제로 무적 프레임이 있는지 아직 코드/실플레이 확인 전.
 
 ---
 
-## 6. 앞으로 해야 할 작업 (우선순위 순)
+## 6. 앞으로 해야 할 작업 (우선순위 순, 2026-09-02 (3) 사용자 지정으로 갱신)
 
-1. **실플레이 검증** — Stage 2.5 작업 다수가 자동화 환경 한계로 직접 호출/
-   물리 스텝 강제 실행으로만 검증됨: 방-방 카메라 전환 연출 전체, ESC 메뉴가
-   실제 키 입력으로 정상적으로 열리는지, 패시브 스탯 Pip 바/공격속도 체감,
-   빌보딩, F1 디버그 오버레이, JSON 밸런스 수정 워크플로, 발사체 사거리
-2. **아이템 방(#3) 설계 및 구현**
-3. **Game Over 흐름 추가**
-4. **잔여 정리 항목**: Flamethrower 쿨다운 UI, 비활성 `Boss_Basic` 플레이스홀더,
-   아이콘 픽토그램 교체, Enhanced Shot 사거리 확인
-5. **Stage 3 잔여 항목 재개**: `EnemyAIManager`, `GetComponent` 캐싱 정리,
-   `BenchmarkSpawner`, Profiler 기반 Before/After 측정
-6. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이
-   안정화된 이후 별도로 진행
+1. **3층 맵 제작** — 층2와 동일한 authoring 패턴(방/문 메커니즘 변경 없음),
+   `StageManager.floors`에 세 번째 `FloorDefinition` 추가.
+2. **1~3층 방 데이터 JSON 외부화**: 방 위치/연결/몬스터 구성 등을 텍스트
+   에디터로 수정 가능한 JSON 파일로 분리 — 방식은 §5 미결정 항목 참고,
+   착수 전 설계 검토 필요.
+3. **대시 무적 판정 확인**: 스페이스바 대시(구르기) 이동 중 실제로 무적
+   프레임이 적용되는지 코드/실플레이로 확인.
+4. **대시 아이콘 UI + 쿨다운 표시**: 화면 우하단에 대시 아이콘 배치, 액티브
+   아이템 쿨다운(`ActiveItemCooldownUI`)과 동일한 방식으로 대시 쿨다운 표시.
+5. **Stage 2.5 잔여 항목 재개**: 아이템 방(#3) 세부 밸런스("전투 없이 보장된
+   픽업 배치"는 이미 있음), 방 안 장애물(#2, 지형 애셋 교체 시점까지 보류),
+   씬의 비활성 `Boss_Basic` 인스턴스 삭제, 아이콘 스와치 → 실제 픽토그램 교체.
+6. **UI Scene 신설 + 전체 플레이 루프 구성**: 3층까지 완성된 후, 별도 UI
+   Scene을 만들어 타이틀 → 캐릭터 선택 → 런(3층 주파) → 클리어/게임오버 →
+   재시작·타이틀 복귀를 하나의 루프로 연결. **Game Over 흐름**(Player 사망
+   처리)도 이 작업에 통합해서 설계. 층간 전환 자체(카운트다운+페이드+제자리
+   재빌드)는 2026-09-02 (3)에 이미 구현됨 — 이 작업은 그 앞뒤(타이틀/사망
+   처리/최종 결과)를 마저 채우는 것.
+7. **Stage 3 잔여 항목 재개**: `EnemyAIManager`, `GetComponent` 캐싱 정리,
+   `BenchmarkSpawner`, Profiler 기반 Before/After 측정.
+8. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이
+   안정화된 이후 별도로 진행.

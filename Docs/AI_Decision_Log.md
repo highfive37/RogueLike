@@ -44,6 +44,149 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-03 — 씬 분리 구조: 단일 씬 유지 vs `MainMenu`+`Gameplay` 2씬 vs Bootstrap+Additive
+
+### 배경 / 문제
+- 지금까지 모든 작업을 씬 하나(`Prototype.unity`)에서 해 왔고, Build Settings에도 이 씬
+  하나만 등록돼 있음. 로드맵 §6의 "UI Scene 신설 → 전체 플레이 루프(타이틀 → 캐릭터 선택 →
+  런 → 클리어/게임오버 → 재시작·타이틀 복귀)"를 앞두고, **인게임과 메인 메뉴를 씬으로 나눌지,
+  나눈다면 어느 단위로 나눌지** 결정이 필요해짐.
+- 결정 전 확인한 현재 구조:
+  - 싱글톤도 `DontDestroyOnLoad`도 **전혀 없음**. 모든 연결이 인스펙터 `[SerializeField]` 참조.
+  - `SceneManager` 사용처는 `FloorCompleteUI`의 재시작(현재 씬 리로드) 한 곳뿐 →
+    **"씬 리로드"가 현재 유일한 런 리셋 메커니즘**.
+  - 층은 씬이 아니라 데이터(`FloorDefinition[]` + `RoomDataAsset`)이고, 층 전환은
+    2026-09-02 결정대로 씬을 유지한 채 `StageManager.AdvanceToNextFloor()`로 제자리 재빌드.
+  - 캐릭터 선택은 별도 화면이 아니라 인게임 씬 안의 패널이고,
+    `CharacterSelectController`(Player에 부착)가 `PlayerInputActions.enabled = false`로 입력을 잠금.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 단일 씬 유지 — 타이틀/캐릭터선택/결과를 전부 `CanvasGroup` 패널로 처리 | 크로스 씬 배선이 0. 기존 `[SerializeField]` 참조를 하나도 안 건드림. 가장 빠름 | 타이틀 UI가 같은 씬에 들어오면 **씬 리로드가 타이틀까지 되살려서** "재시작"과 "타이틀 복귀"가 같은 동작이 됨 → 지금 공짜로 얻고 있는 리셋을 수동 구현해야 함. 씬 파일이 계속 비대해짐(이미 diff 핫스팟). 타이틀 화면에서 전투 리소스까지 전부 로드. Phase 5(비동기 로딩/로딩 UI)로 갈 길이 없음 |
+| B. 2씬 — `MainMenu`(타이틀·캐릭터 선택·재시작/타이틀 복귀) + `Gameplay`(런 전체, 층 1~3 포함) | 씬 리로드 = 런 리셋이 그대로 유지됨. 영속 오브젝트가 최대 1개라 "매니저마다 싱글톤" 함정을 피함. `Gameplay` 씬 **내부** 인스펙터 배선은 손댈 필요 없음. 로드맵의 "UI Scene 신설"과 정확히 일치 | 이 프로젝트 최초의 "씬을 넘는 상태"가 생김(전달값 설계 필요). `CharacterSelectController`가 "UI 띄우고 기다림" → "컨텍스트에서 읽어 장착"으로 바뀌어야 함 |
+| C. Bootstrap + Additive — `Bootstrap`(영속 매니저) + `MainMenu`/`Gameplay`를 Additive 로드 | 아키텍처 스토리가 가장 강함. 로딩 화면·Addressables가 자연스럽게 붙음 | **Additive에서는 인스펙터 크로스 씬 참조가 불가**하므로 등록/서비스 조회 또는 이벤트 채널 계층을 지금 도입해야 함. 그런데 지금 영속시킬 매니저가 사실상 없음 — `GameBalance`는 이미 static이고 `StageManager`/`UIManager`는 런 스코프. 비용만 있고 얻는 게 없음 |
+
+### Claude 제안
+- **안 B 채택**을 제안하되, "메인 메뉴 UI라서 나눈다"가 아니라 **씬 리로드가 현재 유일한
+  리셋 메커니즘이라는 점**이 실질적인 근거임을 먼저 확인. 아울러 **층별 씬 분리는 하지 말 것**을
+  같이 제안 — 층은 이미 `RoomDataAsset` 데이터로 구성되므로 씬으로 만들면 같은 메커니즘이 두 벌이 됨.
+- 씬 간 전달값은 static `RunContext` 권장(`GameBalance`/`PauseState`처럼 이 프로젝트에 이미
+  있는 패턴, `[RuntimeInitializeOnLoadMethod]` 리셋 포함). ScriptableObject 방식은 플레이 모드
+  중 변경이 에디터에서 에셋에 남는 함정이 있고, `DontDestroyOnLoad` 오브젝트는 지금 영속시킬
+  대상이 없어 과함 — 넘길 값이 `SelectedArchetype` 하나뿐이라는 점이 판단 근거.
+
+### 선택한 방향
+- **안 B 채택** (사용자 확정). 씬은 `MainMenu` + `Gameplay` 둘.
+- **캐릭터 선택 UI는 `MainMenu` 씬으로 이동**(사용자 지시).
+- 층 1~3은 계속 데이터 + 제자리 재빌드(2026-09-02 결정 유지). 층별 씬 없음.
+- 결과 화면(`FloorCompleteUI`)은 `Gameplay` 씬 유지가 권장안 — 아직 사용자 확정 대기.
+
+### 선택 이유
+- A는 "지금 당장 가장 싸지만" 씬 리로드로 공짜로 얻던 런 리셋을 잃고, 그걸 수동 리셋 코드로
+  다시 만들어야 함 — 2026-09-02에 층 전환을 제자리 재빌드로 결정할 때와 정확히 같은 종류의
+  트레이드오프이고, 이번엔 방향이 반대(리로드를 **살리는** 쪽이 이득).
+- C는 지금 시점엔 영속시킬 매니저가 없어 서비스 로케이터부터 짓는 비용만 남음. 다만 B는 C의
+  전제를 깨지 않으므로, **Phase 5(로딩 화면/Addressables)에서 필요해지면 B를 부수지 않고
+  앞에 `Bootstrap` 씬만 추가해 C로 승격**할 수 있음 — 그 조건이 생기면 재검토.
+- B의 유일한 실질 비용인 "씬을 넘는 상태"는 현재 전달값이 1개(선택한 아키타입)라 매우 작음.
+  `Gameplay` 씬 단독 Play 시 fallback 아키타입으로 동작하게 해서 개발 편의는 유지.
+
+### 관련 파일
+- 신규 예정: `Assets/Scripts/Core/RunContext.cs`, `SceneNames.cs`/`SceneLoader.cs`,
+  `MainMenuController.cs`, `Assets/Scenes/MainMenu.unity`,
+  `Assets/Prefabs/UI/CharacterSelectPanel.prefab`
+- 수정 예정: `CharacterSelectController.cs`, `UIManager.cs`, `CharacterSelectUI.cs`,
+  `FloorCompleteUI.cs`, `PauseState.cs`, `Assets/Scenes/Prototype.unity`(→ `Gameplay.unity`)
+- 단계별 실행 계획과 검증 항목은 `DevLog.md` 2026-09-03 "다음 작업" 참조.
+
+---
+
+## 2026-09-02 — 층1→층2 전환: 씬 리로드 vs 제자리 재빌드
+
+### 배경 / 문제
+- 층2("ㅂ"자 10개 방) authoring이 끝난 뒤, 층1 클리어 후 층2로 넘어가는
+  실제 진행 로직이 필요해짐. 기존 "Retry"는 씬을 통째로 리로드하는
+  방식이었는데, 이걸 층 전환에도 그대로 쓸지 다른 방식을 쓸지 결정 필요.
+  사용자 요구사항: 층을 넘어가도 패시브/액티브 아이템 진행 상황이 유지돼야
+  하고, 캐릭터 선택 화면이 층마다 다시 뜨면 안 됨.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 씬 리로드 + 정적 상태로 "몇 층인지"/"이미 캐릭터 선택했는지" 전달 | 기존 Retry와 동일한 메커니즘이라 새 정리 코드가 거의 불필요 | 리로드 시 Player 오브젝트가 재생성돼 패시브/액티브 아이템 진행 상황이 초기화됨(별도 저장/복원 로직 필요), 캐릭터 선택 재등장을 막으려면 층을 넘어 유지되는 별도 플래그 상태가 필요 |
+| 씬 유지, `StageManager`가 현재 층의 방 GameObject만 파괴 후 다음 층 데이터로 재빌드 | Player를 안 건드리므로 패시브/액티브 아이템 상태가 자연히 보존됨. `CharacterSelectController.Awake()`는 Player가 파괴·재생성되지 않는 한 세션당 1회만 실행되므로 캐릭터 선택도 별도 처리 없이 재등장 안 함 | 방/문/미니맵/전환 컨트롤러 각각에 "정리 후 재초기화" 로직을 새로 추가해야 함(`StageManager.TeardownCurrentFloor()`, `MinimapUI.Initialize()` 재호출 가능하게 등) |
+
+### Claude 제안
+- 제자리 재빌드안 채택 전, 오브젝트 풀 안전성(적 인스턴스가 방이 아니라
+  풀 자신의 자식으로 관리되는지)과 `CharacterSelectController`의 실행 시점을
+  코드로 먼저 확인 — 둘 다 안전하다고 확인한 뒤에 제안.
+
+### 선택한 방향
+- **제자리 재빌드안** 채택. 마지막 층(현재 층2) 클리어 후의 기존 Retry
+  버튼만 예외적으로 씬 리로드 유지 — 이건 "완전히 새로 시작"이 의도이므로
+  오히려 리로드가 정확히 맞음.
+
+### 선택 이유
+- 이번 요구사항(진행 상황 유지, 캐릭터 선택 억제)을 씬 리로드안으로
+  만족시키려면 결국 제자리 재빌드안이 공짜로 얻는 이점(Player 생존)을 힘들게
+  재구현해야 함 — 되돌아가는 게 아니라 처음부터 그쪽이 더 단순함.
+- 트레이드오프: 향후 층이 늘어나면(3층+) `StageManager`의 파괴/재빌드
+  로직이 매번 정확히 정리되는지 계속 신경 써야 함 — 방/미니맵/전환 컨트롤러
+  중 하나라도 이벤트 구독 해제를 빠뜨리면 누수. 3층 추가 시 우선 확인할 것.
+
+### 관련 파일
+- `Assets/Scripts/Stage/StageManager.cs`(`FloorDefinition[] floors`,
+  `AdvanceToNextFloor()`, `TeardownCurrentFloor()`)
+- `Assets/Scripts/UI/MinimapUI.cs`(`Initialize()` 재호출 가능하게 수정)
+- `Assets/Scripts/UI/FloorCompleteUI.cs`, `FloorTransitionUI.cs`(신규),
+  `Assets/Scripts/Room/RoomFlowManager.cs`(전환 시퀀스 지휘)
+- 자세한 구현 내용은 `DevLog.md` 2026-09-02 (3) 참고
+
+---
+
+## 2026-09-01 — Enhanced Shot 사거리 분리: 전용 프리팹/풀 vs 공유 프리팹 + rangeOverride 인자
+
+### 배경 / 문제
+- 기본 공격 사거리를 3유닛(발사체 수명 0.2초)으로 줄이자, 같은
+  `Projectile_Basic` 프리팹/풀을 공유하는 액티브 아이템 "Enhanced Shot"의
+  사거리까지 45→3유닛으로 딸려 짧아짐. 사용자가 "Enhanced Shot은 기본 공격과
+  별개 스킬로 동작"하도록 요청 (DevLog 2026-08-31 (15)에서 "전용 프리팹/풀
+  분리는 별도 논의"로 남겨뒀던 항목).
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| Enhanced Shot 전용 `Projectile` 프리팹 + 전용 풀 GameObject 신설 | 스킬 투사체를 비주얼/거동까지 완전히 독립적으로 튜닝 가능 | 새 프리팹 + 씬에 새 풀 오브젝트 + `ActiveItemContext`에 필드 추가 + 배선 — 투사체 거동(직진·피격·소멸)은 기본 공격과 동일한데 사거리 숫자 하나 때문에 인프라를 복제 |
+| 기존 `bonusLifetime` 인자를 재활용해 큰 값 전달 | 코드 변경 최소 | `bonusLifetime`은 패시브 "사거리 증가"(기본 공격 전용) 의미라 의미가 섞임, 총 수명 = base + bonus라 base(0.2초)에 계속 의존 |
+| `Projectile.Initialize`에 `rangeOverride`(월드 유닛, 기본 -1) 옵션 인자 추가, `>= 0`이면 base 수명 경로를 완전히 무시 | 프리팹/풀은 그대로 공유(거동 동일), 사거리 숫자만 스킬 데이터(`EnhancedShotActiveItemData.range`)가 소유, 기존 호출부는 무변경 | `Projectile`에 분기 한 줄 추가, 미초기화 시 footgun(값 0 → 즉시 소멸) 방지용 `Awake` 초기화 필요 |
+
+### Claude 제안
+- 세 번째 대안. 투사체의 실제 거동이 기본 공격과 동일하므로 전용 프리팹/풀은
+  복제 비용만 크고 얻는 게 없음(과설계). 사거리는 "스킬이 자기 데이터로 소유"
+  하면 충분하고, `rangeOverride`는 기존 `bonusLifetime` 경로를 안 건드려서
+  패시브 사거리 스탯과 의미가 안 섞임.
+
+### 선택한 방향
+- `rangeOverride` 옵션 인자 채택. `EnhancedShotActiveItemData.range` 신규,
+  `Projectile.Awake()`에서 `-1`로 초기화, 프리팹/풀 공유 유지.
+- 스킬 스펙은 같은 날 사용자가 확정: 사거리 25유닛 / 데미지 16(레벨 1) /
+  쿨다운 2초. (분리 작업 직후 임시로 45유닛을 뒀다가, 스펙을 제대로 안
+  정했다는 사용자 판단으로 25유닛·16데미지로 재지정.)
+
+### 선택 이유
+- 지금 필요한 건 "사거리 숫자의 소유권 분리"뿐이고 투사체 종류가 갈라진 게
+  아님. 전용 풀은 실제로 거동이 달라지는 스킬(관통/유도/폭발 등)이 생기는
+  시점에 도입하는 게 맞음 — 그때 `rangeOverride`는 그대로 두고 전용 프리팹만
+  추가하면 됨.
+
+### 관련 파일
+- `Assets/Scripts/Combat/Projectile.cs`
+- `Assets/Scripts/Combat/EnhancedShotActiveItem.cs`, `EnhancedShotActiveItemData.cs`
+- `Assets/Data/Skills/EnhancedShotData.asset`
+
+---
+
 ## 2026-08-31 — 방 지오메트리: 방향 조합 프리팹 vs 런타임 절차적 생성
 
 ### 배경 / 문제

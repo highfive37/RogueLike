@@ -13,7 +13,4 @@ MonoBehaviour:
   m_Name: FlamethrowerData
   m_EditorClassIdentifier:
   skillName: Flamethrower
-  damagePerSecond: 3
-  maxDuration: 7
-  zoneLength: 3
-  zoneWidth: 1.5
+  color: {r: 0.95, g: 0.45, b: 0.1, a: 1}

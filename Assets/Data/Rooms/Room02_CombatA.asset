@@ -24,4 +24,4 @@ MonoBehaviour:
   - direction: 3
     targetRoomId: 1
   - direction: 2
-    targetRoomId: 3
+    targetRoomId: 6

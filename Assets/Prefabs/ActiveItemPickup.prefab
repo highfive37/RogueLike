@@ -125,5 +125,6 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 1400b84dcc723c04cbfa54ff6ee244e8, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::ActiveItemPickup
+  visualRenderer: {fileID: 3206072808553095969}

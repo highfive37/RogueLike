@@ -10,18 +10,24 @@ public class UIManager : MonoBehaviour
 {
     [SerializeField] private ActiveItemEquipUI equipSelectionUI;
     [SerializeField] private CharacterSelectUI characterSelectUI;
-    [SerializeField] private ClearOverlayUI clearOverlayUI;
+    [SerializeField] private FloorCompleteUI floorCompleteUI;
     [SerializeField] private StageManager stageManager;
     [SerializeField] private Text stageText;
+
+    // Relayed from FloorCompleteUI's own event so RoomFlowManager never needs a direct
+    // reference to it - stays consistent with the facade this class is meant to be.
+    public event Action FloorCompleteAutoAdvanceRequested;
 
     private void OnEnable()
     {
         stageManager.StageChanged += HandleStageChanged;
+        floorCompleteUI.AutoAdvanceRequested += HandleFloorCompleteAutoAdvance;
     }
 
     private void OnDisable()
     {
         stageManager.StageChanged -= HandleStageChanged;
+        floorCompleteUI.AutoAdvanceRequested -= HandleFloorCompleteAutoAdvance;
     }
 
     public void ShowEquipSelection(PlayerActiveItemInventory inventory, PlayerPassiveStats passiveStats, Action onConfirmed)
@@ -39,13 +45,28 @@ public class UIManager : MonoBehaviour
         characterSelectUI.Show(onChosen);
     }
 
-    public void ShowClearOverlay()
+    public void ShowFloorComplete(FloorCompleteUI.FloorCompleteStats stats, bool isLastFloor)
     {
-        clearOverlayUI.Show();
+        floorCompleteUI.Show(stats, isLastFloor);
+    }
+
+    public void HideFloorComplete()
+    {
+        floorCompleteUI.Hide();
+    }
+
+    public void ReleaseFloorCompletePause()
+    {
+        floorCompleteUI.ReleasePause();
     }
 
     private void HandleStageChanged(int stageIndex)
     {
-        stageText.text = $"Stage {stageIndex}";
+        stageText.text = $"Stage{stageManager.CurrentFloorNumber}";
+    }
+
+    private void HandleFloorCompleteAutoAdvance()
+    {
+        FloorCompleteAutoAdvanceRequested?.Invoke();
     }
 }

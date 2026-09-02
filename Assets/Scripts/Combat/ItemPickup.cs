@@ -4,9 +4,9 @@ using UnityEngine;
 // enemy on death (ItemDropManager) or authored directly in a future item
 // room. The player walks into its trigger collider to acquire it; what
 // "acquire" means is delegated to the item itself (ItemData.OnAcquired) so
-// this stays agnostic to active vs passive items. Passive item pickups are
-// tinted per-instance via PassiveItemData.Color; active item pickups ignore
-// visualRenderer entirely (their prefab's own material is used as-is).
+// this stays agnostic to active vs passive items. Every item (active or
+// passive) is tinted per-instance via ItemData.Color, so items of the same
+// kind are still visually distinguishable from each other on the floor.
 public class ItemPickup : MonoBehaviour
 {
     [SerializeField] private Renderer visualRenderer;
@@ -17,9 +17,9 @@ public class ItemPickup : MonoBehaviour
     {
         _item = item;
 
-        if (item is PassiveItemData passive && visualRenderer != null)
+        if (visualRenderer != null)
         {
-            visualRenderer.material.color = passive.Color;
+            visualRenderer.material.color = item.Color;
         }
     }
 

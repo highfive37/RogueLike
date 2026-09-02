@@ -13,5 +13,4 @@ MonoBehaviour:
   m_Name: EnhancedShotData
   m_EditorClassIdentifier:
   skillName: Enhanced Shot
-  damage: 12
-  cooldown: 2
+  color: {r: 0.2, g: 0.75, b: 0.95, a: 1}

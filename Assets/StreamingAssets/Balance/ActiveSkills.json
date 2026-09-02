@@ -1,0 +1,41 @@
+{
+  "_guide": "액티브 아이템(화염방사기/강화샷/수류탄) 3종의 스킬 스펙 설정 파일입니다. 숫자만 수정하고 저장하면 다음 Play(또는 빌드 실행) 시 바로 반영됩니다 - Unity를 켜둔 채로 저장해도 됩니다. grenade/enhancedShot/flamethrower 중 하나를 통째로 지우면(예: \"grenade\": {...} 블록 자체를 삭제) 그 아이템만 아래 _fieldGuide에 적힌 기본값으로 대체되며, 콘솔에 경고만 뜨고 게임은 죽지 않습니다. 이름(skillName)과 픽업 색상(color)은 이 파일이 아니라 Assets/Data/Skills/*.asset 에셋에서 관리합니다(이 파일은 순수 밸런스 수치만 담당).",
+  "_fieldGuide": {
+    "grenade.fuseTime": "장착 후 던지기까지 대기(퓨즈) 시간(초). 기본 2.5",
+    "grenade.throwDistance": "던지는 거리(유닛). 기본 2.5",
+    "grenade.throwTravelTime": "던진 지점까지 날아가는 시간(초). 기본 0.25",
+    "grenade.explosionRadius": "폭발 반경(유닛). 기본 1",
+    "grenade.damage": "폭발 데미지(레벨 1 기준, 레벨당 +20%는 코드에서 자동 적용). 기본 15",
+    "grenade.cooldown": "던진 후 다음 사용까지 쿨다운(초). 기본 3",
+    "enhancedShot.damage": "발사체 1발 데미지(레벨 1 기준, 레벨당 +20%는 코드에서 자동 적용). 기본 16",
+    "enhancedShot.cooldown": "발사 후 다음 사용까지 쿨다운(초). 기본 2",
+    "enhancedShot.range": "발사체 사거리(유닛) - 기본 공격 사거리와는 완전히 별개 수치. 기본 25",
+    "flamethrower.damagePerTick": "틱 한 번마다 실제로 들어가는 고정 데미지(레벨 1 기준, 레벨당 +20%는 코드에서 자동 적용) - 비율(DPS)이 아니라 '한 번 맞을 때 이 값 그대로' 적용됩니다. 기본 3. 실제 초당 데미지(DPS)는 damagePerTick / tickInterval로 계산되니, tickInterval만 바꾸면 총 DPS도 같이 바뀝니다 - 예: damagePerTick=3, tickInterval=0.75면 초당 4데미지(3/0.75)가 됨. 기존 DPS를 유지하면서 틱만 빠르게 하고 싶다면 damagePerTick도 같이 줄이세요(예: 초당 3 유지하려면 damagePerTick = 3 x tickInterval로 직접 계산해서 넣기).",
+    "flamethrower.maxDuration": "버튼을 계속 누르고 있을 때 최대 분사 지속 시간(초) - 다 쓰면 자동으로 꺼지고 쿨다운 시작. 기본 7",
+    "flamethrower.zoneLength": "플레이어 앞으로 뻗는 판정 범위 길이(유닛). 기본 4.5 (2026-09 실플레이 피드백으로 기존 3에서 1.5배 확대)",
+    "flamethrower.zoneWidth": "판정 범위의 좌우 폭(유닛). 기본 2.25 (2026-09 실플레이 피드백으로 기존 1.5에서 1.5배 확대)",
+    "flamethrower.cooldown": "분사가 끝난 후(버튼 릴리스든 maxDuration 소진이든) 다음 사용까지 쿨다운(초). 기본 3",
+    "flamethrower.tickInterval": "데미지가 적용되는 주기(초) - 매 프레임이 아니라 이 주기마다 한 번씩 damagePerTick만큼 그대로 적용됨(비율 계산 없음). 스킬 레벨이나 다른 아이템으로 더 짧게(빠르게) 만드는 확장을 염두에 두고 분리된 필드. 기본 1"
+  },
+  "grenade": {
+    "fuseTime": 2.5,
+    "throwDistance": 2.5,
+    "throwTravelTime": 0.25,
+    "explosionRadius": 1,
+    "damage": 15,
+    "cooldown": 3
+  },
+  "enhancedShot": {
+    "damage": 16,
+    "cooldown": 2,
+    "range": 25
+  },
+  "flamethrower": {
+    "damagePerTick": 3,
+    "maxDuration": 7,
+    "zoneLength": 4.5,
+    "zoneWidth": 2.25,
+    "cooldown": 3,
+    "tickInterval": 0.5
+  }
+}

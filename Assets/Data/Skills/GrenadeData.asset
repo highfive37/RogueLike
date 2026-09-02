@@ -13,9 +13,4 @@ MonoBehaviour:
   m_Name: GrenadeData
   m_EditorClassIdentifier:
   skillName: Grenade
-  fuseTime: 2.5
-  throwDistance: 2.5
-  throwTravelTime: 0.25
-  explosionRadius: 1
-  damage: 15
-  cooldown: 3
+  color: {r: 0.3, g: 0.45, b: 0.25, a: 1}

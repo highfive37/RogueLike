@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RoomDataAsset
   roomId: 4
   roomType: 1
-  gridPosition: {x: 3, y: 0}
+  gridPosition: {x: 4, y: 0}
   enemies:
   - variant: 0
     spawnPosition: {x: 8, y: 1, z: 0}

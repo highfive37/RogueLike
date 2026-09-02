@@ -12,33 +12,131 @@ using UnityEngine;
 // space around it) so the player can freely backtrack into already-cleared
 // rooms - only the room the player is currently in ever has active enemies,
 // tracked per-instance by each room's own RoomManager.
+//
+// Multi-floor progression: "floors" holds one FloorDefinition per floor (Floor 1, Floor 2, ...).
+// AdvanceToNextFloor() tears down the current floor's room instances and rebuilds from the next
+// definition IN THE SAME SCENE - no reload. This is deliberate: reloading the scene (like the
+// Retry button still does for the final floor) would recreate the Player GameObject, wiping
+// PlayerPassiveStats/PlayerActiveItemInventory progress and re-triggering
+// CharacterSelectController's one-time Awake() lock. Keeping the Player alive across the
+// transition avoids both problems for free.
+[Serializable]
+public class FloorDefinition
+{
+    [SerializeField] private RoomDataAsset[] rooms;
+    [SerializeField] private int startRoomId;
+
+    public RoomDataAsset[] Rooms => rooms;
+    public int StartRoomId => startRoomId;
+}
+
 public class StageManager : MonoBehaviour
 {
-    [SerializeField] private RoomDataAsset[] roomAssets;
-    [SerializeField] private int startRoomId;
+    private const float PlayerStandHeight = 1f;
+
+    [SerializeField] private FloorDefinition[] floors;
     [SerializeField] private RoomController roomPrefab;
     [SerializeField] private EnemySpawner enemySpawner;
+    [SerializeField] private ItemDropManager itemDropManager;
     [SerializeField] private RoomTransitionController roomTransitionController;
     [SerializeField] private MinimapUI minimapUI;
     [SerializeField] private float gridSpacing = 50f;
 
+    // The Floor Exit is placed as a child of whichever room in this floor's graph is
+    // RoomType.Boss, offset from that room's center by this local vector - not a per-room
+    // authored thing like doors, since there's exactly one per floor.
+    [SerializeField] private FloorExitController floorExitPrefab;
+    [SerializeField] private Vector3 floorExitLocalOffset = new Vector3(10f, 0f, 0f);
+
     private IFloorLayoutProvider _provider;
     private readonly Dictionary<int, RoomController> _roomsById = new Dictionary<int, RoomController>();
+    private int _currentFloorIndex;
+    private float _runStartTime;
+    private float _floorStartTime;
+    private int _cumulativeRoomsCleared;
 
     public event Action<int> StageChanged;
     public event Action RoomClearedForReward;
+
+    // Fires the instant the boss dies (room clears) - drives guaranteed reward spawn + Floor
+    // Exit activation, but is NOT the end of the run. See FloorCompleted below.
+    public event Action<RoomController> BossRoomCleared;
+
+    // Fires only when the player actually walks into the (by-then-activated) Floor Exit - this
+    // is the real "run is over" moment. Kept as the same name/shape it always had so
+    // RoomFlowManager's existing subscription doesn't need to change, only what triggers it.
     public event Action FloorCompleted;
 
-    public bool IsCurrentStageFinal { get; private set; }
+    public FloorExitController FloorExit { get; private set; }
+    public bool IsLastFloor => _currentFloorIndex >= floors.Length - 1;
+
+    // 1-based, for display (StageChanged still carries the raw room id - useful internally for
+    // per-room tracking - so the HUD reads this instead of that event's payload).
+    public int CurrentFloorNumber => _currentFloorIndex + 1;
+
+    // Per-floor stats, reset on AdvanceToNextFloor() - what the Floor Complete screen shows.
+    public int RoomsClearedCount { get; private set; }
+    public float ElapsedTime => Time.time - _floorStartTime;
+
+    // Whole-run cumulative totals, never reset - not surfaced in any UI yet, kept for when a
+    // full-run summary is built later (see the UI Scene work in the project roadmap).
+    public int TotalRoomsCleared => _cumulativeRoomsCleared;
+    public float TotalElapsedTime => Time.time - _runStartTime;
 
     private void Awake()
     {
-        _provider = new ScriptableObjectFloorLayoutProvider(roomAssets, startRoomId);
+        _runStartTime = Time.time;
+        _floorStartTime = Time.time;
+        BuildProvider();
     }
 
     private void Start()
     {
         BuildFloor();
+    }
+
+    // Tears down the current floor's rooms and builds the next one from floors[] in place -
+    // see the class comment for why this doesn't reload the scene.
+    public void AdvanceToNextFloor()
+    {
+        if (IsLastFloor)
+        {
+            Debug.LogWarning("AdvanceToNextFloor called on the last floor - ignoring.");
+            return;
+        }
+
+        TeardownCurrentFloor();
+
+        _currentFloorIndex++;
+        RoomsClearedCount = 0;
+        _floorStartTime = Time.time;
+
+        BuildProvider();
+        BuildFloor();
+    }
+
+    private void BuildProvider()
+    {
+        FloorDefinition floor = floors[_currentFloorIndex];
+        _provider = new ScriptableObjectFloorLayoutProvider(floor.Rooms, floor.StartRoomId);
+    }
+
+    private void TeardownCurrentFloor()
+    {
+        foreach (RoomController room in _roomsById.Values)
+        {
+            room.RoomEntered -= HandleRoomEntered;
+            room.Cleared -= HandleRoomCleared;
+            Destroy(room.gameObject);
+        }
+        _roomsById.Clear();
+
+        if (FloorExit != null)
+        {
+            FloorExit.Entered -= HandleFloorExitEntered;
+            Destroy(FloorExit.gameObject);
+            FloorExit = null;
+        }
     }
 
     private void BuildFloor()
@@ -47,7 +145,7 @@ public class StageManager : MonoBehaviour
         {
             Vector3 worldPosition = new Vector3(data.GridPosition.x * gridSpacing, 0f, data.GridPosition.y * gridSpacing);
             RoomController instance = Instantiate(roomPrefab, worldPosition, Quaternion.identity, transform);
-            instance.Initialize(data, enemySpawner);
+            instance.Initialize(data, enemySpawner, itemDropManager);
             instance.RoomEntered += HandleRoomEntered;
             instance.Cleared += HandleRoomCleared;
             _roomsById[data.RoomId] = instance;
@@ -72,7 +170,32 @@ public class StageManager : MonoBehaviour
         roomTransitionController.Initialize(_roomsById.Values);
         minimapUI.Initialize(_roomsById.Values);
 
-        _roomsById[_provider.StartRoomId].EnterRoom();
+        SpawnFloorExit();
+
+        RoomController startRoom = _roomsById[_provider.StartRoomId];
+        roomTransitionController.PlacePlayerAt(startRoom.transform.position + Vector3.up * PlayerStandHeight);
+        startRoom.EnterRoom();
+    }
+
+    private void SpawnFloorExit()
+    {
+        if (floorExitPrefab == null)
+        {
+            return;
+        }
+
+        foreach (RoomController room in _roomsById.Values)
+        {
+            if (room.RoomType != RoomType.Boss)
+            {
+                continue;
+            }
+
+            FloorExit = Instantiate(floorExitPrefab, room.transform);
+            FloorExit.transform.localPosition = floorExitLocalOffset;
+            FloorExit.Entered += HandleFloorExitEntered;
+            return;
+        }
     }
 
     private void HandleRoomEntered(RoomController room)
@@ -82,14 +205,21 @@ public class StageManager : MonoBehaviour
 
     private void HandleRoomCleared(RoomController room)
     {
+        RoomsClearedCount++;
+        _cumulativeRoomsCleared++;
+
         if (room.RoomType == RoomType.Boss)
         {
-            IsCurrentStageFinal = true;
-            FloorCompleted?.Invoke();
+            BossRoomCleared?.Invoke(room);
         }
         else if (room.RoomType == RoomType.Combat)
         {
             RoomClearedForReward?.Invoke();
         }
+    }
+
+    private void HandleFloorExitEntered()
+    {
+        FloorCompleted?.Invoke();
     }
 }

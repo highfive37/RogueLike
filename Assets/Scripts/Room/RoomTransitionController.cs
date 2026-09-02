@@ -31,6 +31,16 @@ public class RoomTransitionController : MonoBehaviour
         }
     }
 
+    // Called once by StageManager right before the floor's start room fires EnterRoom() - the
+    // very first room a run enters is never reached through a door transition, so nothing else
+    // ever moves the player there. Without this the player just stays wherever it was left in
+    // the scene, which only ever matched the start room by coincidence (Floor 1's start room
+    // happens to sit at world origin, same as the Player prefab's authored position).
+    public void PlacePlayerAt(Vector3 position)
+    {
+        player.position = position;
+    }
+
     private void HandlePassedThrough(DoorController door)
     {
         if (_isTransitioning || door.TargetRoom == null)

@@ -19,8 +19,15 @@ public class PlayerPassiveStats : MonoBehaviour
     public float ProjectileLifetimeBonus { get; private set; }
     public float AttackSpeedBonus { get; private set; }
 
+    // Separate from the four bonuses above since those are summed floats with no way to back
+    // out "how many pickups" (different types/amounts). Exists for the Floor Complete result
+    // screen's "Passive Items: N" stat.
+    public int AppliedCount { get; private set; }
+
     public void Apply(PassiveItemData data)
     {
+        AppliedCount++;
+
         switch (data.Type)
         {
             case PassiveItemType.AttackPower:

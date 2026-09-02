@@ -19,6 +19,7 @@ public class Projectile : MonoBehaviour
     private Transform _owner;
     private float _elapsed;
     private float _bonusLifetime;
+    private float _rangeOverride;
     private bool _hasReturned;
 
     private void Awake()
@@ -26,15 +27,23 @@ public class Projectile : MonoBehaviour
         _pooledObject = GetComponent<PooledObject>();
         _speed = GameBalance.Player.projectileSpeed;
         _lifetime = GameBalance.Player.projectileLifetime;
+        _rangeOverride = -1f;
     }
 
-    public void Initialize(Vector3 direction, float damage, Transform owner, float bonusLifetime = 0f)
+    // rangeOverride (world units, >= 0) pins this projectile's travel
+    // distance regardless of the shared GameBalance projectile lifetime.
+    // Enhanced Shot passes it so the skill's range lives on its own data
+    // asset and isn't dragged around by basic-attack range tuning; the
+    // basic attack / passive-range path leaves it at -1 and keeps using
+    // lifetime + bonusLifetime.
+    public void Initialize(Vector3 direction, float damage, Transform owner, float bonusLifetime = 0f, float rangeOverride = -1f)
     {
         _direction = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
         _damage = damage;
         _owner = owner;
         _elapsed = 0f;
         _bonusLifetime = bonusLifetime;
+        _rangeOverride = rangeOverride;
         _hasReturned = false;
     }
 
@@ -43,7 +52,12 @@ public class Projectile : MonoBehaviour
         transform.position += _direction * _speed * Time.deltaTime;
 
         _elapsed += Time.deltaTime;
-        if (_elapsed >= _lifetime + _bonusLifetime)
+
+        float lifeLimit = _rangeOverride >= 0f && _speed > 0f
+            ? _rangeOverride / _speed
+            : _lifetime + _bonusLifetime;
+
+        if (_elapsed >= lifeLimit)
         {
             ReturnToPoolOnce();
         }

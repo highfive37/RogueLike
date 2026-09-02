@@ -23,6 +23,10 @@ public class DebugOverlayController : MonoBehaviour
     [SerializeField] private InputActionAsset debugActions;
     [SerializeField] private Text fpsText;
 
+    // Read by other systems (e.g. FlamethrowerActiveItem's range visualizer) that only want
+    // to draw debug-only geometry while this overlay is toggled on.
+    public static bool IsDebugVisible { get; private set; }
+
     private InputAction _toggleAction;
     private bool _visible;
     private float _fpsTimer;
@@ -31,6 +35,7 @@ public class DebugOverlayController : MonoBehaviour
     private void Awake()
     {
         _toggleAction = debugActions.FindActionMap("Debug").FindAction("ToggleOverlay");
+        IsDebugVisible = false;
         fpsText.gameObject.SetActive(false);
     }
 
@@ -70,6 +75,7 @@ public class DebugOverlayController : MonoBehaviour
     private void OnTogglePerformed(InputAction.CallbackContext context)
     {
         _visible = !_visible;
+        IsDebugVisible = _visible;
         fpsText.gameObject.SetActive(_visible);
         _fpsFrames = 0;
         _fpsTimer = 0f;

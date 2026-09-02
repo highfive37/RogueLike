@@ -7,10 +7,8 @@ using UnityEngine;
 public class PassiveItemData : ItemData
 {
     [SerializeField] private PassiveItemType type;
-    [SerializeField] private Color color = Color.white;
 
     public PassiveItemType Type => type;
-    public Color Color => color;
 
     // Amount/CapCount are hand-tunable balance numbers pulled from
     // GameBalance (Assets/StreamingAssets/Balance/PassiveItems.json)

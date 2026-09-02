@@ -6,6 +6,13 @@ using UnityEngine;
 // force-equip any item for testing, but that never implies ownership.
 // Ownership only changes through Acquire() (item pickups) or the starting
 // item below.
+//
+// Acquire() auto-equips its item when nothing is currently equipped, so a
+// player who starts with no starting item (and hasn't opened the equip menu
+// yet) can immediately use the very first active item they pick up instead
+// of pressing the activate key and getting no response. Once something is
+// equipped, later pickups only change ownership - switching stays a
+// deliberate ESC-menu action.
 public class PlayerActiveItemInventory : MonoBehaviour
 {
     [SerializeField] private ActiveItemData startingSkill;
@@ -53,16 +60,27 @@ public class PlayerActiveItemInventory : MonoBehaviour
 
     public void Acquire(ActiveItemData data)
     {
+        bool shouldAutoEquip = EquippedItem == null;
+
         for (int i = 0; i < _owned.Count; i++)
         {
             if (_owned[i].Data == data)
             {
                 _owned[i] = new OwnedActiveItem(data, _owned[i].Level + 1);
+                if (shouldAutoEquip)
+                {
+                    Equip(data);
+                }
+
                 return;
             }
         }
 
         _owned.Add(new OwnedActiveItem(data, 1));
+        if (shouldAutoEquip)
+        {
+            Equip(data);
+        }
     }
 
     public void Equip(ActiveItemData data)

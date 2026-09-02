@@ -30,6 +30,440 @@
 
 ---
 
+## 2026-09-03
+
+### 진행 내용
+- **구현 없음 — 씬 분리 설계 검토/결정만 진행.** 지금까지 단일 씬(`Prototype.unity`) 하나로
+  작업해 온 구조를 여러 씬으로 나눌지 검토하고, **`MainMenu` + `Gameplay` 2씬 구성(안 B)**
+  으로 결정. 검토한 대안 3개와 선택 근거는 `AI_Decision_Log.md` 2026-09-03 항목 참조.
+- 사용자 지시로 **캐릭터 선택 UI는 신설할 `MainMenu` 씬으로 이동**하는 것까지 확정.
+- 결정에 앞서 씬/프리팹 파일을 직접 파싱해 현재 오브젝트·컴포넌트 구조를 확인함(아래 이슈/메모).
+
+### 테스트 결과
+- 해당 없음 — 코드/씬 변경 없음.
+
+### 이슈/메모
+- 씬 안의 프리팹 인스턴스는 `Player`, `Boss_Basic` 둘뿐이고 나머지는 전부 씬 직속 오브젝트.
+- **`PlayerPassiveStats` / `EquipMenuController` / `PickupNotificationUI`가 `Player.prefab`
+  본체에는 없고, 씬의 Player 인스턴스에 "추가된 컴포넌트" 오버라이드로만 붙어 있음**
+  (`PickupNotificationCanvas` 자식도 마찬가지). 씬 분리를 막지는 않지만(Player는 `Gameplay`
+  씬에 그대로 남음), 씬이 늘어나는 시점에 프리팹 본체로 올리는 게 맞음 — **별도 작업으로 분리**.
+- **`PauseState`에 세션 리셋 훅이 없음.** `_owners`(static `HashSet`)는 씬 로드로 초기화되지
+  않으므로, 파괴된 오브젝트가 오너로 남으면 `Count`가 0이 되지 않아 `Time.timeScale`이 0으로
+  고착될 수 있음. 지금은 `FloorCompleteUI`가 로드 직전 `ReleasePause()`를 부르는 단일 경로뿐이라
+  발현되지 않지만, 씬 전환 경로가 늘어나면 위험. `GameBalance`의 `[RuntimeInitializeOnLoadMethod]`
+  리셋 패턴을 그대로 적용하면 됨.
+- **`CharacterSelectUI.Awake()`가 `panel.SetActive(false)` 방식** — 2026-08-24 / 2026-09-02 (2)에
+  두 번 터진 "자기-비활성 패널 함정"과 같은 구조. `MainMenu` 씬으로 옮기면서 `FloorCompleteUI`와
+  동일한 `CanvasGroup` 방식으로 함께 전환할 것.
+- **미결정 2건** (작업 착수 전 사용자 확인 필요):
+  1. 결과 화면(`FloorCompleteUI`)을 `Gameplay`에 남길지 `MainMenu`로 옮길지 — **권장: Gameplay
+     유지**. 살아있는 `StageManager` / `PlayerPassiveStats` / `PlayerActiveItemInventory` 참조로
+     통계를 만들기 때문에, 옮기면 통계 전달 데이터를 새로 설계해야 함. 아래 계획은 이 가정 기준.
+  2. 게임오버(플레이어 사망) 흐름을 이번 범위에 포함할지 — 현재 사망 시 처리 자체가 정의돼 있지 않음.
+
+### 다음 작업 — 씬 분리 (안 B: `MainMenu` + `Gameplay`)
+
+우선순위상 이 작업을 먼저 진행하고, 2026-09-02 (3)의 "다음 작업" 목록(3층 맵 제작, 방 데이터 JSON
+외부화, 대시 무적 확인, 대시 쿨다운 UI, Stage 2.5 잔여 항목)은 그 뒤에 이어서 진행한다.
+
+**0단계 — 선행**
+- 현재 미커밋 변경(스크립트/데이터 30개 이상, `Prototype.unity` 포함)을 **먼저 커밋**한다.
+  씬 rename/분리 diff와 섞이면 되돌리기가 어려워짐.
+
+**1단계 — 새 스크립트 3종**
+- `RunContext` (static, `Assets/Scripts/Core/`): `SelectedArchetype`(`CharacterArchetypeData`).
+  `MainMenu` → `Gameplay`로 넘길 값은 현재 이것 하나뿐. `GameBalance`와 동일하게
+  `[RuntimeInitializeOnLoadMethod]`로 세션마다 리셋.
+- `SceneNames` + `SceneLoader` (static): 씬 이름 상수와 `LoadMainMenu()` / `LoadGameplay()`.
+  로드 직전 `Time.timeScale` 복구를 한 곳에서 보장하고, `buildIndex` 대신 이름으로 로드
+  (씬이 늘어나면 인덱스가 흔들림).
+- `MainMenuController` (`MainMenu` 씬): 타이틀 → Play → 캐릭터 선택 표시 →
+  `RunContext.SelectedArchetype` 설정 → `SceneManager.LoadSceneAsync(Gameplay)`.
+
+**2단계 — 기존 스크립트 수정 5종**
+
+| 파일 | 변경 |
+|---|---|
+| `CharacterSelectController.cs` | `UIManager` 참조 제거. `Start()`에서 UI를 띄우고 기다리는 대신 `RunContext.SelectedArchetype`을 읽어 즉시 `EquipWeapon` + 입력 활성. **컨텍스트가 비어 있으면(= `Gameplay` 씬만 단독 Play) 인스펙터 기본 아키타입으로 fallback** — 개발 중 Gameplay 씬만 눌러 테스트하는 흐름을 유지하기 위해 필수. |
+| `UIManager.cs` | `characterSelectUI` 필드와 `ShowCharacterSelect()` 제거(`MainMenu` 씬으로 이동). |
+| `CharacterSelectUI.cs` | `MainMenu` 씬으로 이동. `panel.SetActive()` 토글 → **`CanvasGroup` 토글로 전환**, 오브젝트는 항상 active 유지(자기-비활성 패널 함정 재발 방지). |
+| `FloorCompleteUI.cs` | 마지막 층의 `SceneManager.LoadScene(buildIndex)` → `SceneLoader.LoadGameplay()`. **"타이틀로" 버튼 추가** → `SceneLoader.LoadMainMenu()`. 두 경로 모두 `PauseState.ReleasePause()` 선행. 층 전환 카운트다운/`AutoAdvanceRequested` 경로는 그대로 유지(층 전환은 여전히 씬 안에서 제자리 재빌드). |
+| `PauseState.cs` | `[RuntimeInitializeOnLoadMethod]` 리셋 추가(`_owners.Clear()` + `timeScale = 1f`). |
+
+**3단계 — 씬 작업 (Unity 에디터 / MCP)**
+1. `Prototype.unity` → `Gameplay.unity` rename (git mv로 히스토리 유지).
+2. `CharacterSelectPanel`을 프리팹으로 추출 → `Assets/Prefabs/UI/CharacterSelectPanel.prefab`
+   (씬 간 오브젝트 이동은 프리팹 경유가 참조 유실이 가장 적음).
+3. 새 씬 `MainMenu.unity` 생성: Camera + EventSystem + Canvas(TitlePanel + CharacterSelectPanel
+   인스턴스) + `MainMenuController`.
+4. `Gameplay.unity`에서 `CharacterSelectPanel` 제거, `UIManager` 인스펙터 정리,
+   `ClearOverlayPanel`에 "타이틀로" 버튼 추가 후 배선.
+5. Build Settings: `0 = MainMenu`, `1 = Gameplay`.
+
+**4단계 — 검증 (확인할 증거)**
+- [ ] 컴파일 클린 (`Unity_ReadConsole`로 확인)
+- [ ] `MainMenu`에서 Play → 캐릭터 선택 → `Gameplay` 진입 → 선택한 무기가 실제로 장착됨
+- [ ] **`Gameplay` 씬 단독 Play** → fallback 아키타입으로 정상 진행(개발 편의 회귀 확인)
+- [ ] 층1 클리어 → 카운트다운 → 페이드 → 층2 시퀀스가 씬 분리 후에도 그대로 동작
+- [ ] 마지막 층 클리어 → 결과 화면 → ① 재시작 ② 타이틀 복귀, 각각 진입 직후 `Time.timeScale == 1`
+- [ ] **ESC 장비 메뉴를 연 채로 타이틀 복귀** → 재진입 시 게임이 멈춰 있지 않음(`PauseState` 리셋 검증)
+- [ ] 미니맵 / HUD / 아이템 픽업 등 `Gameplay` 씬 내부 배선이 rename 후에도 유지됨
+
+**5단계 — 문서**
+- `DevLog.md`(작업 결과), `AI_Decision_Log.md`(구현 중 추가 결정 발생 시),
+  `ClaudeSessionSummary.md` §씬 구성/클래스 책임 표 갱신, `ProjectPlan.md` 로드맵 반영.
+
+**이번 범위에서 제외**
+- 층별 씬 분리(층은 계속 `RoomDataAsset` 데이터 + 제자리 재빌드 유지), Bootstrap 씬 / Additive
+  로딩, Addressables·로딩 화면(Phase 5), 게임오버 흐름, 3층 제작.
+- `StageManager.TotalRoomsCleared` / `TotalElapsedTime`(이미 추적 중, UI 미노출)을 이용한
+  **런 전체 요약 화면**은 결과 화면을 `MainMenu`로 옮기게 될 경우의 후속 과제로만 남겨둠.
+
+---
+
+## 2026-09-02 (3)
+
+### 진행 내용
+- **Floor Exit 콜라이더 버그 수정**: `FloorExit.prefab`의 `BoxCollider.m_Size`(3.5, 2, 3.5)가
+  오브젝트의 `localScale`(3, 0.1, 3)에 곱해져 실제 트리거가 (10.5, 0.2, 10.5)유닛으로 잡혀
+  있던 것을 발견 — 발판(3×3유닛)과 한참 떨어진 곳에서부터 결과 UI가 뜨던 원인. `m_Size`를
+  (1.1, 2, 1.1)로 수정해 실제 트리거를 (3.3, 0.2, 3.3)유닛으로 맞춤(발판 크기와 거의 일치).
+- **층2("ㅂ" 모양) 방 배치 authoring**: 로드맵 §3/§6의 "다음 층 제작" 착수.
+  - 1차로 3×3 격자(9개 방, 좌상단 시작/우하단 보스/정중앙 아이템, 가운데 행만 동서 연결
+    없음) 구성 → 실플레이 확인 중 사용자가 지적한 두 가지 회귀:
+    - 미니맵에서 시작방(현재방, 노란 표시)이 안 보임
+    - 시작방→207 "직행"처럼 보이는 현상, 204방에서 몬스터 스폰
+    두 증상 모두 원인은 하나였음(아래 참고).
+  - 이후 사용자가 정확한 ASCII 도안으로 모양을 재지정: 시작방 좌상단 한 칸 더 돌출(0,3),
+    아이템방을 (1,2)로 이동(기존 CombatB 자리 대체), 기존 CombatB 완전 삭제, 우상단(2,3)에
+    신규 방 추가, 전투방 이름을 CombatA~G로 빈틈없이 재정렬. 최종 10개 방, Top 정사영
+    캡처로 실루엣 확인.
+  - 몬스터 구성은 룸별 랜덤이 아니라 고정값으로 authoring(사용자 지시 — 추후 JSON
+    밸런스 파일로 뺄 예정, 이번 세션 범위 아님).
+- **플레이어 시작 위치 버그 발견/수정**: 위 "204에서 스폰" 현상의 진짜 원인. `StageManager.
+  BuildFloor()`가 시작방에 대해 `EnterRoom()`은 호출하지만, 플레이어의 실제 월드 좌표를
+  시작방 위치로 옮기는 코드가 어디에도 없었음 — 플레이어는 씬에 저장된 좌표(원점,
+  (0,1,0))에 그대로 있었고, 이게 층1의 시작방(grid 0,0=월드원점) 위치와 우연히 같아서
+  지금까지 드러나지 않았던 잠복 버그. 층2의 시작방은 grid(0,2)라 원점과 다른데, 원점 자리는
+  하필 층2의 다른 방(구 204)이라 "엉뚱한 방에서 시작 + 그 방의 진짜 문으로 이동"하는
+  현상으로 나타났던 것. `RoomTransitionController.PlacePlayerAt(Vector3)` 신설(기존 문
+  전환 때 쓰던 `player` 참조 재사용), `StageManager.BuildFloor()`가 층 빌드 직후 호출하도록
+  수정.
+- **미니맵 오프스크린 버그 발견/수정**: 위 "노란 방 안 보임" 현상의 진짜 원인. `MinimapUI.
+  GridToLocal`이 `grid.y`를 그대로 더하는 방식이었는데, 패널이 화면 우상단 고정(anchor
+  (1,1))이고 아이콘도 패널 좌상단 기준이라, grid.y가 커질수록(북쪽 방일수록) 패널/화면
+  "위쪽 바깥"으로 밀려나는 구조였음 — 층1은 모든 방이 grid.y=0(가로 일직선)이라 한 번도
+  발현되지 않았던 잠복 버그. Play Mode 라이브로 실제 화면 좌표(1330×748 기준 Y=778, 화면
+  밖)까지 찍어서 확인. `GridToLocal`을 floor의 최대 행/최소 열 기준 상대 좌표로 재계산하게
+  수정 + 패널 세로 크기 90→150으로 확장.
+- **미니맵을 로컬 스크롤 뷰포트 방식으로 전면 개편**(사용자 요청): 기존엔 층 전체를 고정
+  패널에 한 번에 다 그리는 방식 → 현재 방이 항상 패널 중앙에 오도록 매 방 입장마다 재계산,
+  `RectMask2D`로 뷰포트 밖은 잘라서 안 보이게 변경. 아이콘/커넥터를 담는 `Content` 자식을
+  런타임에 만들어 방 입장마다 `Content.anchoredPosition`만 재계산하는 방식(개별 아이콘
+  재배치 불필요). 패널 크기 160×160 고정 뷰포트로 축소.
+- **층1→층2 자동 진행 구현**(로드맵 §6 "UI Scene" 작업의 일부를 앞당김, 전체 타이틀/게임오버
+  루프는 아직 아님): 층1 클리어 시 기존 Retry 버튼 대신 "3초 후에 다음 층으로 이동" 카운트다운
+  → 0초에 자동으로 층2로 전환. 마지막 층(현재는 층2) 클리어 시에만 기존 Retry(씬 리로드)
+  유지.
+  - 설계 검토: 씬 리로드로 층 전환(정적 상태로 층 인덱스 전달)도 검토했으나, 리로드 시
+    Player 오브젝트가 재생성돼 패시브/액티브 아이템 진행 상황이 초기화되고 캐릭터 선택도
+    재등장 억제용 별도 로직이 필요해짐 — 대신 **씬 유지, StageManager가 방들만 파괴 후
+    재생성**하는 방식 채택. 오브젝트 풀은 적 인스턴스를 방이 아니라 풀 자신의 자식으로
+    관리해서 방 파괴가 안전함을 확인, `CharacterSelectController.Awake()`는 Player가
+    파괴·재생성되지 않는 한 세션당 1회만 실행됨을 코드로 확인 후 결정.
+  - `StageManager`: `roomAssets[]`/`startRoomId` 단일 필드 → `FloorDefinition[] floors`로
+    교체. `AdvanceToNextFloor()`(현재 층 방 파괴+이벤트 해제 → 다음 층 재빌드 → 플레이어
+    재배치) 신설. `IsLastFloor`/`CurrentFloorNumber` 프로퍼티 추가. `RoomsClearedCount`/
+    `ElapsedTime`은 층마다 리셋(결과 UI 표시용), 별도로 `TotalRoomsCleared`/
+    `TotalElapsedTime`(누적, 아직 UI 미노출)을 내부적으로 계속 추적.
+  - `MinimapUI.Initialize()`를 재호출 가능하게 수정(이전 층 아이콘/커넥터/구독 정리 후
+    재빌드) — 층 전환마다 새로 호출됨.
+  - `FloorCompleteUI`: 마지막 층 여부에 따라 Retry 버튼 또는 카운트다운 텍스트 노출.
+    카운트다운 3→2→1→0 (0 표시 직후 전환 이벤트 발생, `Time.unscaledDeltaTime`/
+    `WaitForSecondsRealtime` 기반이라 일시정지 중에도 진행). `Hide()`/`ReleasePause()` 신설.
+  - `FloorTransitionUI` 신규: 화면 전체를 덮는 검은 페이드(1초 아웃 → 0.5초 유지 중 실제
+    층 재빌드 실행 → 1초 인), 전 구간 언스케일 타임.
+  - `RoomFlowManager`가 카운트다운 완료 이벤트를 받아 페이드 전환 지휘, 페이드인 완료 후에만
+    일시정지 해제.
+  - **카운트다운 버그 발견/수정**: 초기 구현은 "1초..."까지만 텍스트를 갱신하고 바로
+    페이드를 시작해서, 페이드 진행 1초 내내 "1초 후에..." 텍스트가 화면에 남아있어 "0초를
+    못 보고 1에서 바로 암전되는" 것처럼 보였음(사용자 실플레이로 발견). 전환 이벤트 발생
+    직전에 텍스트를 "0초 후에..."로 갱신하는 한 줄 추가로 해결, 실플레이로 재확인 완료.
+- **HUD 자잘한 수정 2건**(사용자 실플레이 피드백):
+  - 상단 "Stage" 텍스트가 방ID를 그대로 표시해서 층2에서 "Stage210"처럼 보이던 것 →
+    `StageManager.CurrentFloorNumber`(1-based)를 대신 표시하도록 수정, 기존 방ID 기반
+    `StageChanged` 이벤트/데이터는 그대로 유지.
+  - 액티브 아이템 쿨다운 아이콘(화면 중하단) 아래에 현재 장착 아이템 이름 텍스트 신규 추가
+    (`ActiveItemCooldownUI`가 `PlayerActiveItemInventory.EquippedItem.ItemName`을 매 프레임
+    반영).
+
+### 테스트 결과
+- [x] Floor Exit 트리거 크기 수정 반영 확인
+- [x] 층2 최종 방 배치(10개, ㅂ자) 구조 검증 스크립트로 확인(중복 좌표/ID 없음, 모든 연결
+      상호대응·1칸 인접, 전 방 시작방에서 BFS 도달 가능) + Top 정사영 캡처로 실루엣 육안 확인
+- [x] 플레이어 시작 위치 수정 후 Play Mode 라이브 확인: 플레이어 위치가 시작방 위치와
+      거리 1(서 있는 높이)로 정확히 일치
+- [x] 미니맵 오프스크린 수정 후 라이브 확인: 9개 아이콘 전부 `onScreen=true`, 시작방 노란
+      아이콘 정상 표시
+- [x] 미니맵 로컬 스크롤 전환 라이브 확인: 현재 방 아이콘이 뷰포트 정중앙에 정확히 위치,
+      인접 방만 뷰포트 안에 보임
+- [x] (사용자 실플레이) 층2 아이템 방 경유 최단 루트로 보스방까지 클리어 문제없음
+- [x] (사용자 실플레이) 층1 클리어 → 카운트다운 → 페이드 → 층2 시작방 전체 시퀀스 정상,
+      페이드인 끝난 후에만 조작 가능, 층2에서도 패시브/액티브 아이템 유지·캐릭터 선택
+      재등장 없음, 층2(마지막 층) 클리어 시 Retry로 층1부터 완전 재시작 정상
+- [x] (사용자 실플레이) 카운트다운 0초 표시 버그 수정 후 재확인 완료
+- [ ] 상단 Stage 라벨/액티브 아이템 이름 텍스트는 데이터 경로만 스크립트로 확인(자동화
+      세션 프레임 고정으로 화면 갱신 자체는 못 봄) — 사용자가 "확인했다"고 답해 실질적으로는
+      확인된 것으로 처리
+
+### 이슈/메모
+- 이번 세션에서 발견된 버그 3건(Floor Exit 콜라이더, 플레이어 시작 위치, 미니맵
+  오프스크린)이 전부 "층1에서는 좌표가 우연히 안전한 값이라 한 번도 발현되지 않았던
+  잠복 버그"라는 공통점이 있었음 — 층1만으로 검증하는 것의 구조적 한계로 기록해둘 것.
+  앞으로 새 층 authoring 시 이 세 가지(콜라이더 스케일 곱, 플레이어 스폰 좌표, 미니맵
+  좌표계)는 재발 여부를 우선 의심할 것.
+- `Unity_ManageAsset`의 `Rename` 액션이 오작동해 애셋이 `Assets/`(하위 폴더 아님) +
+  확장자 없는 경로에 남는 문제 발생(`Room2_CombatC.asset` → `Assets/Room2_CombatB`). 이후
+  파일 이동은 Bash `mv`로 직접 처리하는 방식으로 우회.
+- 자동화 Play Mode의 `Time.frameCount` 고정 한계(기존에도 여러 번 기록된 문제)가 이번엔
+  카운트다운 코루틴 검증에서 재발 — 벽시계로 59초가 지나도 프레임 카운트 2에서 정지,
+  코루틴이 전혀 진행 안 됨. 정적 배선 검증(참조 null 체크, `Show()` 직후 분기 상태)까지만
+  자동으로 하고 나머지는 실플레이로 확인하는 패턴을 계속 따름.
+
+### 다음 작업 (사용자 지정, 우선순위 순)
+1. 3층 맵 제작
+2. 1~3층 방 위치/속성 등 데이터를 JSON 파일로 외부화(수정 가능하게) — 최근 도입한
+   `GameBalance`/`ItemDropTable.json` 패턴과 통일감 있게 검토
+3. 스페이스바 대시 동작이 이동 중 무적인지 확인
+4. 화면 우하단에 대시 아이콘 UI 배치 + 액티브 아이템 쿨다운과 같은 방식으로 대시 쿨다운 표시
+5. 이후 Stage 2.5 잔여 항목 재개(아이템 방 세부 밸런스, 잔여 정리 등)
+
+---
+
+## 2026-09-02 (2)
+
+### 진행 내용
+- **버그 수정 (회귀): 보스 클리어 → Floor Exit 진입 시 조작 불가 + 결과
+  화면 안 뜸.** 2026-08-24에 이미 고쳤던 "`ClearOverlayPanel` 자기-비활성
+  패널 함정"이 Stage 2.5 / FloorExit 작업 중 재발한 것.
+  - 원인: 씬의 `ClearOverlayPanel`(`&689983790`, 현재 `FloorCompleteUI`
+    컴포넌트 호스트)이 `m_IsActive: 0`으로 저장돼 있었음. `FloorCompleteUI`는
+    `Awake()`에서 `panel.SetActive(false)`로 **자기 자신**을 끄는데, 오브젝트가
+    비활성으로 시작하면 `Awake()`가 지연되다가 `Show()`의 첫
+    `panel.SetActive(true)` 도중 동기 실행되며 방금 켠 패널을 다시 꺼버림.
+    그 다음 줄들(`playerInputActions.enabled = false`,
+    `PauseState.RequestPause`)은 그대로 실행 → 입력 잠김 + timeScale 0 +
+    화면은 안 보이는 소프트락. (`AI_Decision_Log`/`ClaudeSessionSummary` §4에
+    이 패턴 상시 경고 노트 있음 — 세 번째 재발)
+  - 수정 (Option B-2, CanvasGroup 방식): GameObject active를 토글하지 않고
+    `CanvasGroup`으로만 표시/숨김. 컴포넌트의 GameObject는 씬 내내 활성 유지 →
+    `Awake()`가 로드 시 1회만 정상 실행됨(버그 없던 다른 패널들과 동일 상태).
+    - `FloorCompleteUI.cs`: `[SerializeField] GameObject panel` →
+      `CanvasGroup canvasGroup`. `ApplyVisible(bool)` 추가
+      (`alpha`/`interactable`/`blocksRaycasts` 토글). `Awake()`는
+      `ApplyVisible(false)`, `Show()`는 텍스트 채우기 → `ApplyVisible(true)` →
+      입력잠금 → `PauseState.RequestPause` 순으로 정리(`SetActive` 호출 제거).
+    - `Prototype.unity`: `ClearOverlayPanel` `m_IsActive: 0 → 1`,
+      `CanvasGroup` 컴포넌트(`&689983795`, alpha 0 / interactable 0 /
+      blocksRaycasts 0) 추가, `FloorCompleteUI.canvasGroup` 배선. 딤 `Image`
+      (`&689983793`)는 그대로 — 숨김 시 alpha 0 + blocksRaycasts 0이라 안
+      보이고 클릭도 안 먹음. (Play Mode 중 손댄 디스크 수정본은 에디터가
+      스테일 씬을 들고 있어 미반영 → `Unity_RunCommand`로 인메모리 씬에 직접
+      적용 후 `EditorSceneManager.SaveScene`으로 저장하는 방식으로 처리)
+  - 미처리(별건): 스테일 `m_EditorClassIdentifier: ...ClearOverlayUI`
+    (씬 재저장 시 자동 정정, 하위 스크립트는 guid로 해석되므로 무해),
+    삭제된 `ClearOverlayUI.cs.meta` git 잔재.
+
+### 테스트 결과
+- [x] 스크립트 재컴파일 에러/경고 0건 (`Unity_ReadConsole`, Play Mode 종료 후)
+- [x] `Unity_RunCommand` 구조 검증: `ClearOverlayPanel.activeSelf = True`,
+      `CanvasGroup` 존재(alpha 0), `FloorCompleteUI.canvasGroup` 필드가 그
+      CanvasGroup을 가리킴, 씬 저장됨
+- [x] `Unity_RunCommand` 기능 검증: 에디트 모드에서 `FloorCompleteUI.Show(더미
+      stats)` 호출 → `canvasGroup.alpha = 1` / `interactable = True` /
+      `blocksRaycasts = True` / `Time.timeScale = 0` / `PauseState.IsPaused =
+      True` 확인, 이후 상태 원복(저장 안 함)
+- [ ] 실플레이: 보스 클리어 → Floor Exit 진입 → 결과 패널이 실제로 보이고 4개
+      값(rooms/passive/active/time) 채워짐 + 입력잠금 + Retry 클릭 시 씬
+      리로드·timeScale 복구 — 미확인/예정
+- [ ] 실플레이: Play 진입 직후 화면 안 어두움 + 클릭 안 막힘 — 미확인/예정
+
+### 이슈/메모
+- Play Mode 중 씬 파일을 직접 편집하면 에디터 인메모리 씬과 어긋남 —
+  스크립트는 재컴파일돼도 씬은 리로드 안 됨. 이번엔 디스크 hand-edit 대신
+  `RunCommand`로 인메모리 씬에 적용 후 저장해서 단일 소스로 정리.
+- 이 "자기 자신을 `Awake()`에서 `SetActive(false)` 하는 패널" 함정이 세 번째
+  재발(`ClearOverlayPanel` 8/24, 그리고 `ActiveItemEquipUI`/
+  `PickupNotificationUI` 사례). B-2처럼 CanvasGroup로 가면 구조적으로 사라지므로
+  나머지 패널도 같은 방식 이관을 검토할 것.
+
+### 다음 작업
+- 위 [ ] 실플레이 2건 확인
+- 아이템 방(#3) 설계 및 구현
+- 다음 층 제작 (층 2·3 데이터 authoring, 목표 총 3층)
+- 씬의 비활성 `Boss_Basic` 인스턴스 삭제
+
+---
+
+## 2026-09-02
+
+### 진행 내용
+- 코드/데이터 변경 없음 — Stage 2.5 이후 로드맵만 개정한 세션.
+- **잔여 정리 항목 정리 방법 확정**: 씬(`Prototype.unity`)에 남은 비활성
+  `Boss_Basic` 인스턴스(`PrefabInstance &5312692809645635092`, 위치
+  `(-10, 1.5, 10)`, `m_IsActive: 0`)를 삭제하기로 함. 근거 확인:
+  - `BossPool`(`GameObjectPool`)은 프리팹 자산(`Boss_Basic.prefab`,
+    guid `1b7355ec…`)을 직접 참조하며, 이 씬 인스턴스는 씬 루트 정렬
+    목록 외 어디서도 참조되지 않음 — 삭제해도 스폰 경로에 영향 없음.
+  - 이 인스턴스에만 `EnemyStateMachine.data`(→ `BossData.asset`),
+    `projectilePool`, `maxHealth: 300` 오버라이드가 걸려 있어, 과거
+    (2026-08-18) 프리팹 자산의 결함을 가려 `BossPool` 스폰 시
+    NullReferenceException 원인 파악을 방해한 전력이 있음.
+  - `projectilePool` 오버라이드가 씬 풀 오브젝트를 물고 있어, 나중에 씬
+    정리 시 조용히 깨진 참조가 될 수 있음.
+  - 정리 방법: 씬에서 해당 GameObject만 삭제 후 저장, 프리팹 자산은 유지.
+    삭제 후 보스 방 진입 → 정상 스폰/처치 1회 확인.
+- **로드맵 개정 (사용자 지시)**: 기존 "단일 테스트 층의 방 개수를 5~7개로
+  확장" 계획을 폐기하고 다음으로 대체:
+  1. **다음 층 제작 — 목표 총 3층**. 현재 테스트 층 1개에 층 2·3을
+     `RoomDataAsset` / `FloorLayout` 데이터로 추가(방/문 메커니즘 변경 없는
+     데이터 authoring 작업).
+  2. **3층 완성 후 UI Scene 신설 → 전체 플레이 루프 구성**: 타이틀 →
+     캐릭터 선택 → 런(3층 주파) → 클리어/게임오버 → 재시작·타이틀 복귀를
+     하나의 루프로 연결. 미정 상태였던 **Game Over 흐름 / 런 종료 이후
+     흐름**을 이 작업에 통합해서 설계하기로 함.
+- `ClaudeSessionSummary.md` §3(Stage 2.5 남은 작업) / §5(미결정 항목) /
+  §6(앞으로 해야 할 작업, 우선순위 재번호) / 헤더 갱신일에 위 내용 반영.
+
+### 테스트 결과
+- 해당 없음 (문서 개정 세션, 코드/씬 변경 없음).
+
+### 이슈/메모
+- 실제 작업(Boss 인스턴스 삭제, 층 2·3 authoring, UI Scene)은 이번 세션에서
+  착수하지 않음 — 계획 확정까지만.
+
+### 다음 작업
+- 아이템 방(#3) 설계 및 구현
+- 다음 층 제작 (층 2·3 데이터 authoring, 목표 총 3층)
+- UI Scene + 전체 플레이 루프 (3층 완성 후)
+- 씬의 비활성 `Boss_Basic` 인스턴스 삭제
+
+---
+
+## 2026-09-01
+
+### 진행 내용
+- 사용자가 2026-08-31 작업분(룸 시스템 전환 + 아이템/밸런스/디버그 관련
+  전반)을 직접 플레이하면서, 그동안 자동화 환경 한계로 "직접 호출/물리 스텝
+  강제 실행"으로만 검증됐던 항목들을 실플레이로 최종 확인. 코드/데이터 변경
+  없음(검증 전용 세션).
+
+### 테스트 결과 (사용자 실플레이)
+- [x] 방-방 카메라 전환 연출이 끝까지 자연스럽게 완료됨 — 문 통과 → 카메라
+      보간 이동 → 도착 후 플레이어 재배치 및 입력·물리·렌더러 원복까지 전
+      구간 정상 (2026-08-31 (2) 항목에서 자동화 한계로 미검증이던 코루틴
+      완주 부분)
+- [x] 시작방(16유닛)과 일반 방(40×40유닛) 크기, 기존 `QuarterViewCameraFollow`
+      (단순 오프셋 추적, 방 경계 재프레이밍 없음) 구도가 실제 플레이에서
+      적절함 — 방 경계 재프레이밍/Cinemachine 도입은 당장 불필요로 판단
+- [x] 미니맵(겅전 스타일 3단계 안개 + 방 연결선 + 배경 패널)이 실제 화면
+      (우상단)에서 가독성·배치 모두 양호
+- [x] `BillboardUI` 빌보딩이 자연스러움 — 데미지 숫자 팝업 / 적 HP바 / 픽업
+      알림이 이동·전환 중에도 항상 카메라를 향함
+- [x] ESC 일시정지 메뉴가 실제 ESC 키로 정상 개폐되고, 좌(패시브 스탯 Pip
+      바 4종) / 우(장비 슬롯) 분할 레이아웃과 Pip 바 채움 표시가 화면에서
+      괜찮음
+- [x] 패시브 아이템 픽업이 지면에 사선으로("누운 캡슐") 잘 놓임 — 회전 강제
+      초기화 / 공중 스폰 버그 수정((18) 항목)이 실제로 반영됨을 확인
+- [x] 기본 공격 사거리 3유닛(발사체 유지시간 0.2초 × 15유닛/초)과 공격 속도
+      체감(초반 느림 → 스택 시 빨라짐)이 적절함
+
+### 이슈/메모
+- 위 항목 전부 "문제 없음"으로 확인됨 — 관련 미확인 꼬리표들을 정리.
+- 아직 남은 확인/결정(전부 실플레이 블로커 아님): Enhanced Shot 액티브
+  아이템 사거리도 같이 짧아진 게 의도한 바인지, `FlamethrowerActiveItem.
+  CooldownRemaining` 항상 0 반환 갭, 아이콘 스와치 → 실제 픽토그램 교체,
+  F1 오버레이 FPS 텍스트 위치, 씬의 비활성 `Boss_Basic` 플레이스홀더 정리
+
+### 다음 작업
+- 아이템 방(#3) 설계 및 구현 (바닥 드롭 인프라 재사용 + "전투 없이 보장된
+  픽업 배치" 추가)
+- 테스트 층 5개 방 → 5~7개 이상으로 확장 (메커니즘 검증 완료, 데이터 애셋만
+  추가하면 됨)
+- Game Over / 런 종료 이후 흐름 추가
+- Stage 3(최적화) 잔여 항목 재개 시점 논의
+
+---
+
+## 2026-09-01 (2)
+
+### 진행 내용
+- Stage 2.5 잔여 정리 2건 처리 (위 실플레이에서 확인됐던 미결정 항목):
+  1. **Enhanced Shot 사거리를 기본 공격과 분리** — 기존엔 액티브 아이템
+     "Enhanced Shot"이 기본 공격과 같은 `Projectile_Basic` 프리팹/풀을 쓰면서
+     사거리를 `GameBalance.Player.projectileLifetime`(기본 공격용으로 0.2초 =
+     3유닛으로 줄인 값)에 그대로 얹어 받고 있었음. 이제 스킬이 자기 데이터
+     기준으로 독립 동작:
+     - `Projectile.Initialize(...)`에 `rangeOverride`(월드 유닛, 기본 -1)
+       옵션 인자 추가. `>= 0`이면 `수명 = rangeOverride / speed`로 계산하고
+       `lifetime + bonusLifetime`(기본 공격 + 패시브 사거리 경로)은 무시.
+       `Awake()`에서 `-1`로 초기화(재사용/미초기화 시 즉시 소멸하는 footgun
+       방지)
+     - `EnhancedShotActiveItemData`에 `range` 필드 신규(월드 유닛).
+       `EnhancedShotActiveItem`이 `Initialize(..., rangeOverride: _data.Range)`
+       로 전달
+     - 프리팹/풀은 그대로 공유(투사체 거동은 동일, 사거리 숫자만 스킬 소유).
+       패시브 "사거리 증가"는 원래대로 기본 공격에만 적용되고 Enhanced Shot엔
+       무영향(스코프 변화 없음)
+     - **같은 날 스킬 스펙 확정(사용자 지정)**: 사거리 **25유닛**, 데미지
+       **16**(레벨 1 기준), 쿨다운 2초는 유지. `range`/`damage` 코드 기본값과
+       `EnhancedShotData.asset` 모두 이 값으로 맞춤
+  2. **Flamethrower 스킬에 쿨타임 3초 부여** — `FlamethrowerActiveItem.
+     CooldownRemaining`이 항상 0을 반환해 사실상 무한 연발이 가능하던 갭을
+     메움:
+     - `FlamethrowerActiveItemData`에 `cooldown` 필드 신규(기본 3초)
+     - 분사 종료(버튼 릴리스 / `maxDuration` 소진 둘 다) 시점에
+       `EndActivation()`이 `_cooldownRemaining = _data.Cooldown` 설정,
+       `Tick()`이 비활성 상태에서 쿨다운 감소, `OnActivatePressed()`가
+       `_cooldownRemaining > 0f`면 재분사 차단
+     - `CooldownProgress`: 분사 중 1, 쿨다운 중 `remaining / cooldown`,
+       준비 완료 0 (`IActiveItem` 인터페이스 계약대로) — `ActiveItemCooldownUI`
+       가 이제 화염방사기에도 정상적으로 쿨다운 스윕을 표시함
+  - 데이터 애셋에도 값 명시: `EnhancedShotData.asset`에 `damage: 16` /
+    `range: 25`, `FlamethrowerData.asset`에 `cooldown: 3` (코드 기본값과 동일,
+    명시성)
+
+### 테스트 결과
+- [x] 스크립트 리임포트 후 재컴파일 에러/경고 0건 (`Unity_ReadConsole` 확인)
+- [x] `RunCommand`로 확정 스펙 확인: `EnhancedShotData` `Damage`=16,
+      `Range`=25유닛, `Cooldown`=2초. `projectileSpeed`=15 기준 자체 수명
+      25/15≈1.67초로, 기본 공격 수명 0.2초(3유닛)와 완전히 분리됨
+- [x] `RunCommand`로 `FlamethrowerActiveItem` 상태 머신 검증:
+      분사 종료 즉시 `CooldownRemaining`=3.00 / `CooldownProgress`=1.00 →
+      `Tick(1s)` 후 2.00 / 0.67 → **쿨다운 중 `OnActivatePressed()` 호출해도
+      재분사 안 됨**(`Tick(1s)` 후 1.00 / 0.33으로 계속 감소, 1.00으로 안
+      튐) → `Tick(2s)` 후 0.00 / 0.00(준비) → 준비 상태에서 누르면 다시
+      분사(progress 1.00)
+- [ ] 실플레이에서 Enhanced Shot이 실제로 방을 가로지르는 사거리로 날아가는지,
+      화염방사기 쿨다운 스윕이 UI에 뜨는지 육안 확인 — 미확인/예정
+
+### 이슈/메모
+- `Unity_RunCommand` / `Unity_ManageAsset`가 "Unity not detected (no fresh
+  discovery files found)"를 간헐적으로 반환하는 현상 이번에도 반복 —
+  1~2회 재시도로 정상 동작(이전 세션들과 동일한 일시적 디스커버리 파일
+  타이밍 이슈).
+- `RunCommand`의 `result.Log`는 `{0}`/`{1}`만 치환하고 `{2:F2}` 같은 포맷
+  지정자/3번째 이상 인자는 리터럴로 출력함 — 검증 값은 `ToString("F2")`로
+  미리 포맷해서 단일 문자열로 넘길 것.
+
+### 다음 작업
+- (위 [ ] 항목) 실플레이 육안 확인
+- 남은 잔여 정리: 아이콘 스와치 → 실제 픽토그램, F1 오버레이 FPS 텍스트
+  위치, 씬의 비활성 `Boss_Basic` 플레이스홀더 정리
+
+---
+
 ## 2026-08-31
 
 ### 진행 내용

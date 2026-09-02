@@ -33,7 +33,7 @@ public class EnhancedShotActiveItem : IActiveItem
 
         if (instance.TryGetComponent<Projectile>(out var projectile))
         {
-            projectile.Initialize(_owner.forward, _damage, _owner);
+            projectile.Initialize(_owner.forward, _damage, _owner, 0f, _data.Range);
         }
 
         _cooldownRemaining = _data.Cooldown;

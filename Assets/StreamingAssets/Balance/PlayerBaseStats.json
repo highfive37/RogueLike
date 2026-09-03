@@ -7,7 +7,9 @@
     "meleeDamage": "근접 무기 기본 공격력. 기본 15.0",
     "meleeRange": "근접 무기 공격 범위(유닛). 기본 1.5",
     "projectileSpeed": "발사체가 날아가는 속도(유닛/초). 기본 15.0",
-    "projectileLifetime": "발사체가 사라지기까지 유지되는 기본 시간(초). 실제 이동 거리 = projectileSpeed × projectileLifetime. 기본 0.2 (=3유닛)"
+    "projectileLifetime": "발사체가 사라지기까지 유지되는 기본 시간(초). 실제 이동 거리 = projectileSpeed × projectileLifetime. 기본 0.2 (=3유닛)",
+    "dashSpeedMultiplier": "대시(구르기) 속도 배수. 대시 속도 = 현재 이동속도 × 이 값. 기본 3.0 (이동속도 5일 때 대시 15유닛/초, 사거리 3유닛). 이동속도 패시브를 먹으면 대시도 같이 빨라짐. 0 이하로 두면 대시가 안 나감",
+    "dashDuration": "대시가 지속되는 시간(초). 이 시간 동안 무적. 실제 대시 거리 = (현재 이동속도 × dashSpeedMultiplier) × 이 값. 기본 0.2"
   },
   "moveSpeed": 5.0,
   "rangedDamage": 8.0,
@@ -15,5 +17,7 @@
   "meleeDamage": 15.0,
   "meleeRange": 1.5,
   "projectileSpeed": 15.0,
-  "projectileLifetime": 0.2
+  "projectileLifetime": 0.2,
+  "dashSpeedMultiplier": 3.0,
+  "dashDuration": 0.2
 }

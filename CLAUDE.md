@@ -134,6 +134,18 @@ Do not propose multiple design alternatives for trivial changes such as:
 - fixing obvious syntax or compilation errors
 - simple cleanup that does not affect system behavior
 
+## Portfolio-Value Assessment of Off-Plan Work
+
+When the user proposes work that is not recorded in `Docs/ProjectPlan.md`, assess it as a portfolio deliverable before starting it. This assessment also exists to protect momentum toward finishing the project: minor bugs and features with little bearing on portfolio completion can quietly drain working time, and surfacing the score makes that cost visible before it is spent.
+
+1. Score the proposed work out of 100 for how much it contributes to completing this project as a portfolio piece.
+2. Follow the score with a one- or two-sentence comment explaining why that score was assigned.
+3. State it in a consistent form, for example: `Portfolio value: NN/100 — <reason>`.
+4. Base the score on portfolio value as defined in `Docs/ProjectPlan.md` (§1, §6, §9–§13): demonstrable architecture and technical decisions, a compact but complete and defensible project, and concrete interview talking points — not on how interesting, polished, or urgent the task feels in isolation. Weigh whether it advances the core loop or a planned Phase/Stage, whether it yields something explainable in an interview, and whether it risks being redone later (for example, tuning against placeholder assets).
+5. Present the score and comment before doing the work. It is decision support for the user, not a veto — proceed once the user confirms.
+
+Skip this assessment only for the trivial changes already exempted under "Design Planning Before Implementation" (numeric tuning, renames, obvious bug or compile fixes, behavior-neutral cleanup). If it is unclear whether a request is off-plan, give the assessment anyway — it is short.
+
 ## Working Behavior
 
 For substantive work:

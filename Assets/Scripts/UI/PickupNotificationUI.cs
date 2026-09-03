@@ -31,6 +31,20 @@ public class PickupNotificationUI : MonoBehaviour
         _hideRoutine = StartCoroutine(HideAfterDelay());
     }
 
+    // Drop the label right now instead of waiting out displayDuration - the delay is a scaled
+    // WaitForSeconds, so it freezes while the game is paused (e.g. the Floor Complete countdown)
+    // and the label would otherwise still be up when the next floor fades in.
+    public void HideImmediate()
+    {
+        if (_hideRoutine != null)
+        {
+            StopCoroutine(_hideRoutine);
+            _hideRoutine = null;
+        }
+
+        panel.SetActive(false);
+    }
+
     private IEnumerator HideAfterDelay()
     {
         yield return new WaitForSeconds(displayDuration);

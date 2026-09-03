@@ -175,6 +175,13 @@ public class StageManager : MonoBehaviour
         RoomController startRoom = _roomsById[_provider.StartRoomId];
         roomTransitionController.PlacePlayerAt(startRoom.transform.position + Vector3.up * PlayerStandHeight);
         startRoom.EnterRoom();
+
+        // Flush the just-created room colliders and the player teleport into the physics scene
+        // now. AdvanceToNextFloor() runs while Time.timeScale is 0 (the Floor Complete blackout),
+        // so no FixedUpdate - and therefore no automatic physics sync - happens before the player
+        // starts moving on the new floor. With Auto Sync Transforms off (project setting) that
+        // left every rebuilt floor's walls non-collidable until the next simulation step.
+        Physics.SyncTransforms();
     }
 
     private void SpawnFloorExit()

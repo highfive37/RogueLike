@@ -20,6 +20,15 @@ public class RoomFlowManager : MonoBehaviour
     [SerializeField] private PlayerActiveItemInventory playerActiveItemInventory;
     [SerializeField] private FloorTransitionUI floorTransitionUI;
 
+    private PlayerDodgeRoll _playerDodgeRoll;
+    private PickupNotificationUI _pickupNotificationUI;
+
+    private void Awake()
+    {
+        _playerDodgeRoll = playerPassiveStats != null ? playerPassiveStats.GetComponent<PlayerDodgeRoll>() : null;
+        _pickupNotificationUI = playerPassiveStats != null ? playerPassiveStats.GetComponentInChildren<PickupNotificationUI>(true) : null;
+    }
+
     private void OnEnable()
     {
         stageManager.BossRoomCleared += HandleBossRoomCleared;
@@ -42,6 +51,21 @@ public class RoomFlowManager : MonoBehaviour
 
     private void HandleFloorCompleted()
     {
+        // If the player rolled into the Floor Exit, end the roll now - before FloorCompleteUI
+        // pauses (timeScale 0 stops the FixedUpdate that would otherwise finish the roll), or it
+        // resumes uncontrolled in the next floor's start room.
+        if (_playerDodgeRoll != null)
+        {
+            _playerDodgeRoll.CancelDodgeRoll();
+        }
+
+        // A pickup label triggered just before stepping into the Floor Exit would otherwise
+        // hang above the player into the next floor's fade-in (its timer is paused with the game).
+        if (_pickupNotificationUI != null)
+        {
+            _pickupNotificationUI.HideImmediate();
+        }
+
         var stats = new FloorCompleteUI.FloorCompleteStats
         {
             RoomsCleared = stageManager.RoomsClearedCount,

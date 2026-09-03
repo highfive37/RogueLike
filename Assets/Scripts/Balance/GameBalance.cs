@@ -349,7 +349,9 @@ public static class GameBalance
             meleeDamage = 15f,
             meleeRange = 1.5f,
             projectileSpeed = 15f,
-            projectileLifetime = 0.2f
+            projectileLifetime = 0.2f,
+            dashSpeedMultiplier = 3f,
+            dashDuration = 0.2f
         };
     }
 

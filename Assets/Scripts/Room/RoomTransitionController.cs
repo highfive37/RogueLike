@@ -19,6 +19,12 @@ public class RoomTransitionController : MonoBehaviour
     [SerializeField] private float transitionDuration = 0.6f;
 
     private bool _isTransitioning;
+    private PlayerDodgeRoll _playerDodgeRoll;
+
+    private void Awake()
+    {
+        _playerDodgeRoll = player.GetComponent<PlayerDodgeRoll>();
+    }
 
     public void Initialize(IEnumerable<RoomController> rooms)
     {
@@ -58,6 +64,14 @@ public class RoomTransitionController : MonoBehaviour
     {
         _isTransitioning = true;
 
+        // A dodge-roll drives the Rigidbody from its own FixedUpdate; if one is still running it
+        // would keep MovePosition()-ing the (now kinematic) body all through the camera pan,
+        // fighting the transition and widening the Transform/body gap. Stop it up front.
+        if (_playerDodgeRoll != null)
+        {
+            _playerDodgeRoll.CancelDodgeRoll();
+        }
+
         playerInputActions.enabled = false;
         SetPlayerVisible(false);
         playerRigidbody.isKinematic = true;
@@ -78,6 +92,12 @@ public class RoomTransitionController : MonoBehaviour
         }
 
         player.position = arrivalPoint;
+        // Auto Sync Transforms is off project-wide, so this Transform-only teleport leaves
+        // Rigidbody.position stale until the next physics step. PlayerMovement.FixedUpdate reads
+        // Rigidbody.position every tick and MovePosition()s toward it - a stale value would drag
+        // the player off the entry point at a constant speed (opposite the way they came in).
+        // Flush the teleport into the physics body now.
+        Physics.SyncTransforms();
         targetRoom.EnterRoom();
 
         playerRigidbody.isKinematic = false;

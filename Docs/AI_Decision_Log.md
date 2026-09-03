@@ -44,6 +44,152 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-04 — 대시/걷기의 벽 관통: 벽 콜라이더 두껍게 vs 이동 로직에서 방향 클램프 vs 솔버 설정
+
+### 배경 / 문제
+- 스테이지3에서 벽에 붙어 대시(스페이스 홀드)하면 벽을 통과, 이동속도 패시브가 쌓인 상태에선
+  걷기만 해도 벽을 통과하는 현상. 격리 테스트로 원인 확정: `Rigidbody.MovePosition`(및 대시가
+  재적용하는 `linearVelocity`)을 벽으로 **물리 스텝당 ~0.2유닛 초과**로 명령하면 솔버의
+  depenetration을 앞질러 캡슐이 벽 안으로 누적 침투 → 반대편으로 빠져나감. 걷기는
+  `CurrentMoveSpeed`가 ~10을 넘어야(이동속도 패시브 ~4개, ≈ 스테이지3) 발현.
+- 격리 테스트로 배제한 것: `m_DefaultSolverVelocityIterations` 1→2→4(효과 없음),
+  `CollisionDetectionMode`(Discrete/ContinuousDynamic 차이 없음 — 걷기 MovePosition엔 CCD 미적용),
+  월드 원점에서의 거리(무관). 순수하게 스텝당 이동거리 문제.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 벽 콜라이더를 보이는 것보다 두껍게(예: `WallThickness×3`) | 이동 코드 안 건드림. 단발 대시는 안 뚫릴 확률↑ | 결정론적이지 않음(반복 대시·각도에 따라 여전히 뚫림). **대시 속도가 이동속도 연동이라 "충분한 두께" 기준이 계속 움직임**. 벽=메시=콜라이더 동일 오브젝트라 별도 콜라이더 자식 추가 필요(스윕 클램프보다 코드↑). 방 가용 공간·문 지오메트리 재조정 비용. 근본 원인 미해결(넉백 등에서 재발) |
+| B. 대시를 `MovePosition` → `linearVelocity` 구동으로 + `PlayerMovement`/`PlayerDodgeRoll` 둘 다 이동 전 방향을 벽에 대해 클램프(`WallClamp`) | 감지된 벽으로는 속도를 아예 안 넣으니 솔버·CCD·이동속도와 무관하게 관통 불가. 정면=정지·스침=슬라이드 감각. `MovePosition` 이동 패러다임 유지 | 얕은 각도 스침 + 매우 높은 이동속도에선 여전히 조금 누출(방향 프로젝션의 한계). 이동 FixedUpdate마다 `CapsuleCast` 1회 |
+| C. `m_DefaultSolverVelocityIterations` 상향 | 전역, 한 줄 | **격리 테스트 결과 효과 없음** (ms 11+에서 그대로 관통) |
+| D. 플레이어 이동을 `CharacterController`/full collide-and-slide로 교체 | 근본 해결, 얕은 스침까지 완벽 | 프로토타입 단계에 큰 리팩터. 큐브 플레이스홀더 지오메트리 기준으로 지금 하면 아트 넣고 재조정 시 두 번 일 |
+
+### Claude 제안
+- **B 채택**. C는 실측으로 무효 확인. A는 대시 속도 가변화와 상충하고 근본 미해결. D는
+  프로토타입 스코프 밖 — 아트 통합 시 콜라이더/히트박스를 어차피 재조정하므로 그때.
+- `WallClamp`는 캡슐을 **반지름만큼 뒤로 물린 지점에서** `CapsuleCast` — 정위치 캐스트는
+  "시작 시 이미 겹친 콜라이더 무시" 스펙 때문에 '벽에 붙어서' 케이스를 못 잡음.
+
+### 선택한 방향
+- **B**. `WallClamp.ClampDirection(capsule, dir, moveThisStep)` 공용 헬퍼, `PlayerMovement`·
+  `PlayerDodgeRoll`에서 호출. 대시는 `linearVelocity` 구동. `Player.prefab` Rigidbody
+  `CollisionDetection` Discrete → ContinuousDynamic(고속 이동 보험).
+- 잔여(얕은 스침 + 극단 이동속도)는 **아트 통합(Phase 4) 시 D로 처리**하는 것으로 이월,
+  `ClaudeSessionSummary.md` §5 / `DevLog.md` "플레이스홀더 지오메트리" 목록에 기록.
+
+### 선택 이유
+- 정면 벽 충돌(사용자가 신고한 케이스)은 B로 이동속도 5~100 전부 결정론적으로 막힘 —
+  실측으로 확인. 잔여 케이스는 좁고(벽 따라 달리며 얕게 파고드는 입력 + 일반 런의 픽업 수를
+  한참 넘는 이동속도) 프로토타입 진행을 막지 않음. 큐브 지오메트리에 D를 들이는 건 재작업
+  위험이 커서, "정면은 지금 확실히, 나머지는 아트와 함께" 트레이드오프.
+
+### 관련 파일
+- `Assets/Scripts/Player/WallClamp.cs`(신규), `PlayerMovement.cs`, `PlayerDodgeRoll.cs`,
+  `Assets/Prefabs/Player.prefab`
+
+---
+
+## 2026-09-04 — `autoSyncTransforms` off로 인한 재빌드/순간이동 버그: 전역 설정 vs 지점별 SyncTransforms
+
+### 배경 / 문제
+- `ProjectSettings/Physics`의 `Auto Sync Transforms`가 꺼져 있음(`m_AutoSyncTransforms: 0`).
+  이 상태에서 (a) `AdvanceToNextFloor()`가 Floor Complete 암전(`timeScale==0`, FixedUpdate 없음)
+  중 새 층을 짓고, (b) `RoomTransitionController`가 `player.position`을 Transform으로 직접
+  옮기면, 다음 물리 스텝 전까지 콜라이더/`Rigidbody.position`이 물리 씬에 미반영 → 새 층 벽이
+  안 막히고, 전환 후 플레이어가 낡은 `Rigidbody.position` 쪽으로 끌려감. 이번 세션 버그 3건의
+  공통 뿌리.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `Auto Sync Transforms` 전역 ON | 이 클래스의 버그를 통째로 제거. Unity 신규 프로젝트 기본값이 ON | 프레임당 싱크 비용 소폭↑. 전역 동작 변경이라 다른 코드의 암묵적 가정에 영향 가능. 사용자가 당장 필요성을 못 느낌 |
+| B. 문제 지점마다 `Physics.SyncTransforms()` 명시 호출 | 영향 범위가 그 경로에만 국한. 무엇을·왜 하는지 코드에 남음 | 새 "재빌드/순간이동" 경로가 생길 때마다 빠뜨릴 수 있음 |
+| C. 암전을 `timeScale=1`에서 수행하도록 페이드 연출 재구성 | 다음 FixedUpdate가 자동으로 싱크 | 침습적, 페이드 choreography 회귀 위험 큼 |
+
+### Claude 제안
+- **B 채택**하되, "같은 계열 버그가 또 나오면 A로 전환" 조건을 명시. C는 얻는 것 대비 위험 과다.
+
+### 선택한 방향
+- **B**. `StageManager.BuildFloor()` 끝 + `RoomTransitionController.TransitionRoutine()`의
+  `player.position = arrivalPoint;` 직후에 `Physics.SyncTransforms()`.
+
+### 선택 이유
+- 지금 영향받는 경로가 2곳으로 특정되고, 각 지점에 이유를 주석으로 남기면 추적 가능.
+  전역 ON은 "필요해지면" 언제든 할 수 있고 B를 깨지 않음. 사용자가 전역 변경에 소극적이라
+  최소 침습을 우선.
+
+### 관련 파일
+- `Assets/Scripts/Stage/StageManager.cs`, `Assets/Scripts/Room/RoomTransitionController.cs`
+
+---
+
+## 2026-09-04 — 대시 속도: 고정값 vs 현재 이동속도 × 배수, 수치 위치
+
+### 배경 / 문제
+- 대시가 `dodgeRollDistance / dodgeRollDuration` 고정(15 u/s)이라 이동속도 패시브를 먹어도
+  대시는 그대로 → 기동성 성장이 대시에 반영 안 됨. 사용자가 "이동속도에 따라 대시도 오르게"
+  요청.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 거리 스케일(`dodgeRollDistance × 이동속도비`), 지속시간 고정 | 대시 "사거리"가 스탯에 비례 | 배수 모델과 수식만 다를 뿐 결과 동일(지속 고정 시) |
+| **"0.2초 동안 현재 이동속도 × N배 버스트"** (`dashSpeed = CurrentMoveSpeed × mult`) | 개념이 단순("대시 = 짧은 고속 이동"). base 스탯에서 5×3=15, 3유닛 → **현재 수치 그대로 보존**. 무적창(지속) 고정이라 방어 가치는 불변, 기동성만 성장 | `dodgeRollDistance` 필드 제거(파생값으로) |
+| 지속시간도 스케일 | — | 무적 프레임이 이동속도로 늘어남 → 밸런스 레버가 과함. 비채택 |
+| 수치를 `[SerializeField]` 유지 vs `GameBalance` JSON | — | JSON: `moveSpeed` 등과 동일 패턴, 텍스트 튜닝 가능. 파싱은 되는데 키만 누락되면 0으로 채워짐(파일 통째 깨짐과 달리 fallback 안 탐) — `_fieldGuide`에 "0이하면 대시 안 나감" 명시로 완화 |
+
+### 선택한 방향
+- **"현재 이동속도 × 3배, 0.2초" 모델.** `PlayerMovement.CurrentMoveSpeed` 프로퍼티 신설(이동속도
+  단일 소스). `dashSpeedMultiplier`(3.0)·`dashDuration`(0.2)는 `PlayerBaseStats.json`으로 외부화
+  (`GameBalance` 내장 fallback 포함). `dodgeRollDistance`/`dodgeRollDuration` `[SerializeField]`
+  및 프리팹 직렬화 값 제거, `cooldown`은 `[SerializeField]` 유지.
+
+### 선택 이유
+- 배수 모델이 "대시란 무엇인가"를 가장 직관적으로 표현하고, 배수 3으로 잡으면 기존 수치가
+  그대로라 회귀 위험이 없음. 지속시간 고정은 대시의 방어적 가치(무적창)를 밸런스에서 분리해둠.
+  JSON 외부화는 최근 `GameBalance` 방향과 통일 — 개별 키 누락 방어는 전 밸런스 파일 공통
+  하드닝 사안이라 이번 범위 밖으로 둠.
+
+### 관련 파일
+- `Assets/Scripts/Player/PlayerMovement.cs`, `PlayerDodgeRoll.cs`,
+  `Assets/Scripts/Balance/PlayerBaseStatsData.cs`, `GameBalance.cs`,
+  `Assets/StreamingAssets/Balance/PlayerBaseStats.json`
+
+---
+
+## 2026-09-04 — 문 앞 드랍템 획득 불가: 문 트리거 축소 vs 드랍 위치 보정 vs 전환 시 자동 획득
+
+### 배경 / 문제
+- 문 통과 감지 트리거가 `WallThickness × 3`(3유닛) 깊이인데 보이는 문 마커는 1유닛뿐 →
+  문 앞 방 안쪽 1.5유닛 × 문폭 6유닛 구간에 아이템이 떨어지면, 주우러 가다 문 트리거를 먼저
+  밟아 다음 방으로 전환됨. 아이템 획득 불가.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 문 트리거 깊이 축소(`×3` → `×1.5~2`) | 한 줄, 데드존 전반 축소 | **위험**: 대시 속도가 이동속도 연동(극단 60 u/s = 1.2 u/step)이라 트리거가 얇으면 빠른 대시가 프레임 사이로 트리거를 건너뛰어 **문 전환이 안 될** 수 있음. 3유닛 깊이는 이 마진용 |
+| B. 드랍 좌표를 문 트리거 밖으로 밀어내기(`ItemDropManager`) | 문 동작 불변(대시 통과 신뢰성 유지). 자체 물리 쿼리라 시그니처 변경 없음. 데드존을 근본적으로 없앰 | 드랍당 `OverlapSphere` 1회. 아이템이 죽은 자리에서 3유닛 당겨짐(여전히 근처) |
+| C. 전환 시 근처 `ItemPickup` 자동 획득 | 관대함 | 의도적으로 남긴 아이템까지 획득·엉뚱한 쪽에서 획득 등 마법적. B로 해결되면 불필요 |
+
+### 추가 요청
+- 사용자: 보정을 **`Instantiate` 전에** 하여 원래 자리에 잠깐 보였다가 밀리는 게 안 보이게.
+
+### 선택한 방향
+- **B**. `ItemDropManager.NudgeClearOfDoors()` — `OverlapSphereNonAlloc`로 근처 `DoorController`
+  찾아, 드랍을 문 평면 → `EntryPoint` 방향으로 `DoorClearDistance`(3유닛)까지 밀어냄.
+  `SpawnPickup`의 `Instantiate` **전에** 적용(슬라이드 안 보임). 이미 여유 있는 드랍(보장
+  보상 포함)은 no-op. 문 트리거는 그대로.
+
+### 선택 이유
+- 방금 대시 속도를 이동속도 연동으로 바꿔서 A(트리거 축소)의 통과 미검출 위험이 커진 상태 —
+  문 쪽을 건드리지 않고 아이템 쪽에서 "항상 주울 수 있는 자리"를 보장하는 B가 부작용이 가장
+  적음. C는 B로 충분하면 과함.
+
+### 관련 파일
+- `Assets/Scripts/Combat/ItemDropManager.cs`
+
+---
+
 ## 2026-09-03 — 씬 분리 구조: 단일 씬 유지 vs `MainMenu`+`Gameplay` 2씬 vs Bootstrap+Additive
 
 ### 배경 / 문제

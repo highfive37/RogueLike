@@ -14,4 +14,6 @@ public class PlayerBaseStatsData
     public float meleeRange;
     public float projectileSpeed;
     public float projectileLifetime;
+    public float dashSpeedMultiplier;
+    public float dashDuration;
 }

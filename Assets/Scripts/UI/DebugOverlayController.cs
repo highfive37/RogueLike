@@ -28,6 +28,8 @@ public class DebugOverlayController : MonoBehaviour
     public static bool IsDebugVisible { get; private set; }
 
     private InputAction _toggleAction;
+    private InputAction _enemyOneShotAction;
+    private Text _oneShotText;
     private bool _visible;
     private float _fpsTimer;
     private int _fpsFrames;
@@ -35,20 +37,26 @@ public class DebugOverlayController : MonoBehaviour
     private void Awake()
     {
         _toggleAction = debugActions.FindActionMap("Debug").FindAction("ToggleOverlay");
+        _enemyOneShotAction = debugActions.FindActionMap("Debug").FindAction("ToggleEnemyOneShot");
         IsDebugVisible = false;
         fpsText.gameObject.SetActive(false);
+
+        _oneShotText = CreateOneShotIndicator();
+        _oneShotText.gameObject.SetActive(DebugDamage.EnemyOneShot);
     }
 
     private void OnEnable()
     {
         debugActions.Enable();
         _toggleAction.performed += OnTogglePerformed;
+        _enemyOneShotAction.performed += OnEnemyOneShotTogglePerformed;
         HealthComponent.AnyDamageTaken += HandleAnyDamageTaken;
     }
 
     private void OnDisable()
     {
         _toggleAction.performed -= OnTogglePerformed;
+        _enemyOneShotAction.performed -= OnEnemyOneShotTogglePerformed;
         debugActions.Disable();
         HealthComponent.AnyDamageTaken -= HandleAnyDamageTaken;
     }
@@ -79,6 +87,40 @@ public class DebugOverlayController : MonoBehaviour
         fpsText.gameObject.SetActive(_visible);
         _fpsFrames = 0;
         _fpsTimer = 0f;
+    }
+
+    // F2 - independent of the F1 overlay: the indicator shows whenever enemy one-shot is armed.
+    private void OnEnemyOneShotTogglePerformed(InputAction.CallbackContext context)
+    {
+        DebugDamage.EnemyOneShot = !DebugDamage.EnemyOneShot;
+        _oneShotText.gameObject.SetActive(DebugDamage.EnemyOneShot);
+        Debug.Log($"[DebugDamage] enemy one-shot = {DebugDamage.EnemyOneShot}");
+    }
+
+    // Runtime-built (same approach as the damage numbers below) so it needs no scene wiring:
+    // a sibling of fpsText, pinned just to its left with the same anchoring.
+    private Text CreateOneShotIndicator()
+    {
+        var go = new GameObject("OneShotIndicator", typeof(RectTransform));
+        go.transform.SetParent(fpsText.transform.parent, false);
+
+        RectTransform src = fpsText.rectTransform;
+        var rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = src.anchorMin;
+        rect.anchorMax = src.anchorMax;
+        rect.pivot = src.pivot;
+        rect.sizeDelta = src.sizeDelta;
+        rect.anchoredPosition = src.anchoredPosition + new Vector2(-(Mathf.Max(src.sizeDelta.x, 90f) + 12f), 0f);
+
+        var text = go.AddComponent<Text>();
+        text.font = fpsText.font;
+        text.fontSize = fpsText.fontSize;
+        text.alignment = TextAnchor.MiddleRight;
+        text.horizontalOverflow = HorizontalWrapMode.Overflow;
+        text.verticalOverflow = VerticalWrapMode.Overflow;
+        text.color = new Color(1f, 0.85f, 0.2f);
+        text.text = "1-SHOT";
+        return text;
     }
 
     private void HandleAnyDamageTaken(HealthComponent health, float amount, Transform source)

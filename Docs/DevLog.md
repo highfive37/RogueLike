@@ -30,6 +30,150 @@
 
 ---
 
+## 2026-09-04
+
+### 진행 내용
+
+**스테이지3 맵 제작 (로드맵 §6 #1)**
+- 방 데이터 에셋 13개 신규: `Assets/Data/Rooms/Room3_*.asset` (id 301~313 — Start / CombatA~J /
+  Item / Boss). 층2와 동일한 `RoomDataAsset` 포맷·authoring 방식(방/문 메커니즘 변경 없음).
+- 맵 구조는 바인딩 오브 아이작에서 차용: 시작방 중앙(3방향 문), 보스방 = 시작에서 가장 먼
+  단문(單門) 데드엔드, 아이템방 = CombatF(307) 뒤 데드엔드 스퍼, 본체 루프 2개
+  (`301-306-309-308-301`, `301-302-303-304-305-307-310-308-301`), 선택 전투 데드엔드(311).
+  전투 적 총 54마리 + 보스 1.
+- `StageManager.floors`에 3번째 `FloorDefinition` 배선(`SerializedObject`로 인메모리 수정 후
+  `SaveScene`), `startRoomId: 301`. `IsLastFloor`가 `floors.Length` 기반 데이터 구동이라
+  **코드 수정 없이** 층2가 카운트다운→자동 전환, 층3이 Retry 층이 됨.
+- 구조 검증 스크립트: id·좌표 중복 0, 전 연결 상호대응·1칸 인접, 시작방 BFS 13/13 도달,
+  데드엔드 3개.
+
+**대시 리워크 + 밸런스 JSON 외부화 (사용자 요청)**
+- 대시 속도를 이동속도 연동으로 변경: `dashSpeed = PlayerMovement.CurrentMoveSpeed ×
+  dashSpeedMultiplier`, `dashDuration` 동안 유지. 기본 스탯에서 15 u/s·3유닛(기존값 보존),
+  이동속도 패시브 먹으면 대시도 같이 빨라짐. 무적창(지속시간)은 고정.
+- `PlayerMovement.CurrentMoveSpeed` 프로퍼티 신설(base + `MoveSpeedBonus`, 이동속도 단일
+  소스). `FixedUpdate`도 이걸 사용.
+- `dashSpeedMultiplier`(3.0), `dashDuration`(0.2)를 `PlayerBaseStatsData`/`GameBalance` 내장
+  기본값/`PlayerBaseStats.json`(+`_fieldGuide`)로 외부화. `PlayerDodgeRoll`의
+  `dodgeRollDistance`/`dodgeRollDuration` `[SerializeField]` 및 `Player.prefab` 직렬화 값
+  제거(`cooldown`은 유지).
+- 대시 구동을 `MovePosition` → `linearVelocity`로 전환(아래 벽 관통 버그 참고). `EndDodgeRoll()`
+  추출(타임아웃·취소 공용, 종료 시 velocity 0).
+
+**F2 디버그 — 적 즉사 데미지 토글 (사용자 요청)**
+- `DebugDamage` 정적 클래스 신규: `EnemyOneShot` bool, `OneShotAmount = 99999`,
+  `[RuntimeInitializeOnLoadMethod]`로 세션마다 리셋.
+- `HealthComponent.TakeDamage` 맨 앞:
+  `if (DebugDamage.EnemyOneShot && amount > 0 && !CompareTag("Player")) amount = 99999;` —
+  최종값만 교체(스탯 불변), 로그·`AnyDamageTaken`·`Health` 전부 교체값 사용.
+  `!CompareTag("Player")` 사용 — 일반 적은 Untagged, 보스만 `Enemy` 태그라
+  `CompareTag("Enemy")`로는 보스만 잡힘. F2 끄면 그동안 먹은 공격력 픽업 반영된 정상
+  데미지로 복귀(스탯을 안 건드렸으므로 복원할 게 없음).
+- `DebugOverlayActions.inputactions`에 `ToggleEnemyOneShot` → `<Keyboard>/f2`.
+  `DebugOverlayController`가 토글 처리 + 콘솔 로그 + FPS 텍스트 왼쪽에 런타임 생성 "1-SHOT"
+  인디케이터(노랑, F1 오버레이와 독립적으로 F2 상태만 반영).
+
+**스테이지3 플레이테스트에서 발견한 버그 4건 수정**
+
+1. **재빌드된 층(2·3층)의 벽이 플레이어를 안 막음.**
+   - 원인: 프로젝트 설정 `Physics.autoSyncTransforms = false` + `AdvanceToNextFloor()`가 Floor
+     Complete 암전(`timeScale == 0`) 중 실행 → FixedUpdate 없음 → 자동 물리 싱크 없음 → 새
+     층 콜라이더가 플레이어가 움직이기 전까지 물리 씬에 미반영.
+   - 수정: `StageManager.BuildFloor()` 끝에 `Physics.SyncTransforms()`.
+
+2. **방 전환 후 조작 없이 특정 방향으로 등속 드리프트 (대시로 문 통과 시 심함).**
+   - 초기 가설(isKinematic 토글 넘어 잔류 속도 복원)은 격리 테스트 + 사용자가 넣은 진단
+     로그(`mag` 항상 0)로 반증 → 그 대응(속도 0으로) 되돌림.
+   - 실제 원인: `RoomTransitionController`가 `player.position = arrivalPoint`(Transform만)로
+     순간이동 → autoSync off라 `Rigidbody.position`이 낡은 값 → `PlayerMovement.FixedUpdate`가
+     매 틱 `_rigidbody.position`을 읽어 그쪽으로 `MovePosition` → 입구에서 낡은 위치(들어온
+     방향 반대)로 끌려감. 대시는 `PlayerDodgeRoll`이 팬 중에도 kinematic 바디를 몰아 간격을
+     더 벌림.
+   - 수정: `TransitionRoutine`에서 `player.position = arrivalPoint;` 직후
+     `Physics.SyncTransforms()`. + 전환 시작 시 진행 중인 구르기 취소
+     (`PlayerDodgeRoll.CancelDodgeRoll()` 신설).
+
+3. **Floor Exit를 대시로 진입 시 다음 층 시작방에서 조작 불가·드리프트.**
+   - 원인: `PlayerDodgeRoll.FixedUpdate`(구르기 종료 처리 지점)가 Floor Complete
+     일시정지(`timeScale=0`)로 얼어붙음 → `timeScale=1` 복구 후 새 층에서 낡은 방향으로 재개.
+   - 수정: `RoomFlowManager.HandleFloorCompleted()`가 `ShowFloorComplete`(=일시정지) 전에
+     `CancelDodgeRoll()` 호출.
+
+4. **벽에 붙어 대시(홀드)하면 벽 관통 / 스테이지3에서 이동속도 높으면 걷기만 해도 벽 관통.**
+   - 원인: `MovePosition`(및 재적용되는 `linearVelocity`)을 벽으로 물리 스텝당 ~0.2유닛 초과로
+     명령하면 솔버 depenetration을 앞질러 캡슐이 벽을 통과. 걷기는 이동속도 패시브로
+     `CurrentMoveSpeed`가 ~10을 넘어야(≈ 스테이지3) 발현. 격리 테스트로 확인: 솔버
+     iteration·충돌검출 모드·월드 원점 거리 전부 무관, 순수 스텝 이동거리 문제.
+   - 수정: 공용 `WallClamp.ClampDirection(capsule, dir, moveThisStep)` 신설 — 캡슐을 **반지름만큼
+     뒤로 물린 지점에서** `CapsuleCast`(밀착 시작도 감지되도록 — 정위치 캐스트는 초기 겹침을
+     무시함), 히트 시 `ProjectOnPlane`로 벽 방향 성분 제거(정면 = 정지, 스침 = 슬라이드).
+     `PlayerMovement`(걷기)·`PlayerDodgeRoll`(대시) 둘 다 사용. 대시는 `linearVelocity` 구동으로
+     전환. `Player.prefab` Rigidbody `CollisionDetection` Discrete → ContinuousDynamic.
+   - 검토·기각한 대안: 벽 콜라이더를 보이는 것보다 두껍게(대시 속도 가변이라 "충분한 두께"
+     기준이 계속 움직임 + 문 지오메트리 재조정 비용 + 근본 원인 미해결),
+     `m_DefaultSolverVelocityIterations` 상향(격리 테스트 결과 효과 없음). 상세:
+     `AI_Decision_Log.md` 2026-09-04.
+   - 잔여 한계: 벽을 얕은 각도로 스치며 파고드는 이동을 매우 높은 이동속도(일반 런의 픽업 수를
+     한참 넘는)에서 하면 여전히 조금 새어나감. 완전 해결은 플레이어 이동을 `MovePosition`에서
+     제대로 된 스윕 캐릭터 이동으로 교체해야 함 — 아트 통합 시로 이월.
+
+**자잘한 수정 2건**
+- **픽업 알림이 층 전환을 넘어 표시됨.** `PickupNotificationUI.HideAfterDelay`가 스케일 타임
+  `WaitForSeconds`라 Floor Complete 일시정지 중 얼어붙어 다음 층 페이드인에도 라벨이 떠 있음.
+  → `HideImmediate()` 신설, `RoomFlowManager.HandleFloorCompleted()`에서 대시 취소와 같이 호출.
+- **문 바로 앞에 떨어진 드랍템을 못 주움.** 문 통과 감지 트리거가 `WallThickness * 3`(3유닛)
+  깊이라 보이는 문(1유닛)보다 방 안쪽으로 넓음 → 그 안에 떨어진 아이템을 주우러 가면 문
+  트리거가 먼저 밟혀 다음 방으로 이동. → `ItemDropManager.NudgeClearOfDoors()`:
+  `OverlapSphereNonAlloc`로 근처 `DoorController` 찾아 드랍 좌표를 문 안쪽 방향(`EntryPoint`
+  쪽)으로 `DoorClearDistance`(3유닛)만큼 밀어냄. `SpawnPickup`의 `Instantiate` **전에** 적용 →
+  원래 자리에 잠깐 보였다가 밀리는 것 없이 최종 위치에 바로 생성. 이미 여유 있는 드랍(보장
+  보상 포함)은 no-op. 문 트리거 자체는 빠른 대시 통과 신뢰성 때문에 그대로 둠. 대안 비교:
+  `AI_Decision_Log.md` 2026-09-04.
+
+### 테스트 결과
+- [x] 스테이지3 방 13개 임포트 + 구조 검증 통과(중복 0, 상호대응·인접, BFS 13/13)
+- [x] 전 스크립트 컴파일 에러·경고 0 (`Unity_ReadConsole`)
+- [x] `GameBalance.Player.dashSpeedMultiplier=3`/`dashDuration=0.2` JSON 파싱, 기본 대시
+      15 u/s·3유닛(현재값 보존) 확인
+- [x] `DebugDamage` 토글·`OneShotAmount=99999`, F2 액션 `<Keyboard>/f2` 바인딩, 비플레이어
+      `HealthComponent`에 즉사 적용·Player 태그는 스킵(100→93) 확인
+- [x] `WallClamp` 격리 시뮬레이션: 정면 걷기 벽 관통 ms 5~100 전부 막힘
+- [x] `NudgeClearOfDoors` 라이브 문 검증: 문 평면~2.9유닛 드랍 → 3유닛으로 이동(트리거 밖),
+      여유 있는 드랍은 불변
+- [x] `RoomTransitionController`/`RoomFlowManager`의 `PlayerDodgeRoll`·`PickupNotificationUI`
+      참조가 씬에서 정상 해석됨, Player Rigidbody `collisionDetectionMode = ContinuousDynamic`
+      프리팹 전파 확인
+- [ ] (사용자 실플레이 필요) 층1→2→3 자동 전환 시퀀스, 스테이지3 정면 벽 충돌, 대시로
+      문/Floor Exit 통과 회귀, F2 인게임 동작, 픽업 알림·문 앞 드랍 획득, 대시 감각(3유닛)·
+      이동속도 패시브 후 대시 체감
+- 자동화 Play가 `Time.frameCount` 2에서 고정되는 한계로 코루틴(방/층 전환)·Update 기반
+  동작은 이번에도 자동 검증 불가 — 정적/기하 검증까지만 자동으로 하고 나머지는 실플레이로.
+
+### 이슈/메모
+- 이번 세션 버그 4건 중 3건(재빌드 층 벽 / 전환 드리프트 / Floor Exit 대시)의 공통 뿌리는
+  `Physics.autoSyncTransforms = false` + `timeScale=0` 중 씬 재빌드/순간이동. 전역으로 켜는
+  안은 사용자가 필요성을 못 느껴 보류 — 대신 `SyncTransforms()` 호출을 지점마다 삽입. 향후
+  같은 계열 버그가 또 나오면 전역 설정 재고. 상세: `AI_Decision_Log.md` 2026-09-04.
+- **플레이스홀더 지오메트리 — 아트 통합(Phase 4) 시 함께 처리할 충돌 이슈** (지금은 큐브/캡슐
+  기준이라 그때 콜라이더·히트박스·스폰 오프셋을 어차피 재조정해야 함):
+  1. `WallClamp` 잔여: 벽 얕은 각도 스침 + 매우 높은 이동속도에서 관통 (근본 해결 =
+     MovePosition 이동 → 스윕 캐릭터 이동 교체)
+  2. 문 통과 트리거가 보이는 문보다 깊음 (드랍 nudge로 우회 중, 근본은 지오메트리)
+  3. 벽에 밀착한 두 오브젝트 사이 근접 발사 시 발사체가 벽 판정으로 소멸(데미지 안 들어감)
+- 자잘 이슈에 세션 시간이 많이 쓰인 세션 — 사용자 판단으로 위 3건은 아트 리소스 적용 후
+  일괄 처리로 스코프 컷.
+
+### 다음 작업
+- 위 [ ] 실플레이 검증 일괄
+- 로드맵 §6: #1(3층 제작) 완료 → #2(1~3층 방 데이터 JSON 외부화) / #3(대시 무적 판정 확인) /
+  #4(대시 아이콘·쿨다운 UI) 순서로
+- 씬 분리(`MainMenu` + `Gameplay`)는 3층까지 다 나온 뒤로 (2026-09-03 계획 유지)
+- 미커밋 상태: 스크립트 14개 수정 + 신규 2개(`WallClamp`/`DebugDamage`) + `Player.prefab` +
+  `DebugOverlayActions.inputactions` + `PlayerBaseStats.json` + `Prototype.unity` + 스테이지3
+  방 에셋 26개 — 커밋 구성 결정 필요
+
+---
+
 ## 2026-09-03
 
 ### 진행 내용

@@ -12,7 +12,12 @@
 패널 함정 재발 → CanvasGroup 방식으로 수정, §4 노트 갱신; 2026-09-02 (3) 층2("ㅂ"자
 10개 방) authoring 완료 + 층1→층2 자동 진행(씬 리로드 없이 제자리 재빌드) 구현,
 그 과정에서 발견한 잠복 버그 3건(Floor Exit 콜라이더/플레이어 시작 위치/미니맵
-오프스크린) 수정, 미니맵을 로컬 스크롤 뷰포트 방식으로 개편 — §2·§3·§4·§6 갱신.
+오프스크린) 수정, 미니맵을 로컬 스크롤 뷰포트 방식으로 개편 — §2·§3·§4·§6 갱신;
+2026-09-04 스테이지3(아이작식 13방) authoring 완료 → 로드맵 §6 #1 소진, 대시를
+이동속도 연동(× 배수, 수치 JSON화) + `linearVelocity` 구동으로 리워크, 걷기/대시
+공용 벽 클램프(`WallClamp`) 도입, F2 디버그 즉사 토글(`DebugDamage`) 추가,
+`autoSyncTransforms` off 기인 버그 3건 등 스테이지3 플레이테스트 버그 다수 수정 —
+§2·§3·§4·§5·§6 갱신. 상세는 `DevLog.md`/`AI_Decision_Log.md` 2026-09-04.
 
 ---
 
@@ -41,8 +46,8 @@
   별도 InputActionAsset으로 분리(§4 참고)
 - Cinemachine 미설치, AI Navigation 설치되어 있으나 여전히 미사용 (적 이동은
   FSM 상태 + `Rigidbody` 기반)
-- 밸런스 수치(플레이어 기본 스탯, 패시브 아이템 효과)는 코드/씬이 아니라
-  `Assets/StreamingAssets/Balance/*.json` 평문 JSON 파일에서 로드(§4 참고) —
+- 밸런스 수치(플레이어 기본 스탯 + 대시 배수/지속시간, 패시브 아이템 효과)는 코드/씬이
+  아니라 `Assets/StreamingAssets/Balance/*.json` 평문 JSON 파일에서 로드(§4 참고) —
   Unity/Claude 없이 텍스트 에디터로 직접 수정 가능한 워크플로가 실사용 중
 
 ### 폴더 구조 (대표 클래스만, 전체 목록은 코드 참고)
@@ -51,7 +56,8 @@ Assets/Scripts/
 ├─ Player/    (PlayerMovement, PlayerAim, PlayerDodgeRoll, PlayerCombat,
 │              PlayerInputActions, PlayerPassiveStats, PlayerActiveItemInventory,
 │              ActiveItemController, CharacterSelectController,
-│              PrototypeActiveItemSwitcher, EquipMenuController 등)
+│              PrototypeActiveItemSwitcher, EquipMenuController,
+│              WallClamp — 걷기/대시 공용 벽 방향 클램프 정적 헬퍼 2026-09-04 등)
 ├─ Enemy/     (EnemyStateMachine + FSM 상태 6종, IAttackPattern 구현체 3종,
 │              EnemyData / AttackPatternData ScriptableObject, EnemySpawner)
 ├─ Room/      (RoomController, DoorController, RoomTransitionController,
@@ -63,7 +69,8 @@ Assets/Scripts/
 ├─ Combat/    (IDamageable, Health, HealthComponent, IWeapon 구현체 2종,
 │              IActiveItem 구현체 3종(`GrenadeActiveItem`/`EnhancedShotActiveItem`/
 │              `FlamethrowerActiveItem`), Projectile류, ActiveItemData류,
-│              PassiveItemData, PassiveItemType, ItemPickup, ItemDropManager)
+│              PassiveItemData, PassiveItemType, ItemPickup, ItemDropManager,
+│              DebugDamage — F2 적 즉사 토글 정적 상태 2026-09-04)
 ├─ Balance/   (GameBalance — JSON 밸런스 파일 로더, 실패 시 내장 기본값 폴백)
 ├─ Camera/    (QuarterViewCameraFollow)
 ├─ UI/        (UIManager, ActiveItemEquipUI, PlayerStatsPanelUI,
@@ -152,7 +159,7 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 ### 클래스 책임 요약 (영역별 대표 클래스 — 전체 목록 아님)
 | 영역 | 대표 클래스 | 책임 |
 |---|---|---|
-| 이동/조준 | `PlayerMovement`, `PlayerAim`, `PlayerDodgeRoll` | Rigidbody 기반 이동/회전/구르기, New Input System 액션 소비 |
+| 이동/조준 | `PlayerMovement`(`CurrentMoveSpeed` = base+패시브, 이동속도 단일 소스), `PlayerAim`, `PlayerDodgeRoll`(구르기 = `CurrentMoveSpeed`×`dashSpeedMultiplier` 속도로 `dashDuration` 버스트, `linearVelocity` 구동, `CancelDodgeRoll()`로 전환/Floor Exit 시 취소), `WallClamp`(공용) | Rigidbody 기반 이동/회전/구르기, New Input System 액션 소비. 이동 명령 전 `WallClamp`로 벽 방향 성분 제거(관통 방지). 대시 수치는 `PlayerBaseStats.json` |
 | 전투(플레이어) | `PlayerCombat`+`IWeapon`(`MeleeWeapon`/`RangedWeapon`), `ActiveItemController`+`IActiveItem`(`EnhancedShotActiveItem`/`GrenadeActiveItem`/`FlamethrowerActiveItem`) | 기본 공격과 장착 액티브 아이템을 각각 다형성 구조로 분리 |
 | 캐릭터 선택 | `CharacterSelectController`, `CharacterSelectUI`, `CharacterArchetypeData` | 런 시작 시 근접/원거리 아키타입 선택 UI, 선택 전까지 입력 잠금 |
 | 액티브 아이템 보유/장착 | `PlayerActiveItemInventory`, `OwnedActiveItem`, `ActiveItemEquipUI` | ESC 메뉴에서 소지 아이템 목록 확인 + 장착 전환 |
@@ -161,11 +168,11 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 | 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`RetreatAndShootPattern`) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화 |
 | 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거 |
 | 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, 지오메트리 생성, 문 배선), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커), `RoomTransitionController`(문 통과 시 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)) |
-| 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거), 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시 |
+| 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거). 드롭 좌표는 `Instantiate` 전에 `NudgeClearOfDoors()`로 근처 문 트리거 밖으로 밀어냄(문 앞 드랍템을 문 안 밟고 줍게, 슬라이드 안 보이게). 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시(`HideImmediate()`로 층 전환 시 즉시 정리) |
 | 데미지 | `IDamageable`, `Health`(순수 C#), `HealthComponent` | 데미지 판정 + 수치·가해자 로그, 체력 상태, 사망 이벤트 |
-| 방 클리어 후 흐름 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3) — 지금은 `FloorCompleted`(보스 클리어 → Clear 오버레이) 처리만 담당 |
+| 방 클리어 후 흐름 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3). `FloorCompleted`(Floor Exit 진입) 시 결과 화면 표시 + 진행 중 구르기 취소(`CancelDodgeRoll`) + 픽업 알림 즉시 숨김(`HideImmediate`) — 둘 다 `timeScale=0` 일시정지 전에. 비마지막 층은 `AutoAdvanceRequested` → 페이드 전환 지휘 |
 | 풀링 | `GameObjectPool`, `PooledObject` | Projectile/Enemy(근접·원거리)/Boss/Grenade 공용 재사용 풀. 같은 프레임 중복 반환(`_hasReturned`/`_isReleased` 가드, 2026-08-31)으로 `InvalidOperationException` 방지 |
-| UI | `UIManager`(파사드), `HealthBarUI`, `ActiveItemCooldownUI`(쿨다운 아이콘 + 장착 아이템 이름 텍스트 — 2026-09-02 (3)), `ActiveItemEquipUI`, `PlayerStatsPanelUI`, `CharacterSelectUI`, `FloorCompleteUI`(구 ClearOverlayUI — 마지막 층이면 Retry 버튼, 아니면 3→0 카운트다운 후 자동 층 전환), `FloorTransitionUI`(층 전환 검은 페이드), `MinimapUI`(현재 방 중심 로컬 스크롤 뷰포트, `RectMask2D` — 2026-09-02 (3)에 전체-뷰 방식에서 개편), `PickupNotificationUI`, `BillboardUI`, `DebugOverlayController` | `UIManager`가 선택/오버레이 화면을 감싸 `ShowXxx(...)` 메서드로 노출. 상속 없는 단일 클래스. `BillboardUI`가 실제 카메라 추적 회전(`LateUpdate`)을 전담해 데미지 팝업/HP바/미니 알림이 항상 카메라를 향함(2026-08-31 — 이전엔 무회전 근사에 의존) |
+| UI | `UIManager`(파사드), `HealthBarUI`, `ActiveItemCooldownUI`(쿨다운 아이콘 + 장착 아이템 이름 텍스트 — 2026-09-02 (3)), `ActiveItemEquipUI`, `PlayerStatsPanelUI`, `CharacterSelectUI`, `FloorCompleteUI`(구 ClearOverlayUI — 마지막 층이면 Retry 버튼, 아니면 3→0 카운트다운 후 자동 층 전환), `FloorTransitionUI`(층 전환 검은 페이드), `MinimapUI`(현재 방 중심 로컬 스크롤 뷰포트, `RectMask2D` — 2026-09-02 (3)에 전체-뷰 방식에서 개편), `PickupNotificationUI`(`HideImmediate()` 추가), `BillboardUI`, `DebugOverlayController`(F1 FPS·데미지 오버레이 + F2 적 즉사 토글 → `DebugDamage.EnemyOneShot`, FPS 텍스트 왼쪽 "1-SHOT" 인디케이터) | `UIManager`가 선택/오버레이 화면을 감싸 `ShowXxx(...)` 메서드로 노출. 상속 없는 단일 클래스. `BillboardUI`가 실제 카메라 추적 회전(`LateUpdate`)을 전담해 데미지 팝업/HP바/미니 알림이 항상 카메라를 향함(2026-08-31 — 이전엔 무회전 근사에 의존) |
 
 ---
 
@@ -222,8 +229,11 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
 - 아이템 방(#3) — 바닥 드롭 아이템 로직은 만들어졌으니, "전투 없이 보장된
   픽업 배치"만 추가하면 될 것으로 예상
 - 방 안 장애물(#2) — 지형 애셋 교체 시점까지 보류
-- **3층 제작** — 층2와 동일한 authoring 패턴(방/문 메커니즘 변경 없음),
-  `StageManager.floors`에 세 번째 `FloorDefinition` 추가
+- ~~**3층 제작**~~ — 완료(2026-09-04). `Room3_*.asset` 13개(id 301~313, Start/CombatA~J/
+  Item/Boss), 아이작식 구조(중앙 시작 / 최원거리 단문 보스 / CombatF 뒤 아이템 데드엔드 /
+  본체 루프 2개 / 선택 전투 데드엔드), 전투 적 54 + 보스 1. `StageManager.floors`에 세 번째
+  `FloorDefinition` 배선. `IsLastFloor` 데이터 구동이라 층2 자동 전환·층3 Retry로 코드 변경
+  없이 전환됨. 구조 검증(중복 0/상호대응·인접/BFS 13-13) 통과. 실플레이 최종 확인은 이월.
 - **1~3층 방 데이터 JSON 외부화**(2026-09-02 (3) 신규 요청) — 현재
   `RoomDataAsset`(ScriptableObject)로 authoring된 방 위치/연결/몬스터 구성을
   `GameBalance`/`ItemDropTable.json`처럼 텍스트 에디터로 수정 가능한 JSON으로
@@ -327,6 +337,22 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   방식으로 변경. 이 개편 과정에서 기존 좌표 계산이 3열 이상(여러 행)일 때
   화면 밖으로 밀려나는 잠복 버그를 발견해 같이 고침(층1은 1행뿐이라 한 번도
   발현 안 됐던 버그).
+- **`Physics.autoSyncTransforms`가 off라 씬 재빌드/순간이동 지점마다 `SyncTransforms()`를
+  명시 호출(2026-09-04)**: `AdvanceToNextFloor()`가 `timeScale=0` 암전 중 실행돼 자동 물리
+  싱크가 안 걸리는 게 스테이지3 벽 관통·방 전환 드리프트의 공통 원인. 전역 ON 대신
+  `StageManager.BuildFloor()` 끝과 `RoomTransitionController`의 `player.position` 순간이동
+  직후에 `Physics.SyncTransforms()` 삽입. 같은 계열 버그 재발 시 전역 ON 재고 (대안 비교는
+  `AI_Decision_Log.md` 2026-09-04).
+- **대시를 이동속도 연동 + `linearVelocity` 구동으로(2026-09-04)**: 대시 = "현재 이동속도 ×
+  `dashSpeedMultiplier`(기본 3) 속도로 `dashDuration`(0.2초) 버스트" — 기본 스탯에서 기존
+  15 u/s·3유닛 보존, 이동속도 패시브가 대시에도 반영됨. 수치는 `PlayerBaseStats.json`으로
+  외부화. 구동을 `MovePosition`(위치 명령, 솔버 추월 시 벽 관통) → `linearVelocity`(솔버가
+  해소)로 전환.
+- **걷기/대시 공용 벽 방향 클램프 `WallClamp`(2026-09-04)**: `MovePosition`/`linearVelocity`를
+  물리 스텝당 ~0.2유닛 초과로 벽에 명령하면 솔버를 앞질러 관통(이동속도 패시브 스택 시 걷기도
+  해당). 이동 전 캡슐을 반지름만큼 뒤로 물린 지점에서 `CapsuleCast`, 히트 시 `ProjectOnPlane`로
+  벽 방향 성분 제거(정면=정지·스침=슬라이드). 정면 충돌은 모든 속도에서 막힘, 얕은 스침 +
+  극단 이동속도 잔여는 §5 이월.
 
 ---
 
@@ -355,14 +381,24 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   (ScriptableObject) 그대로 두고 JSON은 값 오버레이만 할지, 아니면 방 authoring
   자체를 JSON 1차 소스로 옮길지 미정 — 착수 전 설계 검토 필요.
 - **대시(구르기) 무적 판정 여부(2026-09-02 (3) 신규)**: 스페이스바 대시 이동
-  중 실제로 무적 프레임이 있는지 아직 코드/실플레이 확인 전.
+  중 실제로 무적 프레임이 있는지 아직 코드/실플레이 확인 전. (2026-09-04 대시 리워크로
+  `EndDodgeRoll`에 무적 해제가 명시됐고 취소 경로도 정리됐으나, 인게임 무적 창 체감 확인은
+  여전히 이월.)
+- **플레이스홀더 지오메트리 — 아트 통합(Phase 4) 시 일괄 처리할 충돌 이슈(2026-09-04)**:
+  지금은 큐브/캡슐 프리미티브 기준이라 아트로 지형·적·캐릭터를 넣으면 콜라이더·히트박스·
+  스폰 오프셋을 어차피 재조정해야 함 — 그때 아래를 묶어서:
+  1. `WallClamp` 잔여: 벽을 얕은 각도로 스치며 파고드는 이동을 매우 높은 이동속도(일반
+     런의 픽업 수를 한참 넘는)에서 하면 여전히 조금 관통. 근본 해결 = 플레이어 이동을
+     `MovePosition`에서 스윕 캐릭터 이동(`CharacterController`/full collide-and-slide)으로 교체.
+  2. 문 통과 트리거가 보이는 문보다 깊음(`WallThickness×3`) — 드랍 nudge(`ItemDropManager.
+     NudgeClearOfDoors`)로 우회 중, 근본은 지오메트리.
+  3. 벽에 밀착한 두 오브젝트 사이 근접 발사 시 발사체가 벽 판정으로 소멸(데미지 안 들어감).
 
 ---
 
 ## 6. 앞으로 해야 할 작업 (우선순위 순, 2026-09-02 (3) 사용자 지정으로 갱신)
 
-1. **3층 맵 제작** — 층2와 동일한 authoring 패턴(방/문 메커니즘 변경 없음),
-   `StageManager.floors`에 세 번째 `FloorDefinition` 추가.
+1. ~~**3층 맵 제작**~~ — 완료(2026-09-04, §3 참고). 실플레이 최종 검증만 이월.
 2. **1~3층 방 데이터 JSON 외부화**: 방 위치/연결/몬스터 구성 등을 텍스트
    에디터로 수정 가능한 JSON 파일로 분리 — 방식은 §5 미결정 항목 참고,
    착수 전 설계 검토 필요.

@@ -12,12 +12,18 @@ public class PlayerMovement : MonoBehaviour
     // field.
     public float BaseMoveSpeed => GameBalance.Player.moveSpeed;
 
+    // Base plus passive-item bonuses - the actual speed the player walks at this instant.
+    // PlayerDodgeRoll scales dash speed off this so move-speed pickups also make the dash faster.
+    public float CurrentMoveSpeed => BaseMoveSpeed + (passiveStats != null ? passiveStats.MoveSpeedBonus : 0f);
+
     private Rigidbody _rigidbody;
+    private CapsuleCollider _capsule;
     private InputAction _moveAction;
 
     private void Awake()
     {
         _rigidbody = GetComponent<Rigidbody>();
+        _capsule = GetComponent<CapsuleCollider>();
         _moveAction = GetComponent<PlayerInputActions>().FindAction("Move");
     }
 
@@ -30,8 +36,12 @@ public class PlayerMovement : MonoBehaviour
             direction.Normalize();
         }
 
-        float speed = BaseMoveSpeed + (passiveStats != null ? passiveStats.MoveSpeedBonus : 0f);
-        Vector3 nextPosition = _rigidbody.position + direction * speed * Time.fixedDeltaTime;
+        // At high move speed (stacked move-speed pickups) a raw MovePosition command into a
+        // wall out-runs the solver and creeps the capsule through - strip the into-wall
+        // component first. See WallClamp.
+        direction = WallClamp.ClampDirection(_capsule, direction, CurrentMoveSpeed * Time.fixedDeltaTime);
+
+        Vector3 nextPosition = _rigidbody.position + direction * CurrentMoveSpeed * Time.fixedDeltaTime;
         _rigidbody.MovePosition(nextPosition);
     }
 }

@@ -7,11 +7,14 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(HealthComponent))]
 public class PlayerDodgeRoll : MonoBehaviour
 {
-    [SerializeField] private float dodgeRollDistance = 3f;
-    [SerializeField] private float dodgeRollDuration = 0.2f;
+    // Dash speed = PlayerMovement.CurrentMoveSpeed * dashSpeedMultiplier, held for dashDuration
+    // seconds - both pulled from GameBalance (Assets/StreamingAssets/Balance/PlayerBaseStats.json),
+    // same as the walk speed it scales off. Cooldown stays a serialized field (not a balance
+    // number worth externalising).
     [SerializeField] private float cooldown = 1f;
 
     private Rigidbody _rigidbody;
+    private CapsuleCollider _capsule;
     private PlayerMovement _playerMovement;
     private HealthComponent _healthComponent;
     private InputAction _dodgeRollAction;
@@ -25,6 +28,7 @@ public class PlayerDodgeRoll : MonoBehaviour
     private void Awake()
     {
         _rigidbody = GetComponent<Rigidbody>();
+        _capsule = GetComponent<CapsuleCollider>();
         _playerMovement = GetComponent<PlayerMovement>();
         _healthComponent = GetComponent<HealthComponent>();
 
@@ -68,6 +72,20 @@ public class PlayerDodgeRoll : MonoBehaviour
         _healthComponent.Health.SetInvulnerable(true);
     }
 
+    // Abort an in-progress roll and restore normal control immediately - called by
+    // RoomTransitionController (roll into a doorway) and RoomFlowManager (roll into the Floor
+    // Exit) so a roll can't keep driving the Rigidbody across a camera transition, or freeze
+    // mid-roll under the Floor Complete pause and resume on the next floor. No-op if not rolling.
+    public void CancelDodgeRoll()
+    {
+        if (!_isDodgeRolling)
+        {
+            return;
+        }
+
+        EndDodgeRoll();
+    }
+
     private void FixedUpdate()
     {
         if (!_isDodgeRolling)
@@ -75,17 +93,30 @@ public class PlayerDodgeRoll : MonoBehaviour
             return;
         }
 
-        float dodgeRollSpeed = dodgeRollDistance / dodgeRollDuration;
-        Vector3 nextPosition = _rigidbody.position + _dodgeRollDirection * dodgeRollSpeed * Time.fixedDeltaTime;
-        _rigidbody.MovePosition(nextPosition);
+        // Velocity-driven, not MovePosition: a position command at dash speed out-runs the
+        // physics solver's depenetration and walks the player through static walls. Setting
+        // linearVelocity lets the solver resolve the move instead.
+        float dashSpeed = _playerMovement.CurrentMoveSpeed * GameBalance.Player.dashSpeedMultiplier;
+
+        // Strip any into-wall component so the dash can't out-run the solver and tunnel a wall,
+        // regardless of dash speed or whether it started flush against the wall. See WallClamp.
+        Vector3 direction = WallClamp.ClampDirection(_capsule, _dodgeRollDirection, dashSpeed * Time.fixedDeltaTime);
+
+        _rigidbody.linearVelocity = direction * dashSpeed;
 
         _dodgeRollElapsed += Time.fixedDeltaTime;
-        if (_dodgeRollElapsed >= dodgeRollDuration)
+        if (_dodgeRollElapsed >= GameBalance.Player.dashDuration)
         {
-            _isDodgeRolling = false;
-            _cooldownRemaining = cooldown;
-            _playerMovement.enabled = true;
-            _healthComponent.Health.SetInvulnerable(false);
+            EndDodgeRoll();
         }
+    }
+
+    private void EndDodgeRoll()
+    {
+        _isDodgeRolling = false;
+        _cooldownRemaining = cooldown;
+        _rigidbody.linearVelocity = Vector3.zero;
+        _playerMovement.enabled = true;
+        _healthComponent.Health.SetInvulnerable(false);
     }
 }

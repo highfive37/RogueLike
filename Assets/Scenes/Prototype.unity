@@ -5407,6 +5407,21 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 803cb0145d394214af68f1fc029c2eb5, type: 2}
     - {fileID: 11400000, guid: 2d52f0b339e94f4b9130c39ce8b16211, type: 2}
     startRoomId: 201
+  - rooms:
+    - {fileID: 11400000, guid: 807a67932c184d96b3ddcbad1fe6dd54, type: 2}
+    - {fileID: 11400000, guid: c17d1a7ce2ec4b7ca4ba3ac9db1e8504, type: 2}
+    - {fileID: 11400000, guid: 688666c573c047d7a44c0415e72280f3, type: 2}
+    - {fileID: 11400000, guid: b97a594069334567a312ca4c864bb959, type: 2}
+    - {fileID: 11400000, guid: 45549fa135234f7bbe3522697d61c969, type: 2}
+    - {fileID: 11400000, guid: 1fcc8c9aa83d40e1acb3caac06afc9fa, type: 2}
+    - {fileID: 11400000, guid: ba553042808c42dfabeaae581131c4f1, type: 2}
+    - {fileID: 11400000, guid: abf26a591eb24a07a2b5ffd8f5276954, type: 2}
+    - {fileID: 11400000, guid: ccbe43d9d20b4e3b8f31944aa2bf80fe, type: 2}
+    - {fileID: 11400000, guid: 44a137923f644614adb5f6101f928939, type: 2}
+    - {fileID: 11400000, guid: b535f252e32a40a592beab1c537db644, type: 2}
+    - {fileID: 11400000, guid: 96b13307d1d748a38e14c65284147726, type: 2}
+    - {fileID: 11400000, guid: 1914b1c16c294a708f060ac181be64d2, type: 2}
+    startRoomId: 301
   roomPrefab: {fileID: 7330083947955992191, guid: 70bc9331d9dfef04c8ff6f69288e8499, type: 3}
   enemySpawner: {fileID: 1499158211}
   itemDropManager: {fileID: 720580580}

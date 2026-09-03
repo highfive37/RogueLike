@@ -30,6 +30,14 @@ public class ItemDropManager : MonoBehaviour
 
     private readonly List<ActiveItemData> _remainingActiveItems = new List<ActiveItemData>();
 
+    // A kill next to a doorway can land a drop inside the door's pass-through trigger, which
+    // reaches further into the room than the visible doorway does - walking to that item fires
+    // the room transition instead of picking it up. SpawnPickup pulls such a drop this far
+    // (world units) into the room from the door plane, measured so the player can stand on the
+    // pickup with its capsule clear of the trigger.
+    private const float DoorClearDistance = 3f;
+    private static readonly Collider[] _doorProbe = new Collider[16];
+
     private void Awake()
     {
         _remainingActiveItems.AddRange(allActiveItems);
@@ -185,7 +193,49 @@ public class ItemDropManager : MonoBehaviour
         // pickup's diagonal lie-on-its-side rotation), so use the prefab's
         // own rotation instead.
         Vector3 groundedPosition = new Vector3(position.x, dropHeight, position.z);
+
+        // Corrected here, before Instantiate, so the pickup only ever appears at its final
+        // reachable spot - never briefly at the raw drop point and then sliding out.
+        groundedPosition = NudgeClearOfDoors(groundedPosition);
+
         ItemPickup pickup = Instantiate(prefab, groundedPosition, prefab.transform.rotation);
         pickup.SetItem(item);
+    }
+
+    // Push a drop point out of any nearby door's pass-through trigger, along that door's
+    // room-inward direction (from the door plane toward its EntryPoint). No-op for drops
+    // already clear of every door - including the guaranteed rewards, which spawn well away
+    // from any wall. An unlocked door only exposes its trigger collider here (its blocker is
+    // disabled); a locked one adds its blocker too, but the second pass is already clear so it
+    // changes nothing.
+    private Vector3 NudgeClearOfDoors(Vector3 groundedPosition)
+    {
+        int count = Physics.OverlapSphereNonAlloc(
+            groundedPosition, DoorClearDistance + 1f, _doorProbe, ~0, QueryTriggerInteraction.Collide);
+
+        for (int i = 0; i < count; i++)
+        {
+            DoorController door = _doorProbe[i].GetComponent<DoorController>();
+            if (door == null || door.EntryPoint == null)
+            {
+                continue;
+            }
+
+            Vector3 inward = door.EntryPoint.position - door.transform.position;
+            inward.y = 0f;
+            if (inward.sqrMagnitude < 1e-4f)
+            {
+                continue;
+            }
+            inward.Normalize();
+
+            float along = Vector3.Dot(groundedPosition - door.transform.position, inward);
+            if (along < DoorClearDistance)
+            {
+                groundedPosition += inward * (DoorClearDistance - along);
+            }
+        }
+
+        return groundedPosition;
     }
 }

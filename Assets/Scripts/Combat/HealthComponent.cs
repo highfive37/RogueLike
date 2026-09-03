@@ -40,6 +40,14 @@ public class HealthComponent : MonoBehaviour, IDamageable
 
     public void TakeDamage(float amount, Transform source)
     {
+        // F2 dev switch: rewrite the final amount for any non-player target, blowing away
+        // whatever the weapon/skill computed. Placed first so the log, the AnyDamageTaken
+        // event (debug damage numbers) and Health all see the overridden value.
+        if (DebugDamage.EnemyOneShot && amount > 0f && !CompareTag("Player"))
+        {
+            amount = DebugDamage.OneShotAmount;
+        }
+
         Debug.Log($"{name} took {amount} damage from {(source != null ? source.name : "unknown")}.");
 
         if (amount > 0f && !Health.IsDead && !Health.IsInvulnerable)

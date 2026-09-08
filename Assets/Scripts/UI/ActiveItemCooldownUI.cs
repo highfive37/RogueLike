@@ -3,7 +3,8 @@ using UnityEngine.UI;
 
 // Rounded-square icon with a dark overlay that fills the icon top-down while
 // the equipped active item is on cooldown, and empties as the cooldown
-// finishes.
+// finishes. When nothing is equipped the whole slot is dimmed to read as an
+// empty ability slot rather than a bright placeholder swatch.
 [RequireComponent(typeof(Image))]
 public class ActiveItemCooldownUI : MonoBehaviour
 {
@@ -13,7 +14,9 @@ public class ActiveItemCooldownUI : MonoBehaviour
     [SerializeField] private Text cooldownText;
     [SerializeField] private Text itemNameText;
     [SerializeField] private float readyTextHoldDuration = 0.5f;
+    [SerializeField] private float emptySlotAlpha = 0.25f;
 
+    private Image _icon;
     private float _readyElapsed;
 
     private void Reset()
@@ -21,15 +24,43 @@ public class ActiveItemCooldownUI : MonoBehaviour
         cooldownOverlay = GetComponent<Image>();
     }
 
+    private void Awake()
+    {
+        _icon = GetComponent<Image>();
+    }
+
     private void Update()
     {
-        if (itemNameText != null && activeItemInventory != null)
+        bool hasItem = activeItemInventory != null && activeItemInventory.EquippedItem != null;
+
+        if (itemNameText != null)
         {
-            itemNameText.text = activeItemInventory.EquippedItem != null ? activeItemInventory.EquippedItem.ItemName : string.Empty;
+            itemNameText.text = hasItem ? activeItemInventory.EquippedItem.ItemName : string.Empty;
+        }
+
+        // A bright icon with a "0" on it reads as a bug, not an empty ability slot - dim the
+        // whole thing until something is actually equipped.
+        if (_icon != null)
+        {
+            Color c = _icon.color;
+            c.a = hasItem ? 1f : emptySlotAlpha;
+            _icon.color = c;
         }
 
         if (skillController == null || cooldownOverlay == null)
         {
+            return;
+        }
+
+        if (!hasItem)
+        {
+            cooldownOverlay.fillAmount = 0f;
+            if (cooldownText != null)
+            {
+                cooldownText.enabled = false;
+            }
+
+            _readyElapsed = 0f;
             return;
         }
 

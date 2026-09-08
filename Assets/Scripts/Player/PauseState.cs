@@ -34,4 +34,14 @@ public static class PauseState
             Time.timeScale = 1f;
         }
     }
+
+    // Drop every pause owner and resume, regardless of who is still holding a
+    // pause. For scene teardown (GameFlow): a scene load neither runs the
+    // remaining owners' ReleasePause nor resets the engine-global Time.timeScale,
+    // so without this the next scene can start frozen.
+    public static void ForceResume()
+    {
+        _owners.Clear();
+        Time.timeScale = 1f;
+    }
 }

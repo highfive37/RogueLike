@@ -13,28 +13,21 @@ using UnityEngine;
 // rooms - only the room the player is currently in ever has active enemies,
 // tracked per-instance by each room's own RoomManager.
 //
-// Multi-floor progression: "floors" holds one FloorDefinition per floor (Floor 1, Floor 2, ...).
-// AdvanceToNextFloor() tears down the current floor's room instances and rebuilds from the next
-// definition IN THE SAME SCENE - no reload. This is deliberate: reloading the scene (like the
-// Retry button still does for the final floor) would recreate the Player GameObject, wiping
+// Multi-floor progression: the floor list comes from GameFloors (one FloorLayout per
+// FloorN.json under StreamingAssets/Balance/Stage/Floors/). AdvanceToNextFloor() tears down the
+// current floor's room instances and rebuilds from the next layout IN THE SAME SCENE - no
+// reload. This is deliberate: reloading the scene (like the Retry button still does for the
+// final floor) would recreate the Player GameObject, wiping
 // PlayerPassiveStats/PlayerActiveItemInventory progress and re-triggering
 // CharacterSelectController's one-time Awake() lock. Keeping the Player alive across the
 // transition avoids both problems for free.
-[Serializable]
-public class FloorDefinition
-{
-    [SerializeField] private RoomDataAsset[] rooms;
-    [SerializeField] private int startRoomId;
-
-    public RoomDataAsset[] Rooms => rooms;
-    public int StartRoomId => startRoomId;
-}
-
 public class StageManager : MonoBehaviour
 {
     private const float PlayerStandHeight = 1f;
 
-    [SerializeField] private FloorDefinition[] floors;
+    // Stage index for the "stage-floor" HUD label (e.g. 1-3). Only one stage exists today, so
+    // this is just authored to 1; it stays a field so a second stage can bump it without code.
+    [SerializeField] private int stageNumber = 1;
     [SerializeField] private RoomController roomPrefab;
     [SerializeField] private EnemySpawner enemySpawner;
     [SerializeField] private ItemDropManager itemDropManager;
@@ -49,6 +42,7 @@ public class StageManager : MonoBehaviour
     [SerializeField] private Vector3 floorExitLocalOffset = new Vector3(10f, 0f, 0f);
 
     private IFloorLayoutProvider _provider;
+    private IReadOnlyList<FloorLayout> _floors;
     private readonly Dictionary<int, RoomController> _roomsById = new Dictionary<int, RoomController>();
     private int _currentFloorIndex;
     private float _runStartTime;
@@ -57,6 +51,10 @@ public class StageManager : MonoBehaviour
 
     public event Action<int> StageChanged;
     public event Action RoomClearedForReward;
+
+    // Fires when the player enters a floor whose FloorN.json failed to load and is running on a
+    // built-in emergency layout - UIManager turns this into a "fix the data file" system popup.
+    public event Action<int> FloorDataCorrupted;
 
     // Fires the instant the boss dies (room clears) - drives guaranteed reward spawn + Floor
     // Exit activation, but is NOT the end of the run. See FloorCompleted below.
@@ -68,11 +66,14 @@ public class StageManager : MonoBehaviour
     public event Action FloorCompleted;
 
     public FloorExitController FloorExit { get; private set; }
-    public bool IsLastFloor => _currentFloorIndex >= floors.Length - 1;
+    public bool IsLastFloor => _currentFloorIndex >= _floors.Count - 1;
 
     // 1-based, for display (StageChanged still carries the raw room id - useful internally for
     // per-room tracking - so the HUD reads this instead of that event's payload).
     public int CurrentFloorNumber => _currentFloorIndex + 1;
+
+    // Stage index for the "stage-floor" HUD label (1-1, 1-2, ...). Constant at 1 for now.
+    public int CurrentStageNumber => stageNumber;
 
     // Per-floor stats, reset on AdvanceToNextFloor() - what the Floor Complete screen shows.
     public int RoomsClearedCount { get; private set; }
@@ -87,6 +88,7 @@ public class StageManager : MonoBehaviour
     {
         _runStartTime = Time.time;
         _floorStartTime = Time.time;
+        _floors = GameFloors.Floors;
         BuildProvider();
     }
 
@@ -117,8 +119,7 @@ public class StageManager : MonoBehaviour
 
     private void BuildProvider()
     {
-        FloorDefinition floor = floors[_currentFloorIndex];
-        _provider = new ScriptableObjectFloorLayoutProvider(floor.Rooms, floor.StartRoomId);
+        _provider = new JsonFloorLayoutProvider(_floors[_currentFloorIndex]);
     }
 
     private void TeardownCurrentFloor()
@@ -182,6 +183,11 @@ public class StageManager : MonoBehaviour
         // starts moving on the new floor. With Auto Sync Transforms off (project setting) that
         // left every rebuilt floor's walls non-collidable until the next simulation step.
         Physics.SyncTransforms();
+
+        if (_floors[_currentFloorIndex].IsCorrupted)
+        {
+            FloorDataCorrupted?.Invoke(CurrentFloorNumber);
+        }
     }
 
     private void SpawnFloorExit()

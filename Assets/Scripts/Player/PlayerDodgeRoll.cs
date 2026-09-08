@@ -25,6 +25,12 @@ public class PlayerDodgeRoll : MonoBehaviour
     private float _cooldownRemaining;
     private bool _isDodgeRolling;
 
+    // Read-only cooldown state for the HUD (DashCooldownUI), mirroring the shape
+    // ActiveItemController exposes for ActiveItemCooldownUI: Progress is 1 right
+    // after a dash and eases to 0 as the cooldown clears; Remaining is seconds.
+    public float CooldownRemaining => Mathf.Max(0f, _cooldownRemaining);
+    public float CooldownProgress => cooldown > 0f ? Mathf.Clamp01(_cooldownRemaining / cooldown) : 0f;
+
     private void Awake()
     {
         _rigidbody = GetComponent<Rigidbody>();

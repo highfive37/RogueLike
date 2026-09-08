@@ -164,7 +164,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 93e52c6438b2d9f43b6dc4af0bb90225, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerMovement
-  moveSpeed: 5
+  passiveStats: {fileID: 0}
 --- !u!114 &4936443476940766398
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -204,6 +204,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCombat
   projectilePool: {fileID: 0}
+  passiveStats: {fileID: 0}
 --- !u!114 &4994782333535571050
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -275,7 +276,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 87315da1abba592499bbaa3fff02cf34, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CharacterSelectController
-  selectUI: {fileID: 0}
+  fallbackArchetype: {fileID: 11400000, guid: b0c8433fd65d438da75d1e3c595557e2, type: 2}
 --- !u!114 &476657865539516239
 MonoBehaviour:
   m_ObjectHideFlags: 0

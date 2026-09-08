@@ -1,0 +1,28 @@
+{
+  "_guide": "스테이지 1의 1번째 층(Floor) 데이터입니다. 파일 하나가 층 하나를 통째로 정의합니다(층의 방 배치·연결·몬스터 구성 전부). 층을 새로 추가하려면 이 폴더에 FloorN.json 파일을 하나 더 만들고(N은 다음 번호) 이 파일 구조를 그대로 따라 채우면 됩니다 - 코드 수정이나 Unity 인스펙터 작업은 필요 없습니다. 숫자/문자열만 고치고 저장한 뒤 다음 Play(또는 빌드 실행) 때 반영됩니다. 파일이 없거나 형식이 깨지면 그 층은 코드에 내장된 비상용 3방 층(시작-전투-보스)으로 대체되고, 플레이어가 그 층에 들어설 때 '데이터가 손상되었습니다' 시스템 팝업이 뜹니다(게임은 죽지 않음). 필드 설명은 아래 _fieldGuide 참고.",
+  "_fieldGuide": {
+    "isLastFloor": "이 층이 스테이지의 마지막 층인지 여부. true면 이 층 보스를 잡고 Floor Exit에 들어가면 런 종료(Retry 화면). false면 다음 번호의 FloorN.json으로 자동 전환. 주의: 실제로 다음 번호 파일이 있으면 그 존재가 우선입니다 - 예를 들어 이 값을 true로 뒀는데 Floor2.json이 존재하면, 콘솔에 경고를 찍고 이 층을 마지막이 아닌 것으로 취급합니다. 새 마지막 층을 추가할 때 이전 마지막 층의 이 값을 false로 바꾸는 걸 깜빡해도 진행이 막히지 않게 하려는 안전장치입니다(그래도 값은 맞춰두는 게 좋습니다).",
+    "startRoomId": "플레이어가 이 층에서 처음 입장하는 방의 roomId. 아래 rooms 목록에 그 id를 가진 방이 반드시 있어야 하며, 보통 roomType이 Start인 방입니다.",
+    "rooms": "이 층을 이루는 모든 방의 목록. 순서는 상관없습니다(연결은 roomId로 찾음). 한 층에 Start 방 1개, Boss 방 1개가 반드시 필요합니다(Boss 방에 층 출구 Floor Exit가 자동 배치됨).",
+    "rooms[].roomId": "방의 고유 번호(정수). 한 층 안에서 유일해야 합니다. 관례상 N층은 N01, N02... 또는 N*100+1 형태를 씁니다(1층만 예외적으로 1~6). 층이 달라도 겹치지 않게 하는 걸 권장합니다.",
+    "rooms[].roomType": "방 종류. Start / Combat / Boss / Item 중 하나(대소문자 구분). Start=시작방(적 없음), Combat=전투방(클리어 시 보상 드롭 굴림), Boss=보스방(여기 Floor Exit 생성), Item=전투 없이 아이템 픽업만 놓는 방. 인식 안 되는 값이면 그 층 전체가 손상 처리됩니다.",
+    "rooms[].gridPosition": "미니맵 표시와 월드 배치에 쓰는 격자 좌표 {x, y}(정수). 월드 위치 = (x, 0, y) * gridSpacing(현재 50). 서로 연결된 두 방은 격자에서 x나 y가 정확히 1 차이나고 나머지 축은 같아야, 문 방향(North/South/East/West)과 실제 배치가 맞아떨어집니다. North=+y, South=-y, East=+x, West=-x.",
+    "rooms[].roomSize": "방 한 변의 길이(월드 유닛). 바닥/벽 지오메트리가 이 크기로 절차 생성됩니다. 기본 40, 시작방은 보통 16, 아이템방은 20. 생략하거나 0 이하로 두면 40으로 처리합니다.",
+    "rooms[].enemies": "이 방에 스폰되는 적 목록. Start/Item 방은 보통 빈 배열 []. Combat/Boss 방은 진입 시 이 목록대로 스폰되고, 전부 처치해야 방이 클리어됩니다.",
+    "rooms[].enemies[].variant": "적 종류. Melee / Ranged / Boss 중 하나(대소문자 구분). 각각 EnemySpawner에 등록된 풀로 매핑됩니다. 인식 안 되는 값이면 그 층 전체가 손상 처리됩니다.",
+    "rooms[].enemies[].spawnPosition": "방 중심(0,0,0) 기준 로컬 좌표 {x, y, z}. y는 바닥 위 높이로 보통 1.0(보스는 1.5). x/z는 -roomSize/2 ~ +roomSize/2 범위 안에 두세요.",
+    "rooms[].connections": "이 방에서 다른 방으로 나가는 문 목록. 한 방향당 최대 1개.",
+    "rooms[].connections[].direction": "문 방향. North / South / East / West 중 하나(대소문자 구분). 인식 안 되는 값이면 그 층 전체가 손상 처리됩니다.",
+    "rooms[].connections[].targetRoomId": "그 문이 이어지는 상대 방의 roomId. 양방향 통행을 하려면 상대 방의 connections에도 반대 방향(North<->South, East<->West)으로 이 방을 가리키는 항목을 넣어야 합니다. 한쪽만 넣으면 그 방향으로 한 번만 갈 수 있습니다."
+  },
+  "isLastFloor": false,
+  "startRoomId": 1,
+  "rooms": [
+    { "roomId": 1, "roomType": "Start", "gridPosition": { "x": 0, "y": 0 }, "roomSize": 16, "enemies": [], "connections": [{ "direction": "East", "targetRoomId": 2 }] },
+    { "roomId": 2, "roomType": "Combat", "gridPosition": { "x": 1, "y": 0 }, "roomSize": 40, "enemies": [{ "variant": "Melee", "spawnPosition": { "x": 8, "y": 1, "z": 0 } }, { "variant": "Ranged", "spawnPosition": { "x": -8, "y": 1, "z": 0 } }], "connections": [{ "direction": "West", "targetRoomId": 1 }, { "direction": "East", "targetRoomId": 6 }] },
+    { "roomId": 3, "roomType": "Combat", "gridPosition": { "x": 3, "y": 0 }, "roomSize": 40, "enemies": [{ "variant": "Melee", "spawnPosition": { "x": 8, "y": 1, "z": 0 } }, { "variant": "Ranged", "spawnPosition": { "x": -4, "y": 1, "z": 6.93 } }, { "variant": "Melee", "spawnPosition": { "x": -4, "y": 1, "z": -6.93 } }], "connections": [{ "direction": "West", "targetRoomId": 6 }, { "direction": "East", "targetRoomId": 4 }] },
+    { "roomId": 4, "roomType": "Combat", "gridPosition": { "x": 4, "y": 0 }, "roomSize": 40, "enemies": [{ "variant": "Melee", "spawnPosition": { "x": 8, "y": 1, "z": 0 } }, { "variant": "Ranged", "spawnPosition": { "x": 4, "y": 1, "z": 6.93 } }, { "variant": "Melee", "spawnPosition": { "x": -4, "y": 1, "z": 6.93 } }, { "variant": "Ranged", "spawnPosition": { "x": -8, "y": 1, "z": 0 } }, { "variant": "Melee", "spawnPosition": { "x": -4, "y": 1, "z": -6.93 } }, { "variant": "Ranged", "spawnPosition": { "x": 4, "y": 1, "z": -6.93 } }], "connections": [{ "direction": "West", "targetRoomId": 3 }, { "direction": "East", "targetRoomId": 5 }] },
+    { "roomId": 5, "roomType": "Boss", "gridPosition": { "x": 5, "y": 0 }, "roomSize": 40, "enemies": [{ "variant": "Boss", "spawnPosition": { "x": -10, "y": 1.5, "z": 10 } }], "connections": [{ "direction": "West", "targetRoomId": 4 }] },
+    { "roomId": 6, "roomType": "Item", "gridPosition": { "x": 2, "y": 0 }, "roomSize": 20, "enemies": [], "connections": [{ "direction": "West", "targetRoomId": 2 }, { "direction": "East", "targetRoomId": 3 }] }
+  ]
+}

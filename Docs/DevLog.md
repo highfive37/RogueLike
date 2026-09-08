@@ -30,6 +30,230 @@
 
 ---
 
+## 2026-09-04 (3)
+
+### 진행 내용
+
+**전체 플레이 루프 골격 — 타이틀 씬 신설 (로드맵 §6 #6, 사망 처리는 제외)**
+- `Assets/Scenes/Title.unity` 신규 (Camera / EventSystem(InputSystemUIInputModule) / Canvas).
+  배경(`title_bg`) + 로고(`title_logo`) + Start 버튼(`btn_start_normal/over/push` SpriteSwap).
+  캐릭터 선택을 **인게임 씬에서 타이틀 씬으로 이동**: Start → `TitleGroup` 숨김 → 기존
+  `CharacterSelectUI` 재사용해 근접/원거리 선택 → `GameFlow.StartRun(archetype)`.
+- 타이틀 레이아웃: 로고/Start 버튼을 배경 오른쪽 절반(앵커 0.75)의 중상단/중하단에 배치.
+  Start → **배경·로고·버튼 전부 비활성** + 캐릭터 선택 패널(불투명 검정)로 전환 —
+  타이틀 위 오버레이가 아니라 "다음 UI로 넘어가는" 방식(임시 검정 배경, 추후 전용 화면).
+- **UI 아트 리소스 적용(GPT 생성, `Assets/Art/UI/`)**: `ui_main_menu_btn.png`(3상태 1장)는
+  Sprite Multiple + 자동 슬라이스(투명 경계) → `btn_gamestart_normal/over/pressed`로 리네임 →
+  타이틀 StartButton SpriteSwap 재배선. 나머지는 개별 PNG로 받아 그대로 사용.
+- **HUD #2·#3·#4·#1 구현** (인게임 씬, §6 "당장 넣어볼 UI"):
+  - #3 크로스헤어 `CrosshairUI` — 마우스 추적(스크린→로컬), 플레이 중 OS 커서 숨김, 일시정지 시 복원. `hud_crosshair`.
+  - #2 런 타이머 `RunTimerUI` — `StageManager.ElapsedTime` → `mm:ss`, HUD 상단(1-1 아래). `hud_timer_frame` + Text.
+  - #4 체력 바 리스킨 — 기존 `HealthBarUI`(fill/텍스트 로직 그대로) 스프라이트만 교체: 프레임 `hud_hp_frame`, fill `hud_hp_gauge`(Filled/Horizontal). 코드 변경 없음.
+  - #1 일시정지 메뉴 버튼 `PauseMenuButtons` — ESC 장비 패널(`EquipMenuController`가 이미 일시정지)에
+    "Restart Run"/"Return to Title" 버튼 추가, `GameFlow.RetryRun`/`ReturnToTitle` 배선. 6장 SpriteSwap(`btn_restart_*`/`btn_return_title_*`).
+  - #6 보스 HP 바 — **구현 완료**. `EnemySpawner`에 **제네릭** `event Action<HealthComponent, EnemyVariantType> EnemySpawned`
+    추가(보스 분기 없음 — 스폰 사실만 보고, `SpawnRoom` 루프에서 적마다 1회 invoke). 신규 `BossHealthBarUI`가
+    구독 → `variant == Boss`일 때만 자기를 켬(CanvasGroup alpha) → 그 HC의 `Health.Changed`로 fill 추적 →
+    `Died`에 숨김. 보스방 진입 시 문이 잠기므로 "전투 중 이탈" 없음 → 숨김 트리거는 사망 하나로 충분.
+    HUD에 `BossHealthBar`(`hud_boss_hp_frame` + `Fill`=`hud_hp_gauge` 재활용 Filled/Horizontal + "BOSS" 라벨).
+    준보스 확장 경로는 `AI_Decision_Log.md` 2026-09-04 (4) 참고(지금은 미구현, YAGNI).
+  - RunTimer는 보스 바(상단 중앙)와 겹쳐서 좌상단(HP 바 아래)으로 이동.
+
+### 테스트 결과 — 보스 HP 바 (Play Mode, 보스방 RoomController.EnterRoom() 강제 호출 + HealthComponent.TakeDamage)
+- [x] 런 시작 시 bar alpha 0(숨김).
+- [x] 보스 스폰 → `EnemySpawned(hc, Boss)` 발화 → bar alpha 1, fill 1.0. (보스 전용 스폰 코드 없이 제네릭 이벤트로 반응 확인)
+- [x] 보스 40% 피격 → fill 0.60, 여전히 표시. 55%/62% 피격도 fill 정확.
+- [x] 보스 사망 → fill 0.00 → bar alpha 0(숨김).
+- [x] 콘솔 에러 0.
+- [ ] 프레임 내 게이지 인셋(아트에서 눈으로 측정), 바 크기/위치, "1-1" StageText와 보스 네임플레이트 겹침: 실플레이 육안 조정 이월.
+
+### HUD 후속 조정
+- RunTimer: 미니맵 UI 바로 아래(우상단)로 이동.
+- 크로스헤어: 44→66 (150%).
+- **플레이어 HP 게이지 압축 이슈 해결** — 원인: fill RectTransform이 5.8:1(208×36)로 잡혀 있어
+  게이지 콘텐츠(실측 7.22:1)가 세로로 눌려 보였음. `hud_hp_frame`의 트랙 홈을 알파로 실측
+  (x[0.193..0.927] y[0.398..0.653], 8.6:1) → `HealthBarFill` 앵커를 트랙에 정확히 맞춤.
+  구조/코드는 그대로: `Image.type=Filled / Horizontal / Origin=Left` + `HealthBarUI`의
+  `fillAmount = current/max`(무수정). 검증: HP 100/50/10% → fillAmount 1.00/0.50/0.10,
+  fill 월드 rect(220×26, 8.6:1)는 HP 변화와 무관하게 불변(RectTransform 리사이즈·프레임 이동
+  없음), 왼→오 방향으로 보이는 영역만 감소.
+- **우하단 "노란/청록 사각형 + 0" = 버그 아님** — `EquipPanel`은 정상 비활성 확인. 그건
+  `SkillCooldownSlot`(액티브 아이템 쿨다운, 노랑 스와치)/`DashCooldownSlot`(대시, 청록) 플레이스홀더
+  아이콘. "0"은 준비 상태 표시로 0.5초 hold 후 사라짐(캡처가 그 창을 잡았던 것). 다만 폴리시로:
+  `ActiveItemCooldownUI`에 빈 슬롯 처리 추가 — **장착 아이템이 없으면 슬롯 아이콘을 alpha 0.25로
+  디밍 + 쿨다운 텍스트 숨김**(빈 능력 슬롯처럼 보이게). 장착 시 alpha 1.0 복귀. `DashCooldownSlot`은
+  대시가 상시 가능이라 그대로. `emptySlotAlpha` 직렬화 필드(기본 0.25). 검증: 미장착 alpha 0.25 /
+  EnhancedShot 장착 시 alpha 1.0 + 이름 표시.
+- HP 게이지가 프레임 채널을 안 채우던 문제 조정: `hud_hp_gauge`는 자기 캔버스의 세로 ~41%
+  (y 0.30~0.71)만 실제 빨간 콘텐츠라 fill rect를 채널에 딱 맞추면 위아래 어두운 틈이 남음.
+  → fill RectTransform을 프레임 세로 거의 전체(y 0.02~0.98) × x 0.185~0.955로 확대해 콘텐츠
+  (중앙 41%)가 채널을 꽉 채우게 함. `Filled/Horizontal/Left` + `fillAmount=current/max` 그대로,
+  rect는 HP 변화와 무관하게 231×96 불변(검증 100/50/10% → 1.00/0.50/0.10).
+- Title "Game Start" 버튼: 합본 `ui_main_menu_btn.png` 삭제됨 → 개별 3파일
+  `btn_gamestart_normal/over/pressed.png`로 재배선(Sprite Single import + SpriteSwap).
+- **캐릭터 선택: 텍스트 버튼 → 일러스트 버튼 + hover 흰색 워시**. `Assets/Art/UI/Character/`의
+  `char_melee.png`/`char_ranged.png`(세로 3:4, 알파 없는 통짜 일러스트, 나중 캐릭터 아트 모음
+  폴더). 신규 `HoverHighlight.cs`(opt-in, `Button`/`Selectable` 무수정): 자식으로 같은 스프라이트의
+  흰색 오버레이(alpha 0, raycast off)를 두고 `IPointerEnterHandler`/`ExitHandler`로 alpha를
+  0↔`hoverAlpha`(기본 0.35)로 `fadeDuration`(기본 0.15s, unscaled) 페이드 → 곱연산 틴트로는
+  불가능한 "흰색으로 밝아짐". `Title.unity`의 `MeleeButton`/`RangedButton`: Image 스프라이트 교체,
+  `Button.transition = None`, 자식 `Overlay` + `HoverHighlight` 배선, 기존 Label을 카드 하단
+  캡션으로 이동("환락 개척자(근거리)" / "기억 개척자(원거리)"). 카드 360×480, 좌우 x±235.
+  `CharacterSelectUI` 코드 무수정(`Button` 인스턴스 유지 → onClick·아키타입 배선 그대로).
+  검증: 오버레이 hover-enter 시 alpha 0→0.35 6프레임 그라데이션, exit 시 0 복귀, 카드 클릭 →
+  `GameFlow.PendingArchetype=MeleeArchetype` → `Prototype` 로드. 콘솔 에러 0.
+- **hover가 안 밝아지던 버그 수정**: 오버레이 Image에 캐릭터 스프라이트를 넣었던 게 원인 —
+  `Image.color`는 곱연산이라 흰색(1,1,1)×캐릭터스프라이트 = 캐릭터 그림 그대로(alpha만 0.35)라
+  시각 변화 없음. 이벤트 디스패치는 정상이었음(레이캐스트 → MeleeButton 프론트 히트,
+  `IPointerEnterHandler`가 `HoverHighlight`로 해석됨 확인). 일러스트가 투명 없는 통짜라 →
+  오버레이를 **스프라이트 없는 순수 흰색 quad**로 교체하니 hover 시 카드가 흰색으로 워시됨(캡처 확인).
+- 카드 1.5배 확대: 360×480 → **540×720**, 좌우 x±310, Prompt y 420으로.
+- 인게임 일시정지(ESC) 패널의 `ConfirmButton`("확인") → `btn_close_*` 이미지 버튼으로 교체
+  (`Assets/Art/UI/Common/btn_close_normal/over/pressed.png`, RGB·알파 없음, "Close" 텍스트 포함).
+  RestartRunButton과 동일 방식(SpriteSwap), 320×80, y −150. 기존 `ConfirmLabel`("확인") 비활성.
+  `ActiveItemEquipUI.confirmButton`은 같은 `Button` 인스턴스라 `HandleConfirm` → `_onConfirmed`
+  (`EquipMenuController.Close`) 배선 그대로 → 클릭 시 패널 닫힘·게임 복귀 동작 불변. 검증:
+  클릭 → `EquipPanel.activeInHierarchy` True→False. 코드 무수정.
+- **일시정지(ESC) 패널 버튼 레이아웃 재배치** — 화면을 세로로 갈라 오른쪽 절반, 상단 아이템
+  표시 영역(장비 슬롯 3개)과 겹치지 않게 버튼 3개를 **오른쪽 영역 하단에 정렬**하고 세로 간격을
+  이전 대비 ~50% 축소. `Canvas/EquipPanel/ItemsPanel`(우측 절반 컨테이너, anchor min(0.5,0)
+  max(1,1), rect 665×748) 자식 RectTransform만 조정(코드 무수정):
+  - `RestartRunButton` (0,-90 / 300×100) — 위
+  - `ReturnToTitleButton` (0,-200 / 300×100) — 중간
+  - `ConfirmButton`(Close) (0,-300 / 300×75) — 아래
+  - 장비 슬롯은 상단 그대로(`EquipSlot3` 0,201 / `EquipSlot2` 0,268 / `EquipSlot1` 0,335).
+  - 전부 anchor·pivot (0.5,0.5). 순서 위→아래 Restart / Title / Close.
+  세로 간격 2차 축소: 이전 118px 등간격(여백 ~18px) → 1차 중심간 100~110px(여백 ~10~12px) →
+  **2차 여백 ~3px**(중심간 Close→Title 103, Title→Restart 103; Restart 0,-106 / Title 0,-209 /
+  Close 0,-300). 여백 기준 1차 대비 다시 ~70% 축소. 검증(에디터, EquipPanel 임시 활성 후
+  GetWorldCorners): 버튼 3개 x[848..1148] 중앙 x≈998(1330 폭 화면 우측 절반 중심), y —
+  Restart[218..318] / Title[115..215] / Close[37..112], 인접 여백 3px, Close 하단 마진 ~37px.
+  장비 슬롯(EquipSlot3 y[547..603])과 Restart 상단(y 318) 사이 ~229px 여유로 아이템 영역과 분리.
+  카메라 캡처로 3버튼 세로 열 + Close 버튼이 새 알파 배경 아트(투명 프레임, Restart/Title과 통일)로
+  교체된 것 확인. (이전 턴 메모였던 Close 검정 사각 배경 문제는 유저가 알파 버전으로 재출력해 해소.)
+  이후 유저 요청으로 3버튼 간격 한 번 더 축소: 여백 ~10px → **~3px**(Restart 0,-106 / Title
+  0,-209 / Close 0,-300, 월드 y Restart[218..318]/Title[115..215]/Close[37..112]).
+- **타이틀 Start 버튼 홀드 → 캐릭터 선택이 즉시 클릭되던 버그 수정** (A안: 릴리즈까지 arm 지연).
+  원인: `TitleScreenController.HandleStartClicked`가 `onClick`(포인터 업)에서 **같은 프레임에**
+  타이틀 그룹을 끄고 `CharacterSelectUI.Show()`로 `MeleeButton`/`RangedButton`을 커서 바로 아래에
+  활성화 → Start를 누른 그 제스처(홀드/리바운스)의 다운 상태가 방금 나타난 버튼에서 클릭으로
+  완성 → `HandleChosen` → `GameFlow.StartRun` 즉시 실행. (`Button.transition = None`이라 눌림
+  비주얼이 없어 "그냥 바로 시작"으로 보임.)
+  수정(`CharacterSelectUI.cs`, `TitleScreenController` 무수정): `Show()`에서 패널은 켜되
+  `meleeButton/rangedButton.interactable = false` + `EventSystem.SetSelectedGameObject(null)`,
+  코루틴 `ArmAfterInputReleased`가 `한 프레임 → Mouse.leftButton.isPressed && 키보드
+  Enter/NumpadEnter/Space 안 눌릴 때까지 대기 → 한 프레임 → interactable = true`. `HandleChosen`은
+  arm 코루틴을 정리. hover 흰색 워시는 `interactable`과 무관하게 유지(클릭만 게이트).
+  검증(Play Mode, `Show(null)` 직접 호출 + `EditorApplication.Step`): Show 직후 두 버튼
+  interactable=False, 입력 미보유 상태로 6프레임 후 True 복귀. 컴파일 에러 0.
+
+### 테스트 결과 (Play Mode, RunCommand + EditorApplication.Step)
+- [x] 타이틀 StartButton: `btn_gamestart_normal` 표시, SpriteSwap over/pressed 배선 확인(캡처).
+- [x] 인게임 HUD: Crosshair 생성(커서 숨김 동작 확인, 실제 추적은 마우스 필요), RunTimer `00:00` 표시,
+  HP 바 프레임/게이지 스프라이트 적용 + `100/100` 유지, ESC 패널에 Restart Run/Return to Title 버튼
+  표시 + `PauseMenuButtons` 참조 배선 확인(캡처).
+- [x] 콘솔 에러 0.
+- [ ] 실플레이 육안: 크로스헤어 마우스 추적, 타이머 카운트업, 저체력 시 게이지 감소, ESC 버튼 클릭 →
+  씬 전환, HUD 레이아웃(HP 게이지 인셋/일시정지 버튼 위치는 placeholder 수치) 미세조정: 이월.
+- `Assets/Scripts/Core/GameFlow.cs` 신규 (정적): 씬 이름 상수 2개(`Title`/`Prototype`) +
+  `PendingArchetype`(씬 로드를 넘겨 전달되는 유일한 상태, SO 참조라 안전) +
+  `StartRun`/`RetryRun`/`ReturnToTitle`. 로드 전 `PauseState.ForceResume()`로 timeScale 정리.
+- `PauseState.ForceResume()` 추가 — 씬 teardown용(리로드가 owner의 ReleasePause를 안 부르고
+  timeScale도 안 되돌리므로).
+- `CharacterSelectController`(Player): UI 표시/입력 잠금 로직 제거 → `Start()`에서
+  `GameFlow.PendingArchetype ?? fallbackArchetype`로 무기 장착 + 입력 활성화. `fallbackArchetype`
+  (에디터에서 인게임 씬 직접 실행용, MeleeArchetype) 직렬화 필드 추가, `uiManager` 참조 제거.
+- `UIManager`: `characterSelectUI` 필드 + `ShowCharacterSelect` 제거(타이틀로 이동).
+- `FloorCompleteUI`: 마지막 층 클리어 화면에 `toTitleButton` 추가(retry와 함께 노출).
+  retry → `GameFlow.RetryRun()`(아키타입 유지, 씬 리로드), toTitle → `GameFlow.ReturnToTitle()`
+  (아키타입 클리어, 타이틀 씬). 라벨 "Retry"→"다시하기", 신규 "타이틀로".
+- Build Settings: `Title`(index 0, 시작 씬) + `Prototype`(index 1).
+- 결정4: Player `HealthComponent.destroyOnDeath` → false (사망 시 소프트락 방어. 정식 Game Over는
+  이연). 결정5: 씬 전환 v1 하드컷(비동기+로딩화면은 Phase 5).
+- Title art: `Assets/Art/UI/Title/` (bg/logo + 버튼 3상태). Sprite import, mipmap off,
+  bg maxSize 2048 / 버튼 1024.
+
+### 테스트 결과 (Play Mode, RunCommand + EditorApplication.Step — 에디터 비포커스라 프레임 수동 스텝)
+- [x] Title: 로드 시 TitleGroup 표시 / CharacterSelectPanel Awake로 숨김. Start 클릭 →
+  TitleGroup 숨김 + CharacterSelectPanel 표시.
+- [x] Melee/Ranged 클릭 → `GameFlow.PendingArchetype` 설정 → `Prototype` 씬 로드. 인게임에서
+  Player 존재, 입력 활성화, 무기 장착(선택한 아키타입), CharacterSelectPanel 없음, StageManager
+  1층 6방 빌드, HUD `1-1`.
+- [x] 마지막 층(3층) 클리어 화면: `RetryButton`("다시하기") + `ToTitleButton`("타이틀로") 둘 다
+  활성, timeScale=0.
+- [x] "타이틀로" → timeScale=1, PendingArchetype null, `Title` 씬 로드, 초기 상태 복귀.
+- [x] "다시하기" → timeScale=1, PendingArchetype 유지(Ranged), `Prototype` 리로드, 1층 6방,
+  HUD `1-1`, 입력 활성 → **루프 3방향 전환 전부 확인**.
+- [x] 콘솔 에러 0. 한글(로고/프롬프트) 빌트인 폰트로 정상 렌더(scene view 캡처 확인).
+- [ ] 실플레이로 1→2→3층 실제 전투 주파 후 클리어 화면 도달: 이월.
+- [ ] 타이틀 UI 레이아웃 육안 미세조정(로고/버튼 위치는 placeholder 수치): 이월.
+
+### 이슈/메모
+- 사망 처리(Game Over 화면/사망 연출) 미구현 — 이연. 지금은 죽어도 HP 0인 채 계속 플레이.
+- 씬 rename(`Prototype`→`Gameplay`)은 게임 구색 갖춰진 뒤로 보류(결정3).
+
+### 다음 작업
+- **최우선: 실플레이 1주파** — Title→3층 클리어→루프까지 눈으로 확정(오늘 배선은 전부
+  RunCommand + `EditorApplication.Step` 간접 검증만 됨).
+- 이후 #6 나머지(사망 처리/Game Over 흐름) 또는 #7(Profiler 최적화).
+- 플레이스홀더 아트 상대 UI 레이아웃 수치는 실제 아트 들어오기 전까지 동결, 자잘한 조정은 배치 처리.
+
+---
+
+## 2026-09-04 (2)
+
+### 진행 내용
+
+**1~3층 방 데이터 JSON 외부화 (로드맵 §6 #2)**
+- `RoomDataAsset`(SO) 29개 + 씬 `StageManager.floors` 배선 → `Assets/StreamingAssets/Balance/
+  Stage/Floors/Floor{1,2,3}.json` 3개 파일로 이관. 현재 authoring 값 그대로 익스포트 스크립트로
+  덤프 후 한글 `_guide`/`_fieldGuide` 주석 추가(필드 상세는 Floor1.json에만, 2·3은 참조).
+- 신규 `GameFloors`(정적 로더, `GameBalance` 패턴): 지연 로드 + `RuntimeInitializeOnLoadMethod`
+  세션 리셋, enum은 이름 문자열 + `Enum.TryParse`/`IsDefined`, `_guide` 키 무시.
+  `Floor1`부터 없어질 때까지 열거해 층 수 결정, 마지막 층은 파일 위치로 판정(`isLastFloor`
+  플래그는 불일치 시 경고만). 파일 누락=갭에서 중단, 파싱 실패=그 층만 코드 내장 비상용
+  3방 층(Start-Combat-Boss)으로 대체 + `IsCorrupted` 플래그.
+- `JsonFloorLayoutProvider : IFloorLayoutProvider`(구 `ScriptableObjectFloorLayoutProvider` 대체),
+  `FloorLayout`(런타임 층 데이터). `StageManager`: `floors` 필드 제거, `GameFloors.Floors` 사용,
+  `FloorDataCorrupted` 이벤트 추가, `FloorDefinition` 클래스 삭제.
+- 삭제: `RoomDataAsset.cs`, `ScriptableObjectFloorLayoutProvider.cs`, `Assets/Data/Rooms/*.asset` 29개.
+- 결정 근거(파일 구성/마지막 층 판정/구 에셋/손상 폴백)는 `AI_Decision_Log.md` 2026-09-04 (2).
+
+**시스템 알림 팝업 UI 신규**
+- `SystemNotificationUI`: 전체 화면 딤 + 메시지 박스 + 확인 버튼 하나. CanvasGroup 방식
+  (자기-비활성 패널 함정 회피), 메시지 큐 보유. 씬에 `Canvas/SystemNotificationPanel` 추가,
+  `UIManager`에 배선.
+- 층 JSON 손상 시 그 층 진입 순간 `StageManager.FloorDataCorrupted` → `UIManager` →
+  팝업에 "1-2 층 데이터(Floor2.json)가 손상되었습니다. 파일을 수정해 주세요." 표시.
+
+**HUD 층 표시를 스테이지-층 포맷으로**
+- 중상단 텍스트 `StageN` → `x-y` (x=스테이지 인덱스, y=층 인덱스). 현재 스테이지 1개뿐이라
+  `StageManager.stageNumber`(직렬화 필드, 기본 1)로 두고 `1-1`/`1-2`/`1-3` 표시.
+
+### 테스트 결과 (Unity RunCommand 구조 검증 — 실플레이 주파는 이월)
+- [x] `GameFloors.Floors` = 3층. 방 수 6/10/13, 타입 분포·연결 수(10/20/28)·적 수(M/R/B
+  6·5·1 / 20·17·1 / 29·25·1 = 3층 전투적 54+보스1)가 이관 전 에셋과 일치.
+- [x] `StageManager.AdvanceToNextFloor()` 1→2→3 정상, HUD `1-1`→`1-2`→`1-3`, 3층에서
+  `IsLastFloor=true`, `FloorExit` 생성. 마지막 층에서 재호출 시 경고 + no-op.
+- [x] Floor2.json의 `roomType`을 잘못된 값으로 바꿔 재생성 → Floor2만 비상용 3방 층
+  (`corrupted=True`, `startRoomId=2001`), Floor1·3 무사. 2층 진입 시 팝업 표시
+  (`canvasGroup.alpha=1`, 메시지 문구 정확), 확인 버튼 클릭 시 `alpha=0`으로 사라짐. 콘솔에
+  `GameFloors: ... unknown roomType 'Broken_TEST'` 에러 1건(의도된 안내).
+- [x] 파일 복원 후 클린 로드 시 콘솔 에러·경고 0.
+- [ ] 실제 플레이로 1→2→3층 전투 주파 + 미니맵/문/스폰 육안 확인: 이월.
+- [ ] MessageText의 한글이 빌트인 폰트에서 정상 렌더되는지 육안 확인: 이월(Windows 폰트
+  폴백으로 대개 정상이나 미확인).
+
+### 이슈/메모
+- `AdvanceToNextFloor()`를 RunCommand로 연속 호출 시 이전 층 방 GameObject가 남아 보이는 건
+  `Destroy()` 지연 + 에디터 비포커스로 프레임이 안 도는 테스트 환경 아티팩트(teardown 코드
+  자체는 미변경). 실플레이에선 매 프레임 flush됨.
+
+### 다음 작업
+- 로드맵 §6 #3 대시 무적 판정 확인, #4 대시 아이콘 UI(이미 완료), #5~ 이어서.
+
+---
+
 ## 2026-09-04
 
 ### 진행 내용

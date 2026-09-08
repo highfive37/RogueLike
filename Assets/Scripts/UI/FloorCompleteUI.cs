@@ -1,7 +1,6 @@
 using System;
 using System.Collections;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // Shown when the player actually walks into the (boss-death-activated) Floor Exit -
@@ -33,6 +32,7 @@ public class FloorCompleteUI : MonoBehaviour
     [SerializeField] private Text activeItemText;
     [SerializeField] private Text timeText;
     [SerializeField] private Button retryButton;
+    [SerializeField] private Button toTitleButton;
     [SerializeField] private Text countdownText;
 
     private Coroutine _countdownCoroutine;
@@ -57,6 +57,10 @@ public class FloorCompleteUI : MonoBehaviour
     {
         ApplyVisible(false);
         retryButton.onClick.AddListener(HandleRetryClicked);
+        if (toTitleButton != null)
+        {
+            toTitleButton.onClick.AddListener(HandleToTitleClicked);
+        }
     }
 
     public void Show(FloorCompleteStats stats, bool isLastFloor)
@@ -79,6 +83,10 @@ public class FloorCompleteUI : MonoBehaviour
         PauseState.RequestPause(this);
 
         retryButton.gameObject.SetActive(isLastFloor);
+        if (toTitleButton != null)
+        {
+            toTitleButton.gameObject.SetActive(isLastFloor);
+        }
         countdownText.gameObject.SetActive(!isLastFloor);
 
         if (!isLastFloor)
@@ -139,11 +147,16 @@ public class FloorCompleteUI : MonoBehaviour
         canvasGroup.blocksRaycasts = visible;
     }
 
+    // Both buttons route through GameFlow, which calls PauseState.ForceResume() before loading -
+    // Time.timeScale is engine-global and a scene load does not reset it, so leaving this
+    // screen's pause in place would start the next scene frozen.
     private void HandleRetryClicked()
     {
-        // Time.timeScale is engine-global and NOT reset by a scene reload, so it must be
-        // released explicitly before loading - otherwise the reloaded scene would start paused.
-        PauseState.ReleasePause(this);
-        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+        GameFlow.RetryRun();
+    }
+
+    private void HandleToTitleClicked()
+    {
+        GameFlow.ReturnToTitle();
     }
 }

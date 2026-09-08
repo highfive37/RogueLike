@@ -26,6 +26,11 @@ public class EnemySpawner : MonoBehaviour
 
     private Dictionary<EnemyVariantType, GameObjectPool> _poolsByVariant;
 
+    // Fired once per spawned enemy that has a HealthComponent, with its variant. Pure spawn
+    // telemetry - this class stays generic and does no per-variant branching. Consumers decide
+    // what a given variant means (BossHealthBarUI shows itself only for EnemyVariantType.Boss).
+    public event Action<HealthComponent, EnemyVariantType> EnemySpawned;
+
     private void Awake()
     {
         _poolsByVariant = new Dictionary<EnemyVariantType, GameObjectPool>();
@@ -59,6 +64,7 @@ public class EnemySpawner : MonoBehaviour
             {
                 spawned.Add(health);
                 SubscribeItemDrop(health, instance.transform);
+                EnemySpawned?.Invoke(health, entry.Variant);
             }
         }
 

@@ -17,7 +17,29 @@
 이동속도 연동(× 배수, 수치 JSON화) + `linearVelocity` 구동으로 리워크, 걷기/대시
 공용 벽 클램프(`WallClamp`) 도입, F2 디버그 즉사 토글(`DebugDamage`) 추가,
 `autoSyncTransforms` off 기인 버그 3건 등 스테이지3 플레이테스트 버그 다수 수정 —
-§2·§3·§4·§5·§6 갱신. 상세는 `DevLog.md`/`AI_Decision_Log.md` 2026-09-04.
+§2·§3·§4·§5·§6 갱신. 상세는 `DevLog.md`/`AI_Decision_Log.md` 2026-09-04; 2026-09-04 (2)
+대시 쿨다운 HUD 슬롯 추가(로드맵 §6 #4 완료) + 1~3층 방 데이터를 `RoomDataAsset`(SO 29개)에서
+`Assets/StreamingAssets/Balance/Stage/Floors/Floor{1,2,3}.json`으로 전면 외부화(로드맵 §6 #2
+완료, 신규 `GameFloors`/`JsonFloorLayoutProvider`/`FloorLayout`, `RoomDataAsset`·
+`ScriptableObjectFloorLayoutProvider` 삭제), 손상 층 안내용 범용 `SystemNotificationUI` 팝업 신설,
+HUD 층 표시를 `x-y`(스테이지-층) 포맷으로 변경 — §2·§3·§4·§5·§6 갱신. 상세는
+`DevLog.md`/`AI_Decision_Log.md` 2026-09-04 (2); 2026-09-04 (3) 로드맵 §6 #6 착수 —
+타이틀 씬(`Title.unity`) 신설 + 캐릭터 선택을 인게임에서 타이틀로 이동 + 씬 라우팅 정적
+클래스(`GameFlow`) + 클리어 화면에 "타이틀로" 버튼 + Build Settings 2씬(Title/Prototype).
+사망 처리(Game Over)는 이번 범위 제외(임시로 Player `destroyOnDeath`만 off). 같은 (3) 세션에
+HUD "당장 넣어볼 UI"도 함께 처리 — #3 크로스헤어(`CrosshairUI`), #2 런 타이머(`RunTimerUI`),
+#4 체력 바 리스킨(코드 무수정, 스프라이트만), #1 일시정지 메뉴 버튼(`PauseMenuButtons` —
+Restart Run/Return to Title → `GameFlow`), 캐릭터 선택을 텍스트 버튼 → 일러스트 버튼 +
+hover 흰색 워시(`HoverHighlight`, 곱연산 틴트로 불가능한 것을 흰색 오버레이 자식으로 합성)로 교체.
+상세는 `DevLog.md`/`AI_Decision_Log.md` 2026-09-04 (3)·(5); 2026-09-04 (4) 보스 HP 바 —
+`EnemySpawner`에 보스 분기 없는 **제네릭** `EnemySpawned(HealthComponent, EnemyVariantType)`
+이벤트를 추가하고 신규 `BossHealthBarUI`가 `variant == Boss`만 필터해 표시(보스 로직은 스폰
+경로에 유입 안 함), 상세는 `AI_Decision_Log.md` 2026-09-04 (4); 2026-09-04 (5) 캐릭터 선택
+일러스트 버튼 + `HoverHighlight`; 2026-09-04 (6) 타이틀 Start 버튼 홀드 시 캐릭터 선택이 즉시
+클릭되던 상호작용 버그를 "포인터/키가 떼어질 때까지 melee/ranged `interactable` off" 방식으로
+수정(`CharacterSelectUI` — arm-after-release 코루틴), 상세는 `AI_Decision_Log.md` 2026-09-04 (6).
+일시정지 UI `ConfirmButton`을 `btn_close_*` 이미지 버튼으로 교체 + 3버튼(Restart/Title/Close)을
+오른쪽 영역 하단 정렬로 재배치(RectTransform 튜닝, 코드 무수정).
 
 ---
 
@@ -49,23 +71,35 @@
 - 밸런스 수치(플레이어 기본 스탯 + 대시 배수/지속시간, 패시브 아이템 효과)는 코드/씬이
   아니라 `Assets/StreamingAssets/Balance/*.json` 평문 JSON 파일에서 로드(§4 참고) —
   Unity/Claude 없이 텍스트 에디터로 직접 수정 가능한 워크플로가 실사용 중
+- **층/방 레이아웃 데이터도 동일 워크플로로 외부화(2026-09-04 (2))**: 1~3층의 방 배치·
+  크기·문 연결·몬스터 구성 전부가 `Assets/StreamingAssets/Balance/Stage/Floors/Floor{1,2,3}.json`
+  평문 JSON. 파일 하나 = 한 층. `Floor1`부터 없어질 때까지 열거해 층 수 결정 → 4층 추가는
+  `Floor4.json` 파일 하나만 추가하고 `Floor3.json`의 `isLastFloor`를 false로 바꾸면 끝
+  (코드/인스펙터 무관). 파일 파싱 실패 시 그 층만 코드 내장 비상용 3방 층으로 대체 +
+  진입 시 시스템 팝업. 구 `RoomDataAsset`(SO 29개) 방식은 완전 폐기.
 
 ### 폴더 구조 (대표 클래스만, 전체 목록은 코드 참고)
 ```
 Assets/Scripts/
+├─ Core/      (GameFlow — 씬 라우팅 정적 클래스 2026-09-04 (3): 씬 이름 상수 +
+│              StartRun/RetryRun/ReturnToTitle + PendingArchetype(씬 넘겨 전달되는
+│              선택 아키타입))
 ├─ Player/    (PlayerMovement, PlayerAim, PlayerDodgeRoll, PlayerCombat,
 │              PlayerInputActions, PlayerPassiveStats, PlayerActiveItemInventory,
-│              ActiveItemController, CharacterSelectController,
+│              ActiveItemController, CharacterSelectController — 2026-09-04 (3)부터
+│              선택 UI가 아니라 GameFlow.PendingArchetype 소비만, PauseState(+ForceResume),
 │              PrototypeActiveItemSwitcher, EquipMenuController,
 │              WallClamp — 걷기/대시 공용 벽 방향 클램프 정적 헬퍼 2026-09-04 등)
 ├─ Enemy/     (EnemyStateMachine + FSM 상태 6종, IAttackPattern 구현체 3종,
 │              EnemyData / AttackPatternData ScriptableObject, EnemySpawner)
 ├─ Room/      (RoomController, DoorController, RoomTransitionController,
-│              RoomData/RoomDataAsset, RoomDoorConnection, DoorDirection,
-│              RoomType, IFloorLayoutProvider/ScriptableObjectFloorLayoutProvider,
-│              StageManager — 층/방 그래프 관리로 책임 변경, 클래스명은 씬 참조
-│              보존을 위해 유지, RoomFlowManager — 업그레이드/장착 UI
-│              시퀀싱만 담당) — 2026-08-31 전면 재작업 (§3 참고)
+│              RoomData, RoomDoorConnection, DoorDirection, RoomType,
+│              IFloorLayoutProvider/JsonFloorLayoutProvider — 방 그래프 소스가
+│              RoomDataAsset(SO)에서 FloorN.json으로 바뀜 2026-09-04 (2),
+│              RoomFlowManager — 업그레이드/장착 UI 시퀀싱만 담당)
+├─ Stage/     (StageManager — 층/방 그래프 빌드+현재 방 추적 + FloorDataCorrupted
+│              이벤트, GameFloors — FloorN.json 로더(정적, GameBalance 패턴) +
+│              DTO, FloorLayout — 런타임 1개 층 데이터, EnemyVariantType 등)
 ├─ Combat/    (IDamageable, Health, HealthComponent, IWeapon 구현체 2종,
 │              IActiveItem 구현체 3종(`GrenadeActiveItem`/`EnhancedShotActiveItem`/
 │              `FlamethrowerActiveItem`), Projectile류, ActiveItemData류,
@@ -74,10 +108,19 @@ Assets/Scripts/
 ├─ Balance/   (GameBalance — JSON 밸런스 파일 로더, 실패 시 내장 기본값 폴백)
 ├─ Camera/    (QuarterViewCameraFollow)
 ├─ UI/        (UIManager, ActiveItemEquipUI, PlayerStatsPanelUI,
-│              CharacterSelectUI, FloorCompleteUI(구 ClearOverlayUI),
+│              CharacterSelectUI(2026-09-04 (3)부터 Title 씬에 배치),
+│              TitleScreenController(2026-09-04 (3) 신규 — 타이틀 화면 Start→캐릭터 선택 흐름),
+│              FloorCompleteUI(구 ClearOverlayUI, 마지막 층엔 "다시하기"+"타이틀로"),
 │              FloorTransitionUI(2026-09-02 (3) 신규, 층 전환 검은 페이드),
-│              HealthBarUI, ActiveItemCooldownUI, BillboardUI, MinimapUI,
-│              PickupNotificationUI, DebugOverlayController 등)
+│              SystemNotificationUI(2026-09-04 (2) 신규 — 범용 시스템 알림 팝업,
+│              딤+메시지+확인 버튼, CanvasGroup 방식, 메시지 큐),
+│              HealthBarUI, ActiveItemCooldownUI, DashCooldownUI(2026-09-04 (2)
+│              신규 — 대시 쿨다운 HUD 슬롯, ActiveItemCooldownUI 미러),
+│              CrosshairUI/RunTimerUI/BossHealthBarUI/PauseMenuButtons(2026-09-04 (3)·(4)
+│              신규 — HUD 크로스헤어·런 타이머·보스 HP 바·일시정지 메뉴 버튼),
+│              HoverHighlight(2026-09-04 (5) 신규 — hover 시 흰색 오버레이 페이드, opt-in 비주얼),
+│              BillboardUI, MinimapUI, PickupNotificationUI,
+│              DebugOverlayController 등)
 └─ Pooling/   (GameObjectPool, PooledObject)
 ```
 asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 규모상 과설계로 판단.
@@ -86,7 +129,10 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 `ScriptableObjectStageDataProvider`(4개, 웨이브 반복 방식)와
 `Assets/Data/Stages/Stage01~10.asset`(10개)는 룸 시스템 전환으로 완전히
 대체되어 삭제됨. `UpgradeSelectionUI`/`UpgradeSlotView`도 바닥 드롭 아이템
-방식으로 대체되어 삭제됨.
+방식으로 대체되어 삭제됨. `RoomDataAsset`/`ScriptableObjectFloorLayoutProvider`와
+`Assets/Data/Rooms/*.asset`(29개), `StageManager.FloorDefinition`도 JSON 외부화로
+대체되어 삭제됨(2026-09-04 (2)). `RoomData`/`StageEnemyEntry`/`RoomDoorConnection`/
+enum 4종은 JSON이 역직렬화되는 런타임 타입이라 유지.
 
 "스킬" → "액티브 아이템" 전면 리네임 완료(2026-08-31): `SkillItemData`→
 `ActiveItemData`, `ISkillItem`→`IActiveItem`, `SkillController`→
@@ -97,12 +143,23 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 "Active" 접두를 떼고 아이템 종류에 중립적인 이름으로 유지 — 패시브 아이템도
 같은 드롭 방식을 쓸 예정이기 때문.
 
-### 씬 구성 (`Assets/Scenes/Prototype.unity`)
+### 씬 구성
+
+씬 2개 (2026-09-04 (3)): **`Title.unity`**(Build Settings index 0, 시작 씬) → **`Prototype.unity`**(index 1, 인게임).
+씬 rename(`Prototype`→`Gameplay`)은 게임 구색 갖춰진 뒤로 보류.
+
+**`Title.unity`**: Camera + EventSystem(`InputSystemUIInputModule`) + Canvas(1920×1080). 배경
+Image(`Assets/Art/UI/Title/title_bg`) 위에 `TitleGroup`(로고 `title_logo` + Start 버튼
+`btn_start_*` 3상태 SpriteSwap) / `CharacterSelectPanel`(기존 `CharacterSelectUI` 재사용, 씬에
+active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 숨김 → CharacterSelectUI
+표시 → 근접/원거리 선택 시 `GameFlow.StartRun(archetype)` → `Prototype` 씬 로드.
+
+**`Prototype.unity`** (이하):
 - `Ground`(Ground 레이어 지정), `Player`(프리팹 인스턴스), `Main Camera`
 - **방/문 그리드 시스템**(2026-08-31 신규): 씬에 방이 사전 배치되어 있지 않고,
-  `StageManager.BuildFloor()`가 `roomAssets`(`RoomDataAsset[]`)를 기준으로
-  `Room_Base.prefab`을 그리드(현재 5개 방, 간격 `roomGap`)에 전부
-  인스턴스화(백트래킹 가능). 각 방 인스턴스는 자체 `RoomManager`+
+  `StageManager.BuildFloor()`가 현재 층의 `FloorLayout.Rooms`(2026-09-04 (2) 전엔
+  `RoomDataAsset[]`, 지금은 `GameFloors`가 `FloorN.json`에서 파싱)를 기준으로
+  `Room_Base.prefab`을 그리드에 전부 인스턴스화(백트래킹 가능). 각 방 인스턴스는 자체 `RoomManager`+
   `RoomController`를 가짐(스테이지 1개당 하나였던 기존 `RoomManager`와
   달리, 방마다 별도 인스턴스)
 - 방-방 이동은 물리적 도보 이동이 아니라 최상위 `RoomTransitionController`가
@@ -122,7 +179,9 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
   `RoomFlowManager`(업그레이드/장착 UI 시퀀싱), `RoomTransitionController`,
   `EnemySpawner`, `ItemDropManager`
 - `Canvas`(UGUI 1개, `UIManager` 컴포넌트가 이 오브젝트에 직접 붙어 있음) 하위에
-  `HUD`(`HealthBarUI`/`ActiveItemCooldownUI`/`StageText`),
+  `HUD`(`HealthBarUI`/`ActiveItemCooldownUI`+`SkillCooldownSlot`/`DashCooldownSlot`(우하단,
+  2026-09-04 (2))/`StageText`(이제 `x-y` 스테이지-층 표기, 예 `1-3`)),
+  `SystemNotificationPanel`(2026-09-04 (2), 층 데이터 손상 안내 팝업, `SystemNotificationUI`),
   `EquipPanel`(ESC로 토글, 자식으로 액티브 아이템 슬롯 목록 +
   `StatsPanel`(패시브 스탯 Pip 바 4종)), `CharacterSelectPanel`,
   `ClearOverlayPanel`(컴포넌트명은 `FloorCompleteUI`), `Minimap`(우상단, 현재 방
@@ -161,7 +220,7 @@ asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 �
 |---|---|---|
 | 이동/조준 | `PlayerMovement`(`CurrentMoveSpeed` = base+패시브, 이동속도 단일 소스), `PlayerAim`, `PlayerDodgeRoll`(구르기 = `CurrentMoveSpeed`×`dashSpeedMultiplier` 속도로 `dashDuration` 버스트, `linearVelocity` 구동, `CancelDodgeRoll()`로 전환/Floor Exit 시 취소), `WallClamp`(공용) | Rigidbody 기반 이동/회전/구르기, New Input System 액션 소비. 이동 명령 전 `WallClamp`로 벽 방향 성분 제거(관통 방지). 대시 수치는 `PlayerBaseStats.json` |
 | 전투(플레이어) | `PlayerCombat`+`IWeapon`(`MeleeWeapon`/`RangedWeapon`), `ActiveItemController`+`IActiveItem`(`EnhancedShotActiveItem`/`GrenadeActiveItem`/`FlamethrowerActiveItem`) | 기본 공격과 장착 액티브 아이템을 각각 다형성 구조로 분리 |
-| 캐릭터 선택 | `CharacterSelectController`, `CharacterSelectUI`, `CharacterArchetypeData` | 런 시작 시 근접/원거리 아키타입 선택 UI, 선택 전까지 입력 잠금 |
+| 캐릭터 선택 | `TitleScreenController`+`CharacterSelectUI`(Title 씬), `GameFlow.PendingArchetype`, `CharacterSelectController`(Prototype 씬, 소비만) | 2026-09-04 (3): 선택은 Title 씬에서 → SO 참조를 정적으로 씬 넘겨 전달 → Prototype 씬 Player가 `Start()`에서 무기 장착 + 입력 활성화(`fallbackArchetype`는 에디터 직접 실행용) |
 | 액티브 아이템 보유/장착 | `PlayerActiveItemInventory`, `OwnedActiveItem`, `ActiveItemEquipUI` | ESC 메뉴에서 소지 아이템 목록 확인 + 장착 전환 |
 | 패시브 스탯 | `PlayerPassiveStats`, `PlayerStatsPanelUI` | 공격력/이동속도/사거리/공격속도 4종 전부 "base + 고정값 보너스" 덧셈 모델로 통일(2026-08-31, §4 참고), ESC 메뉴에 Pip 바(10칸)로 표시 |
 | 밸런스 수치 | `GameBalance`, `Assets/StreamingAssets/Balance/*.json` | 플레이어 기본 스탯/패시브 아이템 효과를 JSON에서 로드, 파일 없거나 파싱 실패 시 내장 기본값으로 폴백 |
@@ -229,15 +288,15 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
 - 아이템 방(#3) — 바닥 드롭 아이템 로직은 만들어졌으니, "전투 없이 보장된
   픽업 배치"만 추가하면 될 것으로 예상
 - 방 안 장애물(#2) — 지형 애셋 교체 시점까지 보류
-- ~~**3층 제작**~~ — 완료(2026-09-04). `Room3_*.asset` 13개(id 301~313, Start/CombatA~J/
-  Item/Boss), 아이작식 구조(중앙 시작 / 최원거리 단문 보스 / CombatF 뒤 아이템 데드엔드 /
-  본체 루프 2개 / 선택 전투 데드엔드), 전투 적 54 + 보스 1. `StageManager.floors`에 세 번째
-  `FloorDefinition` 배선. `IsLastFloor` 데이터 구동이라 층2 자동 전환·층3 Retry로 코드 변경
-  없이 전환됨. 구조 검증(중복 0/상호대응·인접/BFS 13-13) 통과. 실플레이 최종 확인은 이월.
-- **1~3층 방 데이터 JSON 외부화**(2026-09-02 (3) 신규 요청) — 현재
-  `RoomDataAsset`(ScriptableObject)로 authoring된 방 위치/연결/몬스터 구성을
-  `GameBalance`/`ItemDropTable.json`처럼 텍스트 에디터로 수정 가능한 JSON으로
-  뺄지, 방식 미정
+- ~~**3층 제작**~~ — 완료(2026-09-04). 아이작식 13방(id 301~313, 중앙 시작 / 최원거리
+  단문 보스 / CombatF 뒤 아이템 데드엔드 / 본체 루프 2개 / 선택 전투 데드엔드), 전투 적 54 +
+  보스 1. 구조 검증(중복 0/상호대응·인접/BFS 13-13) 통과. 실플레이 최종 확인은 이월.
+- ~~**1~3층 방 데이터 JSON 외부화**~~ — 완료(2026-09-04 (2)). `RoomDataAsset`(SO 29개) +
+  씬 `StageManager.floors` 배선 → `Assets/StreamingAssets/Balance/Stage/Floors/Floor{1,2,3}.json`.
+  신규 `GameFloors`(로더) / `JsonFloorLayoutProvider` / `FloorLayout`. 파일당 1개 층, `Floor1`부터
+  열거해 층 수 결정, 마지막 층은 파일 위치로 판정. 손상 시 그 층만 비상용 3방 층 + 팝업.
+  구조 검증(방 6/10/13, 연결·적 수 이관 전과 일치, 손상 폴백 동작) 통과. 실플레이 주파는 이월.
+  상세는 `AI_Decision_Log.md` 2026-09-04 (2).
 - 3층 완성 후 **UI Scene 신설 → 전체 플레이 루프**(타이틀 → 캐릭터 선택 →
   런(3층 주파) → 클리어/게임오버 → 재시작·타이틀 복귀) 구성. Game Over
   흐름도 이 작업에 통합(2026-09-02) — 단, 층간 전환 자체는 2026-09-02 (3)에
@@ -377,9 +436,9 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 - **씬에 남은 비활성 `Boss_Basic` 플레이스홀더 인스턴스**: 정리 여부 미결정.
 - **`UIManager`를 상속 구조로 확장할지**: 두 번째 구체적인 UI 매니저 사례가
   실제로 생기기 전까지는 보류(2026-08-24 결정 유지).
-- **1~3층 방 데이터 JSON 외부화 방식(2026-09-02 (3) 신규)**: `RoomDataAsset`
-  (ScriptableObject) 그대로 두고 JSON은 값 오버레이만 할지, 아니면 방 authoring
-  자체를 JSON 1차 소스로 옮길지 미정 — 착수 전 설계 검토 필요.
+- ~~**1~3층 방 데이터 JSON 외부화 방식(2026-09-02 (3) 신규)**~~: 결정·구현 완료
+  (2026-09-04 (2)) — 방 authoring 자체를 JSON 1차 소스로(층당 파일 1개), `RoomDataAsset` 폐기.
+  마지막 층 판정은 파일 위치, 손상 시 비상용 층+팝업. 상세 `AI_Decision_Log.md` 2026-09-04 (2).
 - **대시(구르기) 무적 판정 여부(2026-09-02 (3) 신규)**: 스페이스바 대시 이동
   중 실제로 무적 프레임이 있는지 아직 코드/실플레이 확인 전. (2026-09-04 대시 리워크로
   `EndDodgeRoll`에 무적 해제가 명시됐고 취소 경로도 정리됐으나, 인게임 무적 창 체감 확인은
@@ -399,22 +458,21 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 ## 6. 앞으로 해야 할 작업 (우선순위 순, 2026-09-02 (3) 사용자 지정으로 갱신)
 
 1. ~~**3층 맵 제작**~~ — 완료(2026-09-04, §3 참고). 실플레이 최종 검증만 이월.
-2. **1~3층 방 데이터 JSON 외부화**: 방 위치/연결/몬스터 구성 등을 텍스트
-   에디터로 수정 가능한 JSON 파일로 분리 — 방식은 §5 미결정 항목 참고,
-   착수 전 설계 검토 필요.
+2. ~~**1~3층 방 데이터 JSON 외부화**~~ — 완료(2026-09-04 (2), §3 참고). 실플레이 주파 검증만 이월.
 3. **대시 무적 판정 확인**: 스페이스바 대시(구르기) 이동 중 실제로 무적
    프레임이 적용되는지 코드/실플레이로 확인.
-4. **대시 아이콘 UI + 쿨다운 표시**: 화면 우하단에 대시 아이콘 배치, 액티브
-   아이템 쿨다운(`ActiveItemCooldownUI`)과 동일한 방식으로 대시 쿨다운 표시.
+4. ~~**대시 아이콘 UI + 쿨다운 표시**~~ — 완료(2026-09-04 (2)). 우하단 `DashCooldownSlot`,
+   `SkillCooldownSlot`은 그 왼쪽으로 이동, `ActiveItemCooldownUI` 미러(`DashCooldownUI`).
 5. **Stage 2.5 잔여 항목 재개**: 아이템 방(#3) 세부 밸런스("전투 없이 보장된
    픽업 배치"는 이미 있음), 방 안 장애물(#2, 지형 애셋 교체 시점까지 보류),
-   씬의 비활성 `Boss_Basic` 인스턴스 삭제, 아이콘 스와치 → 실제 픽토그램 교체.
-6. **UI Scene 신설 + 전체 플레이 루프 구성**: 3층까지 완성된 후, 별도 UI
-   Scene을 만들어 타이틀 → 캐릭터 선택 → 런(3층 주파) → 클리어/게임오버 →
-   재시작·타이틀 복귀를 하나의 루프로 연결. **Game Over 흐름**(Player 사망
-   처리)도 이 작업에 통합해서 설계. 층간 전환 자체(카운트다운+페이드+제자리
-   재빌드)는 2026-09-02 (3)에 이미 구현됨 — 이 작업은 그 앞뒤(타이틀/사망
-   처리/최종 결과)를 마저 채우는 것.
+   ~~씬의 비활성 `Boss_Basic` 인스턴스 삭제~~(완료 2026-09-04), 아이콘 스와치 → 실제 픽토그램.
+6. **전체 플레이 루프** — **골격 완료(2026-09-04 (3))**: `Title.unity` 신설, 타이틀→캐릭터
+   선택(타이틀 씬으로 이동)→런→클리어 화면("다시하기"/"타이틀로") 루프 3방향 전환 검증.
+   HUD "당장 넣어볼 UI"(크로스헤어/런 타이머/체력 바 리스킨/일시정지 메뉴 버튼/보스 HP 바)와
+   캐릭터 선택 일러스트 버튼 + Start 홀드 즉시선택 버그 수정도 완료(2026-09-04 (3)~(6)). 남은
+   부분: **Game Over 흐름**(Player 사망 처리/연출 — 지금은 임시로 `destroyOnDeath` off만),
+   씬 전환 페이드, 타이틀·일시정지 UI 레이아웃 미세조정(플레이스홀더 아트 기준), 실플레이 전투
+   주파 검증. 층간 전환(카운트다운+페이드+제자리 재빌드)은 2026-09-02 (3)에 이미 구현됨.
 7. **Stage 3 잔여 항목 재개**: `EnemyAIManager`, `GetComponent` 캐싱 정리,
    `BenchmarkSpawner`, Profiler 기반 Before/After 측정.
 8. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이

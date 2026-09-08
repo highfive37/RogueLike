@@ -44,6 +44,189 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-04 (6) — 타이틀 Start 버튼 홀드 시 캐릭터 선택이 즉시 클릭되는 문제
+
+### 배경 / 문제
+- `TitleScreenController.HandleStartClicked`가 `startButton.onClick`(포인터 업)에서 **같은 프레임에**
+  타이틀 그룹을 끄고 `CharacterSelectUI.Show()`로 `MeleeButton`/`RangedButton`을 커서 바로 아래에
+  활성화한다. Start를 누른 그 클릭 제스처가 아직 물리적으로 안 끝났거나(홀드) 리바운스가 있으면,
+  방금 나타난 버튼에서 다운→업이 완성되어 `HandleChosen` → `GameFlow.StartRun`이 즉시 실행된다.
+  `Button.transition = None`이라 눌림 비주얼이 없어 사용자 눈엔 "시작하자마자 게임 진입"으로 보인다.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| **A (채택). 포인터/키가 떼어질 때까지 melee/ranged 버튼 arm 지연** | 실제 릴리즈 상태에 묶여 결정적(매직넘버 없음). 프로젝트의 CanvasGroup/가드 관례와 일치. 구조 변경 없음, `TitleScreenController` 무수정 | 코루틴 1개 추가 |
+| B. 전환 시 1프레임짜리 풀스크린 투명 레이캐스트 블로커 | `CharacterSelectUI` 로직 무수정 | 씬에 블로커 오브젝트 + 수명 관리 코드, 간접적 |
+| C. `Show()` 후 ~0.15s 동안 melee/ranged 클릭 무시 | 3줄로 끝 | 매직넘버. 0.15s 이상 홀드하면 여전히 뚫림 → 근본 해결 아님 |
+
+### Claude 제안 / 선택
+- Claude가 A/B/C 제시하며 A 권장. 사용자 A 채택.
+
+### 선택한 방향
+- `CharacterSelectUI.Show()`: 패널은 켜되 `meleeButton/rangedButton.interactable = false` +
+  `EventSystem.SetSelectedGameObject(null)`(키보드 Submit 이월 차단). 코루틴 `ArmAfterInputReleased`가
+  `한 프레임 대기 → Mouse.leftButton.isPressed 및 키보드 Enter/NumpadEnter/Space가 안 눌릴 때까지
+  대기 → 한 프레임 더 → interactable = true`. `HandleChosen`은 남은 arm 코루틴을 정리.
+- hover 흰색 워시(`HoverHighlight`)는 `Selectable.interactable`과 무관해 그대로 동작 — 클릭만 게이트됨.
+
+### 선택 이유 / 트레이드오프
+- 타이머(C)는 "충분히 오래 누르면" 뚫리는 확률적 방어라 부적합. 블로커(B)는 오브젝트 수명 관리 필요.
+  A는 "그 제스처가 끝났는가"를 입력 상태로 직접 확인하므로 홀드 길이와 무관하게 항상 막힌다.
+- `CharacterSelectUI`가 `CharacterSelectPanel`(= `panel` 필드)에 붙은 자기-비활성 구조라 코루틴은
+  반드시 `panel.SetActive(true)` 이후 시작해야 함(현재 그렇게 됨). 추후 CanvasGroup 방식 전환 권장
+  (`[[feedback_self_deactivating_panel_footgun]]`).
+
+### 관련 파일
+- 수정: `Assets/Scripts/UI/CharacterSelectUI.cs`
+
+---
+
+## 2026-09-04 (5) — 캐릭터 선택: 텍스트 버튼 → 일러스트 버튼 + 마우스 오버 시 흰색으로 밝아짐
+
+### 배경 / 문제
+- 캐릭터 선택 화면이 텍스트 버튼 2개뿐 — 포트폴리오 첫인상(스크린샷/영상)에 약함. 근접/원거리
+  캐릭터 일러스트(`char_melee.png`/`char_ranged.png`, 알파 없는 통짜 세로 3:4)를 버튼으로 쓰고,
+  마우스 오버 시 유니티 기능으로 이미지를 흰색으로 밝게 하려는 의도.
+- 걸림돌: `Image.color` 틴트는 **곱연산**이라 흰색(1,1,1)을 곱해도 원본 그대로 → 스프라이트를
+  흰색으로 "밝게"는 불가능(어둡게만 가능). `Button`의 Color Tint transition으로는 목표를 못 냄.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. press 없이 hover→즉시 선택, hover는 스케일/그림자로 표현 | 단순 | "흰색으로 밝게" 요구를 못 살림. press 없는 특별처리가 애매 |
+| **B (채택). 흰색 오버레이 자식 Image** — 같은 자리 흰색 quad(alpha 0, raycast off)를 hover 시 페이드 인 | `final = sprite×(1-a) + white×a`로 실제 흰색 워시. `Button`/`Selectable` 무수정(opt-in 비주얼). 일러스트가 불투명 사각이라 스프라이트 없는 흰 quad로 충분 | 자식 오브젝트 + 컴포넌트 1개 |
+| C. 미리 밝게 처리한 스프라이트를 hover 시 스왑 | 런타임 연산 0 | 아트 2배 관리, 페이드 불가 |
+
+### Claude 제안 / 선택
+- Claude가 B(오버레이) 제안. 사용자 B 채택 + "부드러운 페이드", 캡션은 카드 하단
+  ("환락 개척자(근거리)" / "기억 개척자(원거리)").
+
+### 선택한 방향
+- 신규 `HoverHighlight.cs`(`IPointerEnterHandler`/`ExitHandler`): 직렬화된 `overlay` Graphic의
+  alpha를 `0 ↔ hoverAlpha`(기본 0.35)로 `fadeDuration`(기본 0.15s, `unscaledDeltaTime`) 페이드.
+  `Awake`/`OnDisable`에서 0으로 스냅(씬 로드/패널 숨김이 hover 도중 걸려도 잔광 방지).
+  per-frame step을 `hoverAlpha`로 스케일해 페이드 시간이 alpha 크기와 무관하게 일정.
+- `Title.unity` `MeleeButton`/`RangedButton`: Image=일러스트, `Button.transition = None`,
+  자식 `Overlay`(스프라이트 없는 흰색 quad, alpha 0, raycast off) + `HoverHighlight` 배선,
+  기존 Label을 카드 하단 캡션으로 이동. 카드 540×720. `CharacterSelectUI` 코드 무수정
+  (`Button` 인스턴스 유지 → onClick·아키타입 배선 그대로).
+
+### 선택 이유 / 트레이드오프
+- 곱연산 틴트의 한계를 오버레이 합성으로 우회하는 표준 기법. 일러스트가 불투명 사각형이라
+  스프라이트 매칭 없이 흰 quad로 충분(투명 PNG였다면 `overlay.sprite`에 같은 스프라이트 필요).
+- 초기 버그: `overlay.sprite`에 캐릭터 스프라이트를 넣어 흰색×스프라이트 = 변화 없음이었음 →
+  `sprite = null`로 수정. 이벤트 디스패치는 정상이었음(레이캐스트/`IPointerEnterHandler` 확인).
+
+### 관련 파일
+- 신규: `Assets/Scripts/UI/HoverHighlight.cs`, `Assets/Art/UI/Character/char_melee.png`·`char_ranged.png`
+- 수정: `Assets/Scenes/Title.unity`(MeleeButton/RangedButton 재구성)
+
+---
+
+## 2026-09-04 (4) — 보스 HP 바: 보스 전용 스폰 훅 vs 제네릭 스폰 이벤트
+
+### 배경 / 문제
+- 로드맵 §6 "당장 넣어볼 UI" #6. 보스 HP 바가 "보스가 나타났다"는 순간과 대상 `HealthComponent`를
+  알아야 하는데, 현재 보스는 일반 적과 **완전히 동일한 경로**로 스폰됨(`RoomData.Enemies`의
+  `variant: Boss` 엔트리 → `EnemySpawner.SpawnRoom`이 무분기 순회). 스폰 시점 신호가 전혀 없음.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `EnemySpawner.BossSpawned(HealthComponent)` — variant==Boss일 때만 발화 | 이벤트+한 줄 | `EnemySpawner`가 "보스"를 앎. 스폰 로직에 보스 개념 유입 |
+| **B (채택). `EnemySpawner.EnemySpawned(HealthComponent, EnemyVariantType)` — 모든 적마다 발화** | `EnemySpawner`는 "이걸 스폰했고 variant는 이것"이라는 **사실만** 보고(스폰 텔레메트리), 보스 로직 0. 분기 없음(if 없는 invoke 한 줄). `EnemyAIManager`(#7 tick 분산)·스폰 카운터·벤치마크 등에서 재사용 가능 | 방마다 이벤트 몇 회 더(무시 가능) |
+| C. `RoomController`/`StageManager`가 처리 | 방 스코프 | 스폰 리스트에 variant 정보 없음 → 반환형 확장/상관 매칭 필요, 커플링 |
+
+### Claude 제안 / 사용자 반려
+- Claude 초안은 A. 사용자가 "일반 몬스터와 다른 보스 스폰이 필요하냐, 스폰은 제네릭하게 두고
+  필요하면 기능을 위에 얹자, 나중에 준보스도 특별하게 만들 수 있고"로 반려 → B로 조정.
+
+### 선택 이유 / 트레이드오프
+- "보스"라는 해석을 그걸 필요로 하는 쪽(`BossHealthBarUI`가 `variant == Boss` 필터)으로 밀어냄.
+  숨김은 UI가 추적 중인 HC의 `Died`로 자체 처리(보스방 문 잠김 → 전투 중 이탈 불가라 사망 트리거 하나면 충분).
+- **준보스 미래 경로**(지금 미구현, YAGNI): (1) `EnemyVariantType.MiniBoss` 값 추가 + 풀 매핑, UI가
+  Boss/MiniBoss 둘 다 큰 바 표시 / (2) `EnemyData`에 `barStyle` 플래그 추가 + 이벤트에 `EnemyData`도
+  실어 UI가 플래그로 판단(준보스 = 플래그 켠 데이터 에셋, 코드 수정 0). 준보스의 실제 요구사항이
+  정해질 때 선택.
+
+### 관련 파일
+- 수정: `Assets/Scripts/Enemy/EnemySpawner.cs`(`EnemySpawned` 이벤트)
+- 신규: `Assets/Scripts/UI/BossHealthBarUI.cs`, `Prototype.unity`의 `Canvas/HUD/BossHealthBar`
+
+---
+
+## 2026-09-04 (3) — 전체 플레이 루프: 타이틀 별도 씬 · 캐릭터 선택 위치 · 씬 라우팅 · 사망 소프트락
+
+### 배경 / 문제
+- 로드맵 §6 #6. 진입점이 사실상 "캐릭터 선택"(타이틀 없음), 런이 끝나도 타이틀 복귀 경로가
+  없음 = §13상 미완성. 사망 처리는 이번 범위에서 제외.
+
+### 검토한 대안 / 선택
+
+| 쟁점 | 선택 | 대안 / 이유 |
+|---|---|---|
+| **타이틀: 별도 씬 vs 기존 씬 패널** | 별도 `Title.unity` (사용자: A안) | vs 기존 씬 내 `TitlePanel`: "재시작/타이틀 복귀"가 씬 리로드 없이 런 전체(Player/StageManager/풀) 재초기화를 요구 → `StageManager` 제자리 재빌드가 피하려던 복잡도를 런 규모로 되살림. vs 부트스트랩+DontDestroyOnLoad 매니저: 씬 간 넘길 상태가 (아직) `PendingArchetype` 하나뿐이라 과설계. 별도 씬은 재시작=씬 로드로 단순, Phase 5(Addressables) 진입로도 열림 |
+| **캐릭터 선택 위치** | 타이틀 씬으로 이동 (사용자 구상) | 인게임에 남기면 Title→Gameplay 로드 후에도 별도 선택 단계가 필요. 타이틀 씬에서 미리 고르면 선택 결과(`CharacterArchetypeData` SO 참조)를 `GameFlow.PendingArchetype` 정적으로 씬 넘겨 전달 → 인게임 `CharacterSelectController`는 그 값을 소비만 (UI/입력잠금 제거). 에디터 직접 실행용 `fallbackArchetype` 폴백 |
+| **씬 라우팅 방식 (사용자: 상세 설명 요청)** | `GameFlow` 정적 클래스 — 씬 이름 상수 + `StartRun`/`RetryRun`/`ReturnToTitle` + `PendingArchetype` | MonoBehaviour 매니저: 버튼 핸들러가 매니저 오브젝트 참조를 들어야 하고 씬마다 배치/중복 관리. SO 씬-config: 이름 오타엔 안전하나 2씬엔 ceremony 과함 → 나중에 승격. 정적은 배치할 GameObject가 없고 어느 씬 버튼에서든 호출 가능. 씬 이름(인덱스 아님)을 쓰는 이유: Build Settings 재정렬 시 인덱스만 밀림 |
+| **`PauseState` 씬 전환 처리** | `ForceResume()` 추가 (owner 전부 clear + timeScale=1) | 클리어 화면이 `PauseState`로 timeScale=0. 씬 로드는 남은 owner의 `ReleasePause`를 안 부르고 timeScale도 안 되돌림 → 다음 씬이 얼어서 시작. `GameFlow.LoadScene`이 로드 직전 호출 |
+| **사망 시 소프트락 (결정4)** | Player `HealthComponent.destroyOnDeath`=false (임시) | 현재 true → HP 0이면 Player가 `Destroy` → 조작 불가·게임오버 없음 = 데모 중 갇힘. 사망 처리는 이연이지만 이 1필드만 꺼서 "죽어도 HP 0인 채 계속" 상태로 막음. 정식 Game Over 패스에서 되돌림 |
+| **씬 전환 연출 (결정5)** | v1 하드컷 | 페이드/비동기 로드+로딩화면은 Phase 5(Addressables) 스토리로 미룸. 씬이 작아 동기 로드 히치 미미 |
+
+### 선택 이유 / 트레이드오프
+- `Title.unity` 구성: Camera(URP, solid color) + EventSystem(`InputSystemUIInputModule`,
+  인게임 씬과 동일) + Canvas(1920×1080, Scale With Screen Size). `CharacterSelectUI`는 기존
+  것을 그대로 옮겨 재사용(패널은 씬에 active 저장 — 자기-비활성 함정 회피,
+  `[[feedback_self_deactivating_panel_footgun]]`).
+- 3방향 전환 확정: Title→Gameplay(`StartRun`), Gameplay→Gameplay(`RetryRun`, 아키타입 유지),
+  Gameplay→Title(`ReturnToTitle`, 아키타입 클리어).
+
+### 관련 파일
+- 신규: `Assets/Scenes/Title.unity`, `Assets/Scripts/Core/GameFlow.cs`,
+  `Assets/Scripts/UI/TitleScreenController.cs`, `Assets/Art/UI/Title/*.png`(5장)
+- 수정: `Player/CharacterSelectController.cs`(선택→소비), `Player/PauseState.cs`(`ForceResume`),
+  `UI/FloorCompleteUI.cs`(toTitle 버튼), `UI/UIManager.cs`(charSelect 제거),
+  `Player.prefab`(fallbackArchetype, destroyOnDeath=false), `Prototype.unity`(CharacterSelectPanel
+  제거, ClearOverlay에 ToTitleButton), `EditorBuildSettings.asset`(Title+Prototype)
+
+---
+
+## 2026-09-04 (2) — 1~3층 방 데이터 JSON 외부화: 파일 구성 · 마지막 층 판정 · 구 에셋 처리 · 손상 폴백
+
+### 배경 / 문제
+- 로드맵 §6 #2. `RoomDataAsset`(ScriptableObject) 29개 + 씬 `StageManager.floors` 배선으로
+  authoring된 층/방 데이터를, `GameBalance`처럼 텍스트 에디터로 수정 가능한 JSON으로 빼고
+  싶다. 요구: 4층 제작 시 Claude/Unity 없이 JSON 파일 하나만 더 만들어 1~3층 파일을 참고해
+  저작할 수 있어야 함.
+
+### 검토한 대안 / 선택
+
+| 쟁점 | 선택 | 대안 / 이유 |
+|---|---|---|
+| **파일 구성** | 층당 파일 1개 (`Balance/Stage/Floors/FloorN.json`), 로더가 `Floor1`부터 없어질 때까지 열거 | vs 단일 `Floors.json`(배열): 4층 추가 시 공유 파일을 편집 → 오타 하나로 전 층 깨짐, "파일 하나만 추가" 요구와 배치. vs 매니페스트+파일: 추가 시 손댈 곳 2군데. → **층당 파일**이 "Floor4.json 하나만 추가"에 정확히 부합, 층별 격리(한 층이 깨져도 나머지 무사) |
+| **마지막 층 판정 (사용자: C안)** | 파일 열거 위치가 결정 (`isLastFloor`는 검증용 — 불일치 시 경고만, 열거 우선) | vs (a) 플래그 절대 신뢰: 4층 추가 시 3층 파일도 열어 `false`로 수정해야 함 → 깜빡하면 3층에 갇힘. vs (b) 플래그 완전 무시. → **(c)**: 요구대로 플래그를 데이터에 넣되, 실제 판정은 파일 존재로 → 플래그 실수해도 진행 안 막힘 |
+| **구 `RoomDataAsset` 29개 + `ScriptableObjectFloorLayoutProvider` (사용자: A안)** | 삭제 | vs `_legacy/`로 이동 보존: 이중 authoring 경로를 남기지 않는 게 이 작업의 목적. 롤백은 git 히스토리 + 이 로그 |
+| **JSON 손상/누락 시 (사용자: B안 + 팝업)** | 그 층만 코드 내장 비상용 3방 층(Start-Combat-Boss)으로 대체 + `IsCorrupted` 플래그 → 진입 시 `SystemNotificationUI` 팝업으로 "N층 데이터 손상" 안내 | vs 하드 에러(런 시작 불가): "잘못된 JSON은 크래시가 아니라 열화" 프로젝트 원칙 위반. vs 콘솔 경고만: 플레이어가 인지 못 함. 팝업은 범용 시스템 알림 핸들러로 분리(향후 다른 시스템 알림 재사용) |
+
+### 선택 이유 / 트레이드오프
+- 열거 시 중간 번호가 비고 그 뒤 번호가 있으면(예: Floor2 없는데 Floor3 있음) 경고 후 갭에서
+  중단 — "누락"과 "손상"은 구분: 파일이 아예 없으면 열거 중단(갭), 파일은 있는데 파싱 실패면
+  그 슬롯만 비상용 대체(층 수 유지).
+- `SystemNotificationUI`는 CanvasGroup 방식(자기-비활성 패널 함정 회피, `[[feedback_self_deactivating_panel_footgun]]`).
+  메시지 큐 보유 — 손상된 층이 2개면 확인 후 다음 알림.
+- enum은 JSON에서 이름 문자열(`"Combat"`, `"Ranged"`, `"North"`)로 저작, `Enum.TryParse`+`Enum.IsDefined`로 파싱 — `GameBalance`가 `PassiveItemType`에 쓰는 방식과 동일. JsonUtility는 `Vector2Int`/`Vector3`를 `{x,y[,z]}`로 왕복.
+
+### 관련 파일
+- 신규: `Assets/Scripts/Stage/GameFloors.cs`(로더+DTO), `Assets/Scripts/Stage/FloorLayout.cs`,
+  `Assets/Scripts/Room/JsonFloorLayoutProvider.cs`, `Assets/Scripts/UI/SystemNotificationUI.cs`,
+  `Assets/StreamingAssets/Balance/Stage/Floors/Floor{1,2,3}.json`
+- 삭제: `Assets/Scripts/Room/RoomDataAsset.cs`, `ScriptableObjectFloorLayoutProvider.cs`,
+  `Assets/Data/Rooms/*.asset` 29개
+- 수정: `StageManager.cs`(`floors` 필드 제거, `GameFloors` 사용, `FloorDataCorrupted` 이벤트,
+  `CurrentStageNumber`), `UIManager.cs`(HUD 텍스트 `x-y` 포맷 + 팝업 배선), `IFloorLayoutProvider.cs`(주석)
+
+---
+
 ## 2026-09-04 — 대시/걷기의 벽 관통: 벽 콜라이더 두껍게 vs 이동 로직에서 방향 클램프 vs 솔버 설정
 
 ### 배경 / 문제

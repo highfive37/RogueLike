@@ -71,7 +71,16 @@ MoveTo`로 수렴 + 신규 `RoomController.ClampToInterior`로 방 내부 AABB �
 `AI_Decision_Log.md` 2026-09-09;
 2026-09-09 (3) 신규 적 변형 2종(`ErraticMelee`/`BurstRanged`)을 `Floor2.json`·`Floor3.json`의
 전 전투방에 고루 배치(2026-09-08엔 Floor1에만 있었음) — `variant` 문자열만 교체, 스폰 좌표·적
-수·구조 불변. 실제 `GameFloors` 로더로 파싱·분포 검증 통과.
+수·구조 불변. 실제 `GameFloors` 로더로 파싱·분포 검증 통과;
+2026-09-09 (4) 포트폴리오 트랙 #1(자동화 테스트+CI) 완료 — asmdef 도입(`RogueLike.asmdef` 단일),
+`Assets/Tests/{EditMode,PlayMode}`, `.github/workflows/ci.yml`(GameCI). CI에서 초록;
+2026-09-09 (5) 포트폴리오 트랙 #2(절차적 층 생성) — **기본 던전이 이제 시드 기반 절차 생성**.
+결정적 자체 PRNG(`DeterministicRng`/`RngStreams`) + `RunConfig`(시드+소스 모드, `GameFlow` 전달)
++ `IFloorSource` 심(`JsonFloorSource`/`ProceduralFloorSource`) + 아이작식 `ProceduralFloorGenerator`
+(큐 성장 → 방/타입/문/적) + 층별 난이도 `ProceduralRules.json`. `GameFloors.ValidateGraph` →
+공용 `FloorGraph.Validate` 추출. 자동화 테스트 EditMode 82 + PlayMode 10 전부 초록, `Prototype.unity`
+씬 실측 통과. F1 오버레이에 `SEED` 표시. **유저 실플레이 검증 대기** — §2·§3, `DevLog.md`/
+`AI_Decision_Log.md` 2026-09-09 (3). 남은 것: Phase F(시드 화면 표시 + 타이틀 시드 입력).
 
 ---
 
@@ -209,11 +218,15 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 **`Prototype.unity`** (이하):
 - `Ground`(Ground 레이어 지정), `Player`(프리팹 인스턴스), `Main Camera`
 - **방/문 그리드 시스템**(2026-08-31 신규): 씬에 방이 사전 배치되어 있지 않고,
-  `StageManager.BuildFloor()`가 현재 층의 `FloorLayout.Rooms`(2026-09-04 (2) 전엔
-  `RoomDataAsset[]`, 지금은 `GameFloors`가 `FloorN.json`에서 파싱)를 기준으로
+  `StageManager.BuildFloor()`가 현재 층의 `FloorLayout.Rooms`를 기준으로
   `Room_Base.prefab`을 그리드에 전부 인스턴스화(백트래킹 가능). 각 방 인스턴스는 자체 `RoomManager`+
   `RoomController`를 가짐(스테이지 1개당 하나였던 기존 `RoomManager`와
-  달리, 방마다 별도 인스턴스)
+  달리, 방마다 별도 인스턴스).
+  - **층 데이터 소스는 `IFloorSource` 뒤에 추상화**(2026-09-09). 실제 런은 기본이
+    `ProceduralFloorSource`(시드로부터 아이작식 절차 생성, 층 3개 고정) — `RunConfig.Seed`가
+    `GameFlow`에서 씬 넘겨 전달됨. `JsonFloorSource`(손authoring `FloorN.json` 3층)는
+    `RunConfig.FloorSource = Json`으로 여전히 선택 가능한 디버그/레퍼런스 모드. 둘 다 손상 시
+    비상층 폴백. 생성기·규칙은 §3·`AI_Decision_Log.md` 2026-09-09 (3).
 - 방-방 이동은 물리적 도보 이동이 아니라 최상위 `RoomTransitionController`가
   담당하는 카메라 연출 전환(문 트리거 통과 시 0.6초 `SmoothStep` 카메라 보간,
   전환 중 플레이어 렌더러/입력/물리 임시 비활성화 후 원복)

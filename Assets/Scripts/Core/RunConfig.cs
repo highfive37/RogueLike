@@ -27,6 +27,9 @@ public sealed class RunConfig
 
     public static RunConfig NewRandom(FloorSourceMode floorSource)
     {
-        return new RunConfig(new Random().Next(int.MinValue, int.MaxValue), floorSource);
+        // Positive-only so the seed is easy to read off the debug overlay, share,
+        // and type back into a "replay this seed" field later. [1, int.MaxValue)
+        // is still ~2.1 billion distinct runs.
+        return new RunConfig(new Random().Next(1, int.MaxValue), floorSource);
     }
 }

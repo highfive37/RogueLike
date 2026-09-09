@@ -283,8 +283,46 @@
   스폰 위치가 방 내부). PlayMode **10개** 그대로. `RunCommand` 미리보기(시드 20260909):
   `ProceduralRules.json` 정상 로드(기본값 아님), Floor1/2/3 = 7/11/12방·13/42/56마리(난이도 상승),
   변형 믹스가 후반에 Ranged/Burst 쪽으로 이동, 같은 시드 = 적까지 동일. 콘솔 에러/폴백 경고 0.
-- 다음: Phase E — 기본을 `Procedural`로 전환(`GameFlow.DefaultFloorSource` flip) + 프로퍼티 테스트
-  보강. **여기서 유저 실플레이** (매 run 다른 던전 / 같은 시드 = 같은 던전 / 난이도 상승 체감).
+**트랙 #2 Phase E — 절차적 생성을 기본으로 전환 + 프로퍼티 테스트 + 시드 표시**
+- **`GameFlow.DefaultFloorSource` = `Json` → `Procedural`** (한 줄). 이제 모든 실제 런
+  (`StartRun`/`RetryRun`)과 에디터 직접 실행(`EnsureRun`)이 시드로부터 던전을 생성. `Json`
+  모드는 `RunConfig`에 `FloorSourceMode.Json`을 주면 여전히 도달 가능(디버그/레퍼런스용, 아직
+  아무도 안 함).
+- **시드 표시 + 디버그 재시작** (실플레이 편의):
+  - F1 오버레이에 시드 표시. 처음엔 FPS 텍스트에 줄 추가했으나 그 UI 박스가 높이 30px +
+    `Truncate`라 2번째 줄이 잘려 안 보임(유저 제보) → `1-SHOT` 인디케이터와 같은 런타임 생성
+    방식으로 **별도 `SeedIndicator` 텍스트**(FPS 박스 바로 아래, overflow ON). 포맷 `SEED: {시드}`.
+  - **시드를 양수 전용으로** — `RunConfig.NewRandom`이 `Random.Next(1, int.MaxValue)`(이전엔
+    `int.MinValue~int.MaxValue`라 음수 나옴). 읽기/공유/나중에 타이틀 입력하기 쉽게. 여전히 ~21억 종.
+  - **F1 켠 상태에서 R키 → 런 재시작**(`GameFlow.RetryRun`, 새 시드·새 던전). 시드 확인 반복
+    테스트용. `_visible`일 때만 동작(`Keyboard.current.rKey.wasPressedThisFrame` 폴링, `CharacterSelectUI`와
+    같은 패턴). 실측: 양수 시드 2000개 전부 > 0·유일, F1 → `SEED: 1511630634` 표시 확인. R
+    재시작 end-to-end는 유저 실플레이로 확인(자동화 세션 도메인 리로드 노이즈로 검증 불안정).
+  - 일시정지/게임오버 화면 시드 표시 + 타이틀 시드 입력칸은 Phase F.
+- **방 바닥 체크 패턴** (유저 요청) — `RoomController.BuildGeometry`의 바닥 Plane에 코드로 만든
+  2×2 흑백 체커 텍스처(Point/Repeat) + URP Unlit 머티리얼. 칸 하나 2유닛 고정, 방 크기(16/20/40)별로
+  `mainTextureScale`만 다른 공유 머티리얼 1개씩 캐시(MPB `_BaseMap_ST` 오버라이드는 URP에서
+  불안정해 안 씀). 실측: 8방 전부 `RoomFloorChecker_{size}` 적용, 탑다운 렌더 샘플에서 흑백 교대
+  확인. EditMode 82 + PlayMode 10 그대로 통과.
+  - **`Prototype.unity`의 정적 `Ground` 오브젝트 삭제**(유저 승인) — Stage 1 시절의 30×30 Plane
+    (y=0)이 룸 시스템의 방별 바닥 Plane(역시 y=0, 시작방은 원점)과 동일 평면이라 Z-fighting
+    유발(체커 넣으니 눈에 띔). 룸 시스템이 완전 대체: 방 바닥도 `Ground` 레이어(그레네이드
+    레이캐스트) + MeshCollider, 스크립트 `[SerializeField]` 참조 없음, 플레이어는 `useGravity=false`라
+    바닥 콜라이더 불필요. 삭제 후 실측: `Ground` 없음, 플레이어 (0,1,0) 유지, y=0 동일평면 렌더러
+    0개(Z-fight 해소), 콘솔 에러 0.
+- **프로퍼티 테스트** — 신규 `ProceduralInvariantsTests` 7개: 120시드 × 3층 전부에 대해
+  유효 그래프·비손상 / Start 1·Boss 1(데드엔드)·Item ≤1(데드엔드) / 방 id·격자 셀 유일 /
+  방 수가 실제 사용된 규칙 범위 내(= trivial 폴백 안 걸림) / 적 스폰 방 내부 / 문 양방향 /
+  같은 시드 전 층 바이트 단위 재현.
+- **씬 실측** (`Prototype.unity` Play Mode): `CurrentRun` mode=Procedural, seed 랜덤. 8방
+  (Combat 5 / Boss 1 / Item 1 / Start 1) 생성, `StageManager` 1-1 정상, Floor Exit는 보스방에
+  배치됨, Player는 시작방(0,1,0), 콘솔 에러/경고 0.
+- **검증**: EditMode **82개**(기존 75 + 7). PlayMode **10개** 그대로. 전부 통과.
+- **다음 = 유저 실플레이 (트랙 #2의 핵심 체크포인트)**: 타이틀→런 시작 시마다 다른 던전 /
+  F1로 시드 확인 후 재시작 → 시드·던전 바뀜 / 1→2→3층 방 수·적 수 증가 체감 / 방-방 전환·
+  미니맵·보스방 Floor Exit·아이템방 드랍이 절차적 레이아웃에서도 정상인지. 코드상 스모크는
+  통과했으나 여러 레이아웃(4방향 허브·긴 체인·루프)에서의 카메라/미니맵 체감은 사람 확인 필요.
+- 이후: Phase F — 시드를 일시정지/게임오버 화면에 표시 + 타이틀 화면 시드 입력칸(같은 시드 재생).
 
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →
@@ -299,7 +337,27 @@
     지점으로 스냅
   - `EnemyFsmTests` 3 — 플레이어 DetectionRange 안 → Idle→Chase / 멀면 Idle 유지 / 피격 → Stunned
 
+**적 발사체 ↔ 아군 발사체 = 서로 통과 (상쇄 없음) (유저 요청)**
+- 이전 동작: `Projectile.OnTriggerEnter`가 "발사자(_owner)가 아닌 콜라이더에 처음 닿으면" 무조건
+  `ReturnToPoolOnce()`로 소멸. 발사체 프리팹끼리도 트리거 콜라이더(SphereCollider isTrigger,
+  kinematic Rigidbody)라 적 탄과 플레이어 탄이 겹치면 둘 다 그 자리에서 사라짐(2026-09-09 조사에서
+  실측: 마주 오는 두 발사체 → active 0). 아이작/건전 계열엔 "탄 상쇄"가 기본이 아님.
+- 수정: `OnTriggerEnter`에서 `other`가 `Projectile` 컴포넌트를 가진 경우 `_owner` 체크 직후
+  즉시 return — 데미지 없음, 소멸 없음, 서로 그냥 지나감. `IDamageable`(적/플레이어/파괴 가능
+  오브젝트)·벽 등 그 외 충돌 처리는 전부 그대로. 나중에 의도적인 상쇄/블랭크 메커닉을 넣을 여지는
+  주석으로 남김. 프리팹·레이어·물리 설정 변경 없음(코드 6줄 추가).
+- 신규 테스트 `Assets/Tests/PlayMode/ProjectileTests.cs` 1개 — 마주 겹친 두 발사체(다른 owner)를
+  프리팹처럼 구성(트리거 SphereCollider r=0.5 + kinematic Rigidbody) → 물리 스텝 몇 번 후 둘 다
+  여전히 active. 이 동작(추후 상쇄 메커닉 추가 시 같이 갱신)을 회귀 잠금.
+
 ### 테스트 결과
+
+**적 발사체 ↔ 아군 발사체 통과**
+- [x] EditMode **82개** + PlayMode **11개**(기존 10 + 신규 `ProjectileTests` 1) 전부 통과
+      (`TestRunnerApi` EditMode/PlayMode 각각 실행 → `state=Passed pass=93 fail=0`). 재컴파일
+      콘솔 에러 0. `RogueLike.Tests.EditMode`·`RogueLike.Tests.PlayMode` 어셈블리 정상 빌드.
+- [x] 신규 `ProjectileTests.TwoOpposingProjectiles_Overlapping_BothPassThroughAndStayActive`
+      PlayMode 통과 — 마주 겹친 적/플레이어 발사체 둘 다 소멸 안 됨(수정 전이면 둘 다 소멸).
 
 **테스트 스위트 Phase 3**
 - [x] PlayMode 테스트 **10개 전부 통과** (`TestRunnerApi` PlayMode 실행 → `TestResults.xml`

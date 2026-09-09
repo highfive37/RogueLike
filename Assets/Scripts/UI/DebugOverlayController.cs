@@ -30,6 +30,7 @@ public class DebugOverlayController : MonoBehaviour
     private InputAction _toggleAction;
     private InputAction _enemyOneShotAction;
     private Text _oneShotText;
+    private Text _seedText;
     private bool _visible;
     private float _fpsTimer;
     private int _fpsFrames;
@@ -43,6 +44,9 @@ public class DebugOverlayController : MonoBehaviour
 
         _oneShotText = CreateOneShotIndicator();
         _oneShotText.gameObject.SetActive(DebugDamage.EnemyOneShot);
+
+        _seedText = CreateSeedIndicator();
+        _seedText.gameObject.SetActive(false);
     }
 
     private void OnEnable()
@@ -68,6 +72,15 @@ public class DebugOverlayController : MonoBehaviour
             return;
         }
 
+        // R while the overlay is up: restart the run (new seed, fresh dungeon) -
+        // a quick way to cycle seeds when checking procedural generation. Only
+        // active with the debug overlay visible so it can't be hit by accident.
+        if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
+        {
+            GameFlow.RetryRun();
+            return;
+        }
+
         _fpsFrames++;
         _fpsTimer += Time.unscaledDeltaTime;
 
@@ -85,6 +98,13 @@ public class DebugOverlayController : MonoBehaviour
         _visible = !_visible;
         IsDebugVisible = _visible;
         fpsText.gameObject.SetActive(_visible);
+
+        // The run seed doesn't change mid-run, so just refresh it whenever the
+        // overlay opens. "?" if entering the gameplay scene without a run config
+        // (shouldn't happen - GameFlow.EnsureRun covers it).
+        _seedText.text = GameFlow.CurrentRun != null ? $"SEED: {GameFlow.CurrentRun.Seed}" : "SEED: ?";
+        _seedText.gameObject.SetActive(_visible);
+
         _fpsFrames = 0;
         _fpsTimer = 0f;
     }
@@ -120,6 +140,33 @@ public class DebugOverlayController : MonoBehaviour
         text.verticalOverflow = VerticalWrapMode.Overflow;
         text.color = new Color(1f, 0.85f, 0.2f);
         text.text = "1-SHOT";
+        return text;
+    }
+
+    // Same runtime-built pattern - a sibling of fpsText pinned one line below it,
+    // with overflow left on so the (long) seed number is never clipped the way it
+    // would be inside fpsText's fixed 30px box.
+    private Text CreateSeedIndicator()
+    {
+        var go = new GameObject("SeedIndicator", typeof(RectTransform));
+        go.transform.SetParent(fpsText.transform.parent, false);
+
+        RectTransform src = fpsText.rectTransform;
+        var rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = src.anchorMin;
+        rect.anchorMax = src.anchorMax;
+        rect.pivot = src.pivot;
+        rect.sizeDelta = src.sizeDelta;
+        rect.anchoredPosition = src.anchoredPosition + new Vector2(0f, -(Mathf.Max(src.sizeDelta.y, 24f) + 4f));
+
+        var text = go.AddComponent<Text>();
+        text.font = fpsText.font;
+        text.fontSize = Mathf.Max(12, fpsText.fontSize - 4);
+        text.alignment = fpsText.alignment;
+        text.horizontalOverflow = HorizontalWrapMode.Overflow;
+        text.verticalOverflow = VerticalWrapMode.Overflow;
+        text.color = new Color(0.55f, 0.9f, 1f);
+        text.text = "SEED: ?";
         return text;
     }
 

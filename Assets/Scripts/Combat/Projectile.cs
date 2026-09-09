@@ -70,6 +70,14 @@ public class Projectile : MonoBehaviour
             return;
         }
 
+        // Projectiles pass straight through one another - an enemy shot and a
+        // player shot don't cancel out or do anything on contact. A deliberate
+        // mutual-cancel / blank mechanic can be added later if wanted.
+        if (other.TryGetComponent<Projectile>(out _))
+        {
+            return;
+        }
+
         if (other.TryGetComponent<IDamageable>(out var damageable))
         {
             damageable.TakeDamage(_damage, _owner);

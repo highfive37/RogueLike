@@ -32,9 +32,10 @@ public static class GameFlow
     // entered directly in the editor - EnsureRun() covers that.
     public static RunConfig CurrentRun { get; private set; }
 
-    // FloorSourceMode.Json until ProceduralFloorSource exists; flip to Procedural
-    // then (single call site on purpose, easy to find).
-    private const FloorSourceMode DefaultFloorSource = FloorSourceMode.Json;
+    // Real runs generate their floors procedurally from the seed. Json (the
+    // hand-authored FloorN.json set) stays reachable as a debug/reference mode by
+    // setting FloorSourceMode.Json on a RunConfig - nothing does that yet.
+    private const FloorSourceMode DefaultFloorSource = FloorSourceMode.Procedural;
 
     // Title "Start" -> an archetype was chosen -> load into gameplay with a fresh
     // random-seeded run.

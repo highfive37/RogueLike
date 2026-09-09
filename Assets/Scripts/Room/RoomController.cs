@@ -18,6 +18,13 @@ public class RoomController : MonoBehaviour
     private const float WallHeight = 3f;
     private const float WallThickness = RoomBounds.WallThickness;
     private const float DoorWidth = 6f;
+    private const float FloorCheckerSquareSize = 2f; // world units per checker square
+
+    private static Texture2D _checkerTexture;
+    // Keyed by room size - there are only a few distinct sizes, so each gets one
+    // shared material with the right tiling baked in (MPB overrides of _BaseMap_ST
+    // are not reliable on URP shaders, so no property block here).
+    private static readonly Dictionary<float, Material> _checkerFloorMaterials = new Dictionary<float, Material>();
     private const float DoorHeight = 3f;
     private const float EntryPointInset = 4f;
     private const float PlayerStandHeight = 1f;
@@ -91,6 +98,50 @@ public class RoomController : MonoBehaviour
         return RoomBounds.IsInsideLocal(local, RoomSize, WallThickness, bodyRadius, slack);
     }
 
+    // 2x2 black/white checker, built once in code (no asset to wire).
+    private static Texture2D CheckerTexture()
+    {
+        if (_checkerTexture != null)
+        {
+            return _checkerTexture;
+        }
+
+        _checkerTexture = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: false)
+        {
+            name = "RoomFloorChecker",
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Repeat,
+        };
+        _checkerTexture.SetPixels(new[] { Color.black, Color.white, Color.white, Color.black });
+        _checkerTexture.Apply();
+        return _checkerTexture;
+    }
+
+    // Unlit checker material for a room of the given size, tiled so each square is
+    // FloorCheckerSquareSize world units. One shared material per distinct size.
+    private static Material CheckerFloorMaterial(float roomSize)
+    {
+        if (_checkerFloorMaterials.TryGetValue(roomSize, out Material cached) && cached != null)
+        {
+            return cached;
+        }
+
+        Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Texture");
+        var mat = new Material(shader) { name = $"RoomFloorChecker_{roomSize}" };
+
+        Texture2D tex = CheckerTexture();
+        if (mat.HasProperty("_BaseMap")) { mat.SetTexture("_BaseMap", tex); }
+        if (mat.HasProperty("_MainTex")) { mat.SetTexture("_MainTex", tex); }
+
+        // Plane is `roomSize` units across; texture is a 2-square checker, so
+        // repeats = roomSize / (2 * squareSize).
+        float repeats = roomSize / (2f * FloorCheckerSquareSize);
+        mat.mainTextureScale = new Vector2(repeats, repeats);
+
+        _checkerFloorMaterials[roomSize] = mat;
+        return mat;
+    }
+
     private void BuildGeometry(RoomData data)
     {
         float half = data.RoomSize / 2f;
@@ -104,6 +155,10 @@ public class RoomController : MonoBehaviour
         {
             floor.layer = groundLayer;
         }
+
+        // Black/white checker floor, each square a constant world size regardless
+        // of RoomSize (one shared material per distinct room size).
+        floor.GetComponent<Renderer>().sharedMaterial = CheckerFloorMaterial(data.RoomSize);
 
         var connectedDirections = new HashSet<DoorDirection>();
         foreach (RoomDoorConnection connection in data.Connections)

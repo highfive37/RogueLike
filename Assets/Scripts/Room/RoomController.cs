@@ -34,6 +34,7 @@ public class RoomController : MonoBehaviour
     public int RoomId { get; private set; }
     public RoomType RoomType { get; private set; }
     public Vector2Int GridPosition { get; private set; }
+    public float RoomSize { get; private set; }
     public bool IsCleared { get; private set; }
     public IEnumerable<DoorController> Doors => _doorsByDirection.Values;
 
@@ -63,8 +64,31 @@ public class RoomController : MonoBehaviour
         RoomId = data.RoomId;
         RoomType = data.Type;
         GridPosition = data.GridPosition;
+        RoomSize = data.RoomSize;
 
         BuildGeometry(data);
+    }
+
+    // World<->local wrappers around the pure RoomBounds math (which is unit-tested
+    // directly). The room is an axis-aligned box centred on this transform.
+    // Doorway gaps are intentionally ignored - enemies never travel between rooms,
+    // and this is not how the player moves through doors (that is the door
+    // trigger). Single containment chokepoint for all enemy movement
+    // (EnemyStateMachine.MoveTo).
+    public Vector3 ClampToInterior(Vector3 worldPosition, float bodyRadius)
+    {
+        Vector3 local = transform.InverseTransformPoint(worldPosition);
+        local = RoomBounds.ClampLocal(local, RoomSize, WallThickness, bodyRadius);
+        return transform.TransformPoint(local);
+    }
+
+    // True while a body of `bodyRadius` is still within the interior, plus `slack`
+    // of tolerance on each axis. EnemyStateMachine uses this (with slack) to tell
+    // "nudged against the wall by the solver" from "actually escaped the room".
+    public bool IsInsideInterior(Vector3 worldPosition, float bodyRadius, float slack)
+    {
+        Vector3 local = transform.InverseTransformPoint(worldPosition);
+        return RoomBounds.IsInsideLocal(local, RoomSize, WallThickness, bodyRadius, slack);
     }
 
     private void BuildGeometry(RoomData data)
@@ -221,7 +245,7 @@ public class RoomController : MonoBehaviour
 
         LockAllDoors();
 
-        List<HealthComponent> spawned = _enemySpawner.SpawnRoom(_roomData, transform);
+        List<HealthComponent> spawned = _enemySpawner.SpawnRoom(_roomData, this);
         _roomManager.BeginRoom(spawned);
     }
 

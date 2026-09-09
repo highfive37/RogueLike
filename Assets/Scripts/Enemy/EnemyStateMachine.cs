@@ -13,6 +13,8 @@ public class EnemyStateMachine : MonoBehaviour
     private IEnemyState _currentState;
     private IAttackPattern[] _attackPatterns;
     private float _maxAttackRange;
+    private RoomController _room;
+    private float _bodyRadius = 0.5f;
 
     public EnemyData Data => data;
     public Rigidbody Body { get; private set; }
@@ -37,6 +39,10 @@ public class EnemyStateMachine : MonoBehaviour
     {
         Body = GetComponent<Rigidbody>();
         _healthComponent = GetComponent<HealthComponent>();
+        if (TryGetComponent(out CapsuleCollider capsule))
+        {
+            _bodyRadius = capsule.radius;
+        }
         WobblePhaseSeed = EnemyMovementFlavor.RandomPhaseSeed();
 
         IdleState = new EnemyIdleState(this);
@@ -53,6 +59,30 @@ public class EnemyStateMachine : MonoBehaviour
     public void SetProjectilePool(GameObjectPool pool)
     {
         projectilePool = pool;
+    }
+
+    // The room this instance was spawned into. Every enemy translation goes
+    // through MoveTo, which clamps to this room's interior, so nothing - chase,
+    // patrol, retreat, knockback, lunge, sway - can push the enemy out through a
+    // wall (walls are 1-unit boxes and the bodies use discrete collision, so a
+    // fast MovePosition step, knockback especially, would otherwise tunnel; an
+    // escaped enemy then can't be reached and the room never clears). Re-set on
+    // every pool reuse by EnemySpawner.
+    public void SetRoom(RoomController room)
+    {
+        _room = room;
+    }
+
+    // Single chokepoint for enemy movement. States/patterns call this instead of
+    // Body.MovePosition directly so the room clamp is applied in exactly one place.
+    public void MoveTo(Vector3 worldPosition)
+    {
+        if (_room != null)
+        {
+            worldPosition = _room.ClampToInterior(worldPosition, _bodyRadius);
+        }
+
+        Body.MovePosition(worldPosition);
     }
 
     // Called by EnemySpawner right after GameObjectPool.Get() returns, with the exact world
@@ -117,9 +147,39 @@ public class EnemyStateMachine : MonoBehaviour
         _currentState?.Tick(Time.deltaTime);
     }
 
+    // How far past the room's interior limit the body may drift before the
+    // safety net yanks it back - enough to absorb the solver's per-frame
+    // depenetration and a shove from the player's capsule, far short of clearing
+    // a 1-unit wall.
+    private const float ContainmentSlack = 1f;
+
     private void FixedUpdate()
     {
         _currentState?.PhysicsTick(Time.fixedDeltaTime);
+        EnforceRoomContainment();
+    }
+
+    // Belt-and-suspenders behind MoveTo's clamp: if this enemy has still ended up
+    // outside its room (solver ejection between frames, a spawn point that
+    // resolved into a wall, some future movement path that forgets MoveTo), snap
+    // it back to its spawn point rather than leave it stranded beyond a wall
+    // where the player can't hit it and the room can never clear.
+    private void EnforceRoomContainment()
+    {
+        if (_room == null || _currentState == DeadState)
+        {
+            return;
+        }
+
+        if (_room.IsInsideInterior(Body.position, _bodyRadius, ContainmentSlack))
+        {
+            return;
+        }
+
+        Body.position = _room.ClampToInterior(SpawnPosition, _bodyRadius);
+        Body.linearVelocity = Vector3.zero;
+        Physics.SyncTransforms();
+        ChangeState(IdleState);
     }
 
     public void ChangeState(IEnemyState next)
@@ -128,12 +188,6 @@ public class EnemyStateMachine : MonoBehaviour
         _currentState = next;
         _currentState?.Enter();
     }
-
-    // Placeholder baseline for how far a full-knockback (zero KnockbackResistance) hit shoves
-    // this enemy - stands in for a not-yet-built player "knockback power" stat. Once that stat
-    // exists, replace this constant with the attacker-side value carried through
-    // TakeDamage/AnyDamageTaken instead.
-    private const float BaseKnockbackDistance = 1.5f;
 
     public void Stun(float duration)
     {
@@ -161,7 +215,7 @@ public class EnemyStateMachine : MonoBehaviour
         direction.y = 0f;
         direction = direction.sqrMagnitude > 0.0001f ? direction.normalized : -transform.forward;
 
-        float knockbackDistance = BaseKnockbackDistance * (1f - Mathf.Clamp01(data.KnockbackResistance));
+        float knockbackDistance = KnockbackMath.Distance(data.KnockbackResistance);
         Stun(data.StunDuration, direction, knockbackDistance);
     }
 

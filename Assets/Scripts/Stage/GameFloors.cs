@@ -60,8 +60,13 @@ public static class GameFloors
 
     private static List<FloorLayout> LoadAllFloors()
     {
-        string dir = Path.Combine(Application.streamingAssetsPath, FloorsFolder);
+        return LoadAllFloorsFrom(Path.Combine(Application.streamingAssetsPath, FloorsFolder));
+    }
 
+    // Split from LoadAllFloors so EditMode tests can point it at a fixture directory instead of
+    // the real StreamingAssets tree.
+    internal static List<FloorLayout> LoadAllFloorsFrom(string dir)
+    {
         // Discover FloorN.json, N = 1..MaxFloors, stopping at the first gap.
         var paths = new List<string>();
         for (int n = 1; n <= MaxFloors; n++)
@@ -101,9 +106,28 @@ public static class GameFloors
 
     private static FloorLayout LoadFloor(string path, int floorNumber, bool isLastByPosition)
     {
+        string json;
         try
         {
-            string json = File.ReadAllText(path);
+            json = File.ReadAllText(path);
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"GameFloors: failed to read '{path}' ({e.Message}). Using a built-in emergency layout for floor {floorNumber} - fix the file and re-run.");
+            return EmergencyFloor(floorNumber, isLastByPosition);
+        }
+
+        return ParseFloorJson(json, floorNumber, isLastByPosition);
+    }
+
+    // Parse + structural validation of one floor's JSON, split from file I/O so EditMode tests
+    // can feed strings directly. Any structural fault (bad JSON, missing Start/Boss, duplicate
+    // or dangling room ids, an unreachable room) degrades to the emergency layout with
+    // IsCorrupted = true rather than throwing out of here.
+    internal static FloorLayout ParseFloorJson(string json, int floorNumber, bool isLastByPosition)
+    {
+        try
+        {
             FloorDto dto = JsonUtility.FromJson<FloorDto>(json);
             if (dto == null)
             {
@@ -159,12 +183,57 @@ public static class GameFloors
                 throw new Exception($"startRoomId {dto.startRoomId} is not one of the floor's rooms.");
             }
 
+            ValidateGraph(rooms, dto.startRoomId);
+
             return new FloorLayout(floorNumber, isLastByPosition, isCorrupted: false, dto.startRoomId, rooms);
         }
         catch (Exception e)
         {
-            Debug.LogError($"GameFloors: failed to load '{path}' ({e.Message}). Using a built-in emergency layout for floor {floorNumber} - fix the file and re-run.");
+            Debug.LogError($"GameFloors: failed to parse floor {floorNumber} ({e.Message}). Using a built-in emergency layout - fix the file and re-run.");
             return EmergencyFloor(floorNumber, isLastByPosition);
+        }
+    }
+
+    // Every connection must point at a real room, and every room must be reachable from the
+    // start room by following connections. A dangling or disconnected graph reads as a softlock
+    // in play (a room you can't leave, or can never enter) rather than a crash, so it's caught
+    // here and treated like any other structural fault -> emergency floor.
+    private static void ValidateGraph(List<RoomData> rooms, int startRoomId)
+    {
+        var byId = new Dictionary<int, RoomData>(rooms.Count);
+        foreach (RoomData room in rooms)
+        {
+            byId[room.RoomId] = room;
+        }
+
+        foreach (RoomData room in rooms)
+        {
+            foreach (RoomDoorConnection conn in room.Connections)
+            {
+                if (!byId.ContainsKey(conn.TargetRoomId))
+                {
+                    throw new Exception($"room {room.RoomId} connects to non-existent room {conn.TargetRoomId}.");
+                }
+            }
+        }
+
+        var reached = new HashSet<int> { startRoomId };
+        var queue = new Queue<int>();
+        queue.Enqueue(startRoomId);
+        while (queue.Count > 0)
+        {
+            foreach (RoomDoorConnection conn in byId[queue.Dequeue()].Connections)
+            {
+                if (reached.Add(conn.TargetRoomId))
+                {
+                    queue.Enqueue(conn.TargetRoomId);
+                }
+            }
+        }
+
+        if (reached.Count != rooms.Count)
+        {
+            throw new Exception($"{rooms.Count - reached.Count} room(s) unreachable from start room {startRoomId} by following connections.");
         }
     }
 

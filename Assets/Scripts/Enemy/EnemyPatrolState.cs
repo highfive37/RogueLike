@@ -44,7 +44,7 @@ public class EnemyPatrolState : IEnemyState
         direction = EnemyMovementFlavor.ApplyWobble(direction, _machine.WobblePhaseSeed, _machine.Data.WobbleFrequency, _machine.Data.WobbleAmplitude);
 
         Vector3 nextPosition = _machine.Body.position + direction * _machine.Data.PatrolSpeed * fixedDeltaTime;
-        _machine.Body.MovePosition(nextPosition);
+        _machine.MoveTo(nextPosition);
     }
 
     public void Exit()

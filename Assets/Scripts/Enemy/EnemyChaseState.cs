@@ -57,7 +57,7 @@ public class EnemyChaseState : IEnemyState
         Vector3 direction = EnemyMovementFlavor.ApplyWobble(toPlayer.normalized, _machine.WobblePhaseSeed, _machine.Data.WobbleFrequency, _machine.Data.WobbleAmplitude);
 
         Vector3 nextPosition = _machine.Body.position + direction * _machine.Data.MoveSpeed * fixedDeltaTime;
-        _machine.Body.MovePosition(nextPosition);
+        _machine.MoveTo(nextPosition);
     }
 
     public void Exit()

@@ -9,7 +9,7 @@
     "rooms[].gridPosition": "미니맵 표시와 월드 배치에 쓰는 격자 좌표 {x, y}(정수). 월드 위치 = (x, 0, y) * gridSpacing(현재 50). 서로 연결된 두 방은 격자에서 x나 y가 정확히 1 차이나고 나머지 축은 같아야, 문 방향(North/South/East/West)과 실제 배치가 맞아떨어집니다. North=+y, South=-y, East=+x, West=-x.",
     "rooms[].roomSize": "방 한 변의 길이(월드 유닛). 바닥/벽 지오메트리가 이 크기로 절차 생성됩니다. 기본 40, 시작방은 보통 16, 아이템방은 20. 생략하거나 0 이하로 두면 40으로 처리합니다.",
     "rooms[].enemies": "이 방에 스폰되는 적 목록. Start/Item 방은 보통 빈 배열 []. Combat/Boss 방은 진입 시 이 목록대로 스폰되고, 전부 처치해야 방이 클리어됩니다.",
-    "rooms[].enemies[].variant": "적 종류. Melee / Ranged / Boss 중 하나(대소문자 구분). 각각 EnemySpawner에 등록된 풀로 매핑됩니다. 인식 안 되는 값이면 그 층 전체가 손상 처리됩니다.",
+    "rooms[].enemies[].variant": "적 종류. Melee / Ranged / ErraticMelee / BurstRanged / Boss 중 하나(대소문자 구분). ErraticMelee=갈지자로 접근하는 근접, BurstRanged=윈드업 후 여러 발 연사하는 원거리. 각각 EnemySpawner에 등록된 풀로 매핑됩니다. 인식 안 되는 값이면 그 층 전체가 손상 처리됩니다.",
     "rooms[].enemies[].spawnPosition": "방 중심(0,0,0) 기준 로컬 좌표 {x, y, z}. y는 바닥 위 높이로 보통 1.0(보스는 1.5). x/z는 -roomSize/2 ~ +roomSize/2 범위 안에 두세요.",
     "rooms[].connections": "이 방에서 다른 방으로 나가는 문 목록. 한 방향당 최대 1개.",
     "rooms[].connections[].direction": "문 방향. North / South / East / West 중 하나(대소문자 구분). 인식 안 되는 값이면 그 층 전체가 손상 처리됩니다.",

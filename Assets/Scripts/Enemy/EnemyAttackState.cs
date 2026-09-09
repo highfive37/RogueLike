@@ -127,7 +127,7 @@ public class EnemyAttackState : IEnemyState
 
         Vector3 perpendicular = Vector3.Cross(Vector3.up, fromCenter.normalized);
         float sway = Mathf.Sin(Time.time * _machine.Data.WobbleFrequency + _machine.WobblePhaseSeed) * _machine.Data.WobbleAmplitude;
-        _machine.Body.MovePosition(_idleSwayCenter + perpendicular * sway);
+        _machine.MoveTo(_idleSwayCenter + perpendicular * sway);
     }
 
     public void Exit()

@@ -54,13 +54,33 @@ HandlePlayerDied`(스크립트 캡슐 틱오버 연출), (f) 대시 중 `Physics
 런지 오버슈트 클램프(`MeleeAttackPattern`, 플레이어 관통 방지 — 피격 넉백 시스템은 아직 없음,
 차후),
 (i) `GameOverUI` 페이드를 dim/content/buttons 단일 타임라인으로 병합 — §2·§3·§5 갱신, 상세는
-`DevLog.md`/`AI_Decision_Log.md` 2026-09-08.
+`DevLog.md`/`AI_Decision_Log.md` 2026-09-08;
+2026-09-09 씬 전환 페이드(로드맵 §6 #6 잔여) — 신규 `SceneTransitionController`(프로젝트 유일의
+`DontDestroyOnLoad` 오브젝트, 전체화면 검은 `CanvasGroup` 오버레이를 프리팹 없이 코드로 생성).
+`GameFlow.LoadScene`이 동기 `SceneManager.LoadScene` → `EnsureExists().FadeAndLoad(name,
+PauseState.ForceResume)`로 위임(페이드 아웃 unscaled → `LoadSceneAsync(Single)` → 1프레임 →
+페이드 인, `ForceResume`는 로드 직전 콜백으로). 씬 배선 무변경. 구조/1회 전환은 자동 검증,
+연속 전환 페이드 완주는 유저 실플레이 대기 — §2·§3·§6 갱신, 상세는 `DevLog.md`/
+`AI_Decision_Log.md` 2026-09-09;
+2026-09-09 (2) 적 방 이탈 → 진행 불가 블로킹 버그 수정 — 적 이동 6곳을 단일 `EnemyStateMachine.
+MoveTo`로 수렴 + 신규 `RoomController.ClampToInterior`로 방 내부 AABB 클램프(A) + `FixedUpdate`
+`EnforceRoomContainment` 안전망(B). `EnemySpawner.SpawnRoom`도 스폰 좌표 클램프 + `RoomController`
+주입. 원인은 넉백(2026-09-08)의 `MovePosition` 절대점 러프가 Discrete 콜라이더 벽(두께 1)을
+관통 + `CanSeePlayer`가 순수 거리라 탈출한 적이 복귀 안 함. 클램프 수치·컴파일은 자동 검증,
+런타임은 유저 실플레이 대기(자동화 Play Mode `frameCount` 고정) — §2·§4 갱신, 상세는 `DevLog.md`/
+`AI_Decision_Log.md` 2026-09-09;
+2026-09-09 (3) 신규 적 변형 2종(`ErraticMelee`/`BurstRanged`)을 `Floor2.json`·`Floor3.json`의
+전 전투방에 고루 배치(2026-09-08엔 Floor1에만 있었음) — `variant` 문자열만 교체, 스폰 좌표·적
+수·구조 불변. 실제 `GameFloors` 로더로 파싱·분포 검증 통과.
 
 ---
 
 ## 1. 프로젝트 목표
 
-- **장르**: 3D 쿼터뷰 액션 로그라이트
+- **장르**: 3D 쿼터뷰 액션 로그라이트 — **3D 바인딩 오브 아이작 / 엔터 더 건전** 계열
+  (유저가 2026-09-09에 명시적으로 선언: 문으로 연결된 공간형 방, **절차적 생성 층**,
+  타이트한 트윈스틱식 이동/회피, 런 기반). 앞으로 작업 제안·범위 판단의 기준점.
+  `ProjectPlan.md` §2 Genre에도 반영.
 - **목적**: 완성도 있는 게임 자체보다, **게임 클라이언트 개발자 포트폴리오**로서
   기술적 의사결정을 설명할 수 있는 작지만 완결된 프로젝트를 만드는 것
 - **핵심 루프**: 캐릭터/무기 아키타입 선택 → 방 입장 → 전투 → 클리어(문 해제) →
@@ -98,7 +118,11 @@ HandlePlayerDied`(스크립트 캡슐 틱오버 연출), (f) 대시 중 `Physics
 Assets/Scripts/
 ├─ Core/      (GameFlow — 씬 라우팅 정적 클래스 2026-09-04 (3): 씬 이름 상수 +
 │              StartRun/RetryRun/ReturnToTitle + PendingArchetype(씬 넘겨 전달되는
-│              선택 아키타입))
+│              선택 아키타입); SceneTransitionController — 2026-09-09 신규, 프로젝트
+│              유일의 DontDestroyOnLoad. 검은 전체화면 CanvasGroup 오버레이(프리팹
+│              없이 EnsureExists()가 코드로 생성). FadeAndLoad(name, onBeforeActivate):
+│              페이드 아웃(unscaled) → LoadSceneAsync(Single) → 1프레임 → 페이드 인.
+│              GameFlow.LoadScene이 여기로 위임, 인런 층 전환 FloorTransitionUI와는 별개)
 ├─ Player/    (PlayerMovement, PlayerAim, PlayerDodgeRoll, PlayerCombat,
 │              PlayerInputActions, PlayerPassiveStats, PlayerActiveItemInventory,
 │              ActiveItemController, CharacterSelectController — 2026-09-04 (3)부터
@@ -138,7 +162,20 @@ Assets/Scripts/
 │              DebugOverlayController 등)
 └─ Pooling/   (GameObjectPool, PooledObject)
 ```
-asmdef(어셈블리 분리)는 여전히 도입하지 않음 — 스크립트 규모상 과설계로 판단.
+asmdef: 2026-09-09에 `Assets/Scripts/RogueLike.asmdef` **하나**를 도입(전체를 단일 어셈블리로
+래핑, A1). 이유는 **오직 테스트 프레임워크 요구**(UTF 테스트 asmdef는 `Assembly-CSharp`를 참조
+못 함) — 계층 분리(Core/Runtime 등)는 여전히 안 함(실제 의존성 방향 문제가 드러나면 그때).
+references: `Unity.InputSystem`, `UnityEngine.UI`. `Assembly-CSharp`엔 `Assets/TutorialInfo/`
+템플릿 잔재만 남음(정리 대상). 상세 `AI_Decision_Log.md` 2026-09-09 (2).
+
+테스트(2026-09-09 착수, 포트폴리오 트랙 #1): `Assets/Tests/EditMode/` + `Assets/Tests/PlayMode/`,
+asmdef 각 1개(`RogueLike.Tests.EditMode`/`.PlayMode`). 현재 **49개**(EditMode 39 + PlayMode 10)
+전부 통과 — `Health`/`KnockbackMath`/`RoomBounds` 순수 로직, `GameFloors` 파싱·그래프 검증·폴백,
+`GameBalance` 플레이어 스탯 파싱, 오브젝트 풀 이중반환 가드, **방 이탈 컨테인먼트 회귀 잠금**,
+적 FSM 전이. 테스트를 위해 순수 로직 추출(`KnockbackMath`/`RoomBounds`), `GameFloors`/`GameBalance`에
+`internal` 파싱 시크릿 + `AssemblyInfo.cs`의 `InternalsVisibleTo`. `GameFloors`에 그래프 연결성·
+dangling connection 검증 신규(단절/댕글링 = 소프트락 → 이제 `IsCorrupted` 폴백). Phase 4(CI)는
+유저의 Unity 라이선스·GitHub 시크릿 등록 필요. 진행 상황 `DevLog.md` 2026-09-09.
 
 `StageData`/`StageDataAsset`/`IStageDataProvider`/
 `ScriptableObjectStageDataProvider`(4개, 웨이브 반복 방식)와
@@ -242,7 +279,7 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 | 액티브 아이템 보유/장착 | `PlayerActiveItemInventory`, `OwnedActiveItem`, `ActiveItemEquipUI` | ESC 메뉴에서 소지 아이템 목록 확인 + 장착 전환 |
 | 패시브 스탯 | `PlayerPassiveStats`, `PlayerStatsPanelUI` | 공격력/이동속도/사거리/공격속도 4종 전부 "base + 고정값 보너스" 덧셈 모델로 통일(2026-08-31, §4 참고), ESC 메뉴에 Pip 바(10칸)로 표시 |
 | 밸런스 수치 | `GameBalance`, `Assets/StreamingAssets/Balance/*.json` | 플레이어 기본 스탯/패시브 아이템 효과를 JSON에서 로드, 파일 없거나 파싱 실패 시 내장 기본값으로 폴백 |
-| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead; 피격 시 `HealthComponent.AnyDamageTaken` 구독으로 `StunDuration`만큼 Stunned + `KnockbackResistance` 기반 넉백 — 2026-09-08), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`, `Interrupt()` 있음), 공유 헬퍼 `RangedKitingBehavior`(원거리 3패턴 공통 후퇴/윈드업), `EnemyMovementFlavor`(직선 이동에 수직 sine wobble) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화. 원거리는 예외 없이 "가까우면 후퇴 → 벌어지면 윈드업 → 발사". 사거리(`MaxAttackRange`) 안에서는 Chase가 전진을 멈추고 이동은 공격 패턴 런지만 담당 — 공격 사이엔 정지·회전만(2026-09-08, 근접 적 공전 수정) |
+| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead; 피격 시 `HealthComponent.AnyDamageTaken` 구독으로 `StunDuration`만큼 Stunned + `KnockbackResistance` 기반 넉백 — 2026-09-08. **모든 적 이동은 단일 초크포인트 `MoveTo(worldPos)` 경유** → 스폰 시 주입된 `RoomController`의 `ClampToInterior`로 방 내부 AABB에 클램프 + `FixedUpdate`의 `EnforceRoomContainment`가 slack 밖으로 나간 적을 스폰 지점으로 스냅 — 2026-09-09 적 방 이탈/진행 불가 버그 수정, §4 참고), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`, `Interrupt()` 있음), 공유 헬퍼 `RangedKitingBehavior`(원거리 3패턴 공통 후퇴/윈드업), `EnemyMovementFlavor`(직선 이동에 수직 sine wobble) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화. 원거리는 예외 없이 "가까우면 후퇴 → 벌어지면 윈드업 → 발사". 사거리(`MaxAttackRange`) 안에서는 Chase가 전진을 멈추고 이동은 공격 패턴 런지만 담당 — 공격 사이엔 정지·회전만(2026-09-08, 근접 적 공전 수정). 벽 관통 방지는 물리(적 Rigidbody는 Discrete)가 아니라 `MoveTo` 클램프가 담당 |
 | 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss/ErraticMelee/BurstRanged — 뒤 2종 2026-09-08 추가) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거. 격리 측정용 `BenchmarkSpawner`는 이 경로를 우회(§3 Stage 3) |
 | 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, 지오메트리 생성, 문 배선), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커), `RoomTransitionController`(문 통과 시 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)) |
 | 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거). 드롭 좌표는 `Instantiate` 전에 `NudgeClearOfDoors()`로 근처 문 트리거 밖으로 밀어냄(문 앞 드랍템을 문 안 밟고 줍게, 슬라이드 안 보이게). 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시(`HideImmediate()`로 층 전환 시 즉시 정리) |
@@ -438,6 +475,16 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   해당). 이동 전 캡슐을 반지름만큼 뒤로 물린 지점에서 `CapsuleCast`, 히트 시 `ProjectOnPlane`로
   벽 방향 성분 제거(정면=정지·스침=슬라이드). 정면 충돌은 모든 속도에서 막힘, 얕은 스침 +
   극단 이동속도 잔여는 §5 이월.
+- **적 방 이탈 방지 = 물리가 아니라 방 내부 AABB 클램프(2026-09-09)**: 적 이동 6곳(chase/patrol/
+  retreat/knockback/lunge/sway)이 전부 생짜 `Rigidbody.MovePosition`이라 방 유지가 벽 콜라이더
+  충돌뿐이었는데, 적 Rigidbody는 Discrete이고 2026-09-08 넉백(`MovePosition` 절대 목표점 러프,
+  첫 스텝 ≈0.46유닛)이 두께 1 벽을 관통 → 적이 방 밖으로 나가고 `CanSeePlayer`가 순수 거리라
+  복귀도 안 해 방 클리어 불가(진행 정지). 플레이어 `WallClamp`(스윕 캐스트)와 달리 적은 **방이
+  축 정렬 박스**라는 걸 이용해 `RoomController.ClampToInterior`로 위치를 내부로 투영하는 방식 채택
+  — 물리 튜닝·충돌 모드·"모든 미래 이동 코드가 벽 체크를 기억"에 의존하지 않는 결정적 차단.
+  단일 초크포인트 `EnemyStateMachine.MoveTo`로 수렴, `FixedUpdate` 안전망이 그래도 벗어난 적을
+  스폰 지점으로 스냅. 대안 비교는 `AI_Decision_Log.md` 2026-09-09. 적이 방 사이를 이동하는 설계가
+  생기면 문 통로 예외를 넣는 형태로 확장 필요.
 
 ---
 
@@ -506,11 +553,37 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
    캐릭터 선택 일러스트 버튼 + Start 홀드 즉시선택 버그 수정도 완료(2026-09-04 (3)~(6)).
    **Game Over 흐름**: 사망 감지/연출/`GameOverUI` 표시 + 버튼(재시작/타이틀) 동작까지
    구현·유저 확인 완료(2026-09-08, `GameOverUI` 페이드는 dim/content/buttons 단일 타임라인 동시).
-   남은 부분: 씬 전환 페이드, 실플레이 전투 주파 검증. 타이틀·일시정지 UI 레이아웃 미세조정은
-   **포트폴리오 마감 작업 이후로 이연**(유저 지정 2026-09-08). 층간 전환(카운트다운+페이드+제자리
-   재빌드)은 2026-09-02 (3)에 이미 구현됨.
+   **씬 전환 페이드**: 구현 완료(2026-09-09, `SceneTransitionController` — §2 Core/ 참고).
+   구조·1회 전환은 자동 검증 통과, **연속 전환 페이드 완주 + 전투 1주파 실플레이 검증만 이월**
+   (자동화 Play Mode 코루틴 한계). 타이틀·일시정지 UI 레이아웃 미세조정은 **포트폴리오 마감
+   작업 이후로 이연**(유저 지정 2026-09-08). 층간 전환(카운트다운+페이드+제자리 재빌드)은
+   2026-09-02 (3)에 이미 구현됨. 이 실플레이 검증 통과 시 #6 종료 → 남은 트랙은 Phase 4/5/7.
 7. **Stage 3 잔여 항목** — 최적화(`EnemyAIManager` AI Tick 분산, `GetComponent` 캐싱) + §6.5
    After 측정은 **Phase 6(아트 통합 이후)로 의도적 이연**(2026-09-08). Before 표 + 벤치 인프라는
    완료(§3). 현 시점 실측 병목 없음이 근거(`AI_Decision_Log.md` 2026-09-08 (5)).
 8. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이
    안정화된 이후 별도로 진행.
+
+---
+
+### 포트폴리오 기술 트랙 — 확정 우선순위 (2026-09-09, 유저 검토 완료)
+
+`DevLog.md` 2026-09-08 "다음 작업 후보" 리스트를 장르 선언(3D 아이작/건전)과 현재
+진행도를 반영해 순서 확정. 상세 근거는 `DevLog.md` 2026-09-09.
+
+0. **§6 #6 마감** — 씬 페이드 + 3층 1주파 실플레이 검증 (진행 중, 포트폴리오 항목 아님).
+1. **자동화 테스트 스위트(EditMode+PlayMode) + CI** — 과설계 위험 0, §12 "AI 코드 검증"
+   직접 답, 뒤 작업의 안전망. 규모 2~3 세션(GameCI 라이선스 설정만 fiddly).
+2. **결정론적 시드 절차적 층 생성** — 장르 정체성 간극(고정 3층 → 절차적). `IFloorLayoutProvider`
+   심의 회수 + per-system 시드 RNG 아키텍처. 규모 3~4 세션. 층 수는 3 고정, 레이아웃만 절차적,
+   JSON provider는 고정 시드 디버그 폴백으로 유지.
+3. **적 경로탐색(그리드 A* 권장) + 방 안 장애물** — 절차적 방이 생긴 뒤 가치 상승(장애물이
+   생성기의 일부). `EnemyChaseState` 이동만 교체. 프로파일러 계측(원래 #7)을 여기 흡수. 규모 4~5 세션.
+4. **입력 버퍼링 + 프레임레이트 독립성** — 건전식 타이트 조작. 규모 1 세션. 게임필 우선 시 3과 순서 교체 가능.
+5. **커스텀 에디터 툴링 — SO 검증 패스** (+ 여유 시 층 그래프 비주얼라이저) — 노력 대비 신호 큼, 1 세션.
+6. **세이브/로드 — 버전드 직렬화 + 런 이어하기** — 아무것도 언블록 안 함, 가장 나중 또는 마감 시 스킵.
+
+**아트 리소스 적용(무료 에셋/AI 생성) 시점**: 2번(절차적 생성) 착수 직전 ~ 진행 중 병행 권장 —
+가장 이른 항목은 아니지만 가장 늦지도 않음. 상세는 `DevLog.md` 2026-09-09.
+
+**병렬/후속**: Addressables(Phase 5)는 아트 후 축소 범위로. Stage 3 최적화 After(Phase 6)는 아트에 게이팅.

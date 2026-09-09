@@ -1,0 +1,71 @@
+using NUnit.Framework;
+using UnityEngine;
+
+namespace RogueLike.Tests
+{
+    // Locks the room-interior clamp math that keeps enemies inside a room (the 2026-09-09
+    // "enemy escapes the room -> run softlock" fix). RoomBounds is pure/local-space, so no
+    // scene or Transform is needed here.
+    public class RoomBoundsTests
+    {
+        private const float Tol = 0.0001f;
+        private const float RoomSize = 40f;
+        private const float WallThickness = 1f;
+        private const float Radius = 0.5f;
+
+        // 40/2 - 1/2 - 0.5 - 0.1 = 18.9
+        private const float ExpectedLimit = 18.9f;
+
+        [Test]
+        public void InteriorHalfExtent_MatchesFormula()
+        {
+            Assert.That(RoomBounds.InteriorHalfExtent(RoomSize, WallThickness, Radius),
+                Is.EqualTo(ExpectedLimit).Within(Tol));
+        }
+
+        [Test]
+        public void InteriorHalfExtent_NeverNegative_ForTinyRoom()
+        {
+            Assert.That(RoomBounds.InteriorHalfExtent(1f, WallThickness, Radius),
+                Is.EqualTo(0f).Within(Tol));
+        }
+
+        [Test]
+        public void ClampLocal_PullsOutsidePoint_ToTheLimit_OnBothAxes()
+        {
+            var clamped = RoomBounds.ClampLocal(new Vector3(100f, 0f, -100f), RoomSize, WallThickness, Radius);
+            Assert.That(clamped.x, Is.EqualTo(ExpectedLimit).Within(Tol));
+            Assert.That(clamped.z, Is.EqualTo(-ExpectedLimit).Within(Tol));
+        }
+
+        [Test]
+        public void ClampLocal_LeavesInsidePoint_Unchanged()
+        {
+            var p = new Vector3(3f, 1f, -7f);
+            Assert.That(RoomBounds.ClampLocal(p, RoomSize, WallThickness, Radius), Is.EqualTo(p));
+        }
+
+        [Test]
+        public void ClampLocal_DoesNotTouchY()
+        {
+            var clamped = RoomBounds.ClampLocal(new Vector3(100f, 42f, 0f), RoomSize, WallThickness, Radius);
+            Assert.That(clamped.y, Is.EqualTo(42f).Within(Tol));
+        }
+
+        [Test]
+        public void IsInsideLocal_False_WhenBeyondLimitPlusSlack()
+        {
+            // limit 18.9 + slack 1 = 19.9; 25 is well outside
+            Assert.That(RoomBounds.IsInsideLocal(new Vector3(25f, 0f, 0f), RoomSize, WallThickness, Radius, 1f),
+                Is.False);
+        }
+
+        [Test]
+        public void IsInsideLocal_True_WithinTheSlackBand()
+        {
+            // 19.5 is past the 18.9 clamp limit but within the 19.9 slack band -> still "inside"
+            Assert.That(RoomBounds.IsInsideLocal(new Vector3(19.5f, 0f, 0f), RoomSize, WallThickness, Radius, 1f),
+                Is.True);
+        }
+    }
+}

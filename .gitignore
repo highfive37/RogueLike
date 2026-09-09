@@ -71,6 +71,17 @@ Desktop.ini
 /Assets/AssetStoreTools*
 
 # ============================================
+# Unity Test Framework / CI output
+# ============================================
+
+/artifacts/
+[Tt]est[Rr]esults/
+TestResults*.xml
+/CodeCoverage/
+*.alf
+*.ulf
+
+# ============================================
 # Claude Code - machine/local settings only
 # ============================================
 

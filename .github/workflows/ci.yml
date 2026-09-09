@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One run per ref; a newer push cancels the in-flight run for the same branch/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: EditMode + PlayMode tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      # Library/ is gitignored; caching it turns a ~15 min cold import into a
+      # ~2 min warm one on later runs. Key changes only when project inputs change.
+      - name: Cache Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-
+
+      - name: Run tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          # Unity Personal license (all three required for GameCI v4). Set these in
+          # repo Settings -> Secrets and variables -> Actions.
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: .
+          # Explicit - matches ProjectSettings/ProjectVersion.txt; GameCI editor
+          # image for this version is confirmed present on Docker Hub.
+          unityVersion: 6000.3.22f1
+          testMode: all
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          artifactsPath: artifacts
+          checkName: Unity test results
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: artifacts
+          retention-days: 14

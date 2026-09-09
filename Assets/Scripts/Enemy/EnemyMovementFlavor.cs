@@ -4,8 +4,9 @@ using UnityEngine;
 // EnemyPatrolState, RetreatAndShootPattern) - adds a perpendicular sine-wave wobble on top of a
 // straight-line direction so multiple enemies chasing/retreating don't all draw the exact same
 // ruler-straight path. Only the instantaneous heading oscillates; average direction and speed
-// are unchanged, so callers still pass the result through WallClamp exactly as before and every
-// distance-based FSM transition (DetectionRange/LeashRange/MaxAttackRange) stays unaffected.
+// are unchanged, so the resulting position still goes through EnemyStateMachine.MoveTo (which
+// clamps it to the room interior) and every distance-based FSM transition
+// (DetectionRange/LeashRange/MaxAttackRange) stays unaffected.
 public static class EnemyMovementFlavor
 {
     public static Vector3 ApplyWobble(Vector3 direction, float phaseSeed, float frequency, float amplitude)

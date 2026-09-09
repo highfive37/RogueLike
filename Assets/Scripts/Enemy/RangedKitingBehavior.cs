@@ -87,7 +87,7 @@ public class RangedKitingBehavior
         retreatDirection = EnemyMovementFlavor.ApplyWobble(retreatDirection, machine.WobblePhaseSeed, machine.Data.WobbleFrequency, machine.Data.WobbleAmplitude);
 
         Vector3 nextPosition = machine.Body.position + retreatDirection * moveSpeed * fixedDeltaTime;
-        machine.Body.MovePosition(nextPosition);
+        machine.MoveTo(nextPosition);
     }
 
     private void BeginWindUp(EnemyStateMachine machine)

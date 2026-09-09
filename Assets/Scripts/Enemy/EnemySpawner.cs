@@ -40,9 +40,10 @@ public class EnemySpawner : MonoBehaviour
         }
     }
 
-    public List<HealthComponent> SpawnRoom(RoomData room, Transform roomOrigin)
+    public List<HealthComponent> SpawnRoom(RoomData room, RoomController roomController)
     {
         var spawned = new List<HealthComponent>();
+        Transform roomOrigin = roomController.transform;
 
         foreach (StageEnemyEntry entry in room.Enemies)
         {
@@ -55,9 +56,21 @@ public class EnemySpawner : MonoBehaviour
             Vector3 worldPosition = roomOrigin.TransformPoint(entry.SpawnPosition);
             GameObject instance = pool.Get(worldPosition, Quaternion.identity);
 
+            // An authored spawn point near a wall (or resolved into one) would put
+            // the enemy in/through the wall from frame one - pull it inside the
+            // room before anything reads this position.
+            float bodyRadius = instance.TryGetComponent(out CapsuleCollider capsule) ? capsule.radius : 0.5f;
+            Vector3 clamped = roomController.ClampToInterior(worldPosition, bodyRadius);
+            if (clamped != worldPosition)
+            {
+                instance.transform.position = clamped;
+                worldPosition = clamped;
+            }
+
             if (instance.TryGetComponent(out EnemyStateMachine enemyStateMachine))
             {
                 enemyStateMachine.SetProjectilePool(projectilePool);
+                enemyStateMachine.SetRoom(roomController);
                 enemyStateMachine.SetSpawnPosition(worldPosition);
             }
 
@@ -68,6 +81,11 @@ public class EnemySpawner : MonoBehaviour
                 EnemySpawned?.Invoke(health, entry.Variant);
             }
         }
+
+        // Physics.autoSyncTransforms is off project-wide, and the loop above may
+        // have hard-set some transforms via the clamp - sync once so this frame's
+        // physics queries and the enemies' first MovePosition see the real spots.
+        Physics.SyncTransforms();
 
         return spawned;
     }

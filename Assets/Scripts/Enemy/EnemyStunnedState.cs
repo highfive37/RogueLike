@@ -57,7 +57,9 @@ public class EnemyStunnedState : IEnemyState
         _knockbackElapsed += fixedDeltaTime;
         float t = _knockbackDuration > 0f ? Mathf.Clamp01(_knockbackElapsed / _knockbackDuration) : 1f;
         float eased = 1f - (1f - t) * (1f - t);
-        _machine.Body.MovePosition(Vector3.Lerp(_knockbackStart, _knockbackTarget, eased));
+        // Through MoveTo so a knockback aimed at a nearby wall clamps to the room
+        // interior instead of tunnelling the enemy out (the original blocking bug).
+        _machine.MoveTo(Vector3.Lerp(_knockbackStart, _knockbackTarget, eased));
     }
 
     public void Exit()

@@ -30,6 +30,260 @@
 
 ---
 
+## 2026-09-09
+
+### 진행 내용
+
+**적 방 이탈 → 진행 불가 버그 수정 (블로킹, 유저 제보) — 방 내부 클램프 + 안전망**
+- 증상: 방 진입 시 간혹 스폰된 적이 방 밖에 있거나 밖으로 이동 → 그 적을 못 죽여 방 클리어
+  불가 → 진행 정지.
+- 원인 (3중):
+  1. 적 이동이 전부 생짜 `Rigidbody.MovePosition`(chase/patrol/retreat/knockback/lunge/sway
+     6곳), 벽 클램프·스윕 전무. 적을 방에 가두는 건 벽 큐브 콜라이더 충돌뿐인데 적 Rigidbody가
+     Discrete(`m_CollisionDetection: 0`, 스윕 없음), 벽 두께 1.
+  2. 2026-09-08 넉백: `EnemyStunnedState`가 `MovePosition`으로 절대 목표점(`시작 + 방향×1.5`)을
+     ease-out 러프 — 첫 FixedUpdate 스텝 ≈0.46유닛(캡슐 반지름 0.5 육박). 넉백 방향이 벽 쪽이면
+     (플레이어와 벽 사이 적을 때리면 흔함) 1~2스텝에 캡슐 중심이 벽 중간면을 넘어가 솔버가 바깥으로
+     배출, `MovePosition`이 매 스텝 절대점 재조준이라 솔버 반력 무효(2026-09-04 플레이어 벽 관통과
+     동일 계열). 2026-09-08부터 모든 원거리 변형이 `RangedKitingBehavior`로 후퇴까지 해 빈도 증가.
+  3. `EnemyStateMachine.CanSeePlayer`가 순수 거리(LOS 없음) → 벽 밖 적도 플레이어를 "봄" →
+     Chase/Attack 유지하며 벽 관통 사격, `leashRange 9`(방 40) 안이라 Patrol 복귀도 안 함 → 영구 블록.
+- 수정 (A+B, 대안 비교 `AI_Decision_Log.md` 2026-09-09):
+  - **A. 방 내부 AABB 클램프**: `RoomController`에 `RoomSize` 노출 + `ClampToInterior(worldPos,
+    bodyRadius)` / `IsInsideInterior(worldPos, bodyRadius, slack)`. 내부 한계 =
+    `RoomSize/2 - WallThickness/2 - bodyRadius - 0.1`. 문 간격 무시(적은 방 간 이동 안 함).
+    `EnemyStateMachine`에 `SetRoom` + 단일 이동 초크포인트 `MoveTo(worldPos)` 추가 — 6개 이동
+    호출부를 `Body.MovePosition` → `_machine.MoveTo`로(회전 호출은 그대로). `EnemySpawner.SpawnRoom`
+    시그니처 `(RoomData, RoomController)`로, 스폰 좌표도 같은 클램프 + `SetRoom` 주입 + 말미
+    `Physics.SyncTransforms()`(autoSyncTransforms off이므로).
+  - **B. 안전망**: `EnemyStateMachine.FixedUpdate`에서 `EnforceRoomContainment()` — `_room`
+    내부에서 slack 1유닛을 벗어나면(솔버 depenetration·플레이어 밀림 흡수용, 벽 두께 1보다 작음)
+    스폰 지점으로 `Body.position` 스냅 + 속도 0 + `SyncTransforms` + Idle. 벽에 박힌 authoring
+    좌표나 `MoveTo`를 빠뜨린 미래 이동 경로 대비 보험.
+  - `EnemyMovementFlavor` 잘못된 주석("callers pass through WallClamp" — 적은 WallClamp 쓴 적
+    없음) → `MoveTo` 언급으로 수정.
+- 미채택: C(적 Rigidbody Continuous + 넉백 스텝 상한). A가 컨테인먼트를 결정적으로 보장하므로
+  불필요 — 여유 시 defense-in-depth로 추가 가능.
+
+**씬 전환 페이드 (로드맵 §6 #6 잔여) — 영속 페이드 오버레이**
+- 문제: `GameFlow.LoadScene()`이 `SceneManager.LoadScene`을 동기 호출 → 타이틀↔인게임,
+  인게임 재시작 전환이 전부 하드 컷(이전 씬이 한 프레임 얼었다가 새 씬이 툭 뜸). 전환 지점 4곳
+  (`StartRun`/`RetryRun`/`ReturnToTitle`, 그리고 이 셋을 거치는 `FloorCompleteUI`·`GameOverUI`·
+  `PauseMenuButtons`의 버튼)이 전부 `GameFlow` 세 메서드를 지나감.
+- 설계: A1(영속 페이드 캔버스) 채택 — 대안 비교는 `AI_Decision_Log.md` 2026-09-09.
+- 신규 `Assets/Scripts/Core/SceneTransitionController.cs`:
+  - 프로젝트 유일의 `DontDestroyOnLoad` 오브젝트. 전체화면 검은 `CanvasGroup` 오버레이.
+  - **프리팹/Resources 없이 전부 코드로 생성** — 칠할 게 없는 단색 페이드라 authoring 대상이
+    아니고, 코드 생성 오브젝트는 씬에서 빠뜨리거나 빌드에서 누락될 수 없음. `EnsureExists()`가
+    `new GameObject("SceneTransition", typeof(RectTransform), Canvas, GraphicRaycaster,
+    CanvasGroup, Image, SceneTransitionController)`로 1회 생성, 이후 재사용. 게임을 타이틀로
+    바로 부팅할 때는 페이드 인이 없음(맞는 동작 — 페이드해 올라올 대상이 없음).
+  - `FadeAndLoad(sceneName, onBeforeActivate)`: 검게 페이드(unscaled 0.35s) → `onBeforeActivate`
+    실행 → `LoadSceneAsync(Single)` 완료 대기 → 새 씬 초기화 1프레임 대기 → 페이드 인(0.35s).
+    전환 중 재호출은 `_isTransitioning` 가드로 무시(메뉴 버튼 더블클릭 방지).
+  - `Canvas.sortingOrder = short.MaxValue`로 모든 인게임 캔버스 위, `GraphicRaycaster` +
+    `blocksRaycasts`로 페이드 중 클릭 차단.
+- `GameFlow.LoadScene()` 재배선: `SceneManager.LoadScene(name)` →
+  `SceneTransitionController.EnsureExists().FadeAndLoad(name, PauseState.ForceResume)`.
+  `PauseState.ForceResume`를 `onBeforeActivate`로 넘겨, 페이드 아웃 동안엔 이전 씬이 pause 유지
+  (fade는 unscaled)되고 새 씬 진입 직전에만 timeScale 복구 — 씬 로드는 엔진 전역 timeScale을
+  리셋하지 않으므로 어딘가에서 풀어줘야 함. `GameFlow`는 정적 유지(코루틴은 영속 오브젝트가 소유),
+  미사용이 된 `using UnityEngine.SceneManagement;` 제거. 씬 배선·인스펙터 변경 없음.
+
+**후속 수정(유저 실플레이 피드백)**
+- 페이드 인이 안 보임 → Prototype 로드 직후 `StageManager.BuildFloor()` 동기 생성으로 프레임이
+  수백 ms 튀고, 페이드 인 코루틴 첫 스텝이 그 delta를 먹어 1프레임 만에 끝남. 수정: `Fade` 루프의
+  프레임당 진행량을 33ms로 캡(스파이크가 있어도 최소 ~10프레임 렌더) + 로드 후 정착 프레임 1→2.
+  유저 확인: 페이드 인 정상.
+- 캐릭터 선택 → 인게임 페이드 아웃이 잘 안 보임 → 원인 2가지. (1) `CharacterSelectUI.HandleChosen`이
+  `_onChosen`(씬 전환 시작) 호출 전에 `panel.SetActive(false)`로 선택 UI를 즉시 꺼서, 페이드 아웃이
+  이미 비어버린 화면 위에서 재생됨 → 그 `SetActive(false)` 제거(오버레이가 곧바로 입력을 막고,
+  Title 씬 언로드가 패널을 파괴하므로 안전). (2) 밝은 화면 → 검정 페이드는 검정 → 씬 페이드인보다
+  체감이 약함 → `FadeOutDuration` 0.35→0.5s(페이드 인은 0.35s 유지, 유저가 이미 만족).
+
+**신규 적 변형 2종을 1-2·1-3층에도 배치 (유저 요청)**
+- 2026-09-08엔 `Floor1.json`에만 `ErraticMelee`/`BurstRanged`가 있었음. `Floor2.json`(전투방 7개)·
+  `Floor3.json`(전투방 10개)의 모든 전투방에 최소 1종씩 고루 배치 — 기존 `Melee`→`ErraticMelee`,
+  `Ranged`→`BurstRanged`로 `variant` 문자열만 교체(스폰 좌표·방당 총 적 수·연결·보스방 전부 불변).
+  큰 방은 2~3종. `Floor1.json`의 `_fieldGuide` variant 설명도 5종 전부 나열하도록 갱신(기존
+  "Melee/Ranged/Boss"만 적혀 있어 실제와 불일치했음).
+- 배치 결과(실제 `GameFloors` 로더로 검증): Floor2 Erratic 7 / Burst 7 / Melee 13 / Ranged 10,
+  전투방 7/7 신규 변형 포함. Floor3 Erratic 11 / Burst 10 / Melee 18 / Ranged 15, 전투방
+  10/10 포함. 3층 모두 `corrupted=False`, 콘솔 파싱 에러/경고 0.
+
+**포트폴리오 트랙 #1 착수 — 자동화 테스트 스위트 Phase 0 (asmdef 도입, A1)**
+- 배경: UTF 테스트는 asmdef 어셈블리에 있어야 하고 asmdef는 `Assembly-CSharp`를 참조 못 함 →
+  테스트 대상 게임 코드가 asmdef로 들어와야 함. 현 프로젝트 asmdef 0개. A1(전체를 단일 asmdef로
+  래핑) 채택 — 대안 비교 `AI_Decision_Log.md` 2026-09-09 (2).
+- 선행 조사: `Assets/Scripts/` 116개 `.cs` 전부 대상. 쓰는 패키지 네임스페이스는 `UnityEngine.InputSystem`
+  (`InputAction`/`InputActionAsset`/`Keyboard`/`Mouse`/`Pointer` — 전부 `Unity.InputSystem` 본체) +
+  `UnityEngine.UI`/`EventSystems`(`UnityEngine.UI`) 뿐. `UnityEditor` 사용처 0 → Editor asmdef 불필요.
+  `Assets/TutorialInfo/`의 템플릿 잔재 스크립트 2개는 `Assembly-CSharp`에 남되 게임 코드가 참조
+  안 하므로 무해(별도 정리 대상).
+- 작업: `Assets/Scripts/RogueLike.asmdef` 신규 (name `RogueLike`, references `["Unity.InputSystem",
+  "UnityEngine.UI"]`, `autoReferenced: true`). 스크립트 코드 변경 0.
+
+**테스트 스위트 Phase 1 — 테스트 인프라 + 첫 EditMode 테스트**
+- 테스트 어셈블리 2개: `Assets/Tests/EditMode/RogueLike.Tests.EditMode.asmdef`
+  (`includePlatforms:[Editor]`, refs `RogueLike`/`UnityEngine.TestRunner`/`UnityEditor.TestRunner`,
+  `precompiledReferences:["nunit.framework.dll"]`, `defineConstraints:["UNITY_INCLUDE_TESTS"]`),
+  `Assets/Tests/PlayMode/RogueLike.Tests.PlayMode.asmdef`(Phase 3용, 지금 생성만).
+- 테스트 가능하게 순수 로직 2개 추출 (동작 불변):
+  - `KnockbackMath.Distance(resistance)` = `BaseKnockbackDistance(1.5) × (1 - Clamp01(resistance))`.
+    `EnemyStateMachine.HandleDamageTaken` 인라인 + `BaseKnockbackDistance` const를 신규
+    `Assets/Scripts/Enemy/KnockbackMath.cs`로.
+  - `RoomBounds.InteriorHalfExtent / ClampLocal / IsInsideLocal` (전부 방-로컬 공간, 순수).
+    `RoomController`의 `InteriorLimit`/`InteriorSkin`/클램프 수식 → 신규
+    `Assets/Scripts/Room/RoomBounds.cs`로. `RoomController.ClampToInterior`/`IsInsideInterior`는
+    world↔local 변환만 하고 이 순수 함수 호출.
+- 첫 EditMode 테스트 19개:
+  - `HealthTests` 7 — 데미지 감소/0 클램프/`Died` 1회만/무적 시 무시/0·음수 무시/`Changed` 인자/`ResetHealth`
+  - `KnockbackMathTests` 5 — 저항 0/0.5/1/음수/1초과 클램프
+  - `RoomBoundsTests` 7 — 한계 수식/작은 방 음수 방지/밖 점 클램프/안 점 불변/Y 불변/slack 밖 False/slack 밴드 True
+
+**테스트 스위트 Phase 2 — 데이터 로더 (`GameFloors` / `GameBalance`)**
+- `Assets/Scripts/AssemblyInfo.cs` 신규 — `[assembly: InternalsVisibleTo("RogueLike.Tests.EditMode"/".PlayMode")]`
+  (public API 안 늘리고 internal 시크릿 테스트).
+- `GameFloors` 리팩터(동작 불변):
+  - `LoadFloor(path)` → 파일 읽기 / 파싱 분리. 신규 `internal ParseFloorJson(json, n, isLast)`,
+    `internal LoadAllFloorsFrom(dir)` — 테스트가 실제 StreamingAssets 안 건드리게.
+  - **신규 검증 추가(`ValidateGraph`)**: 모든 connection의 targetRoomId가 실존해야 하고, start
+    방에서 BFS로 전 방에 도달해야 함. 어긋나면 기존 구조 결함과 동일 처리(→ 비상층 + `IsCorrupted`).
+    이전엔 dangling/단절 그래프가 "정상"으로 로드돼 런 소프트락 → 이제 진입 시 시스템 팝업.
+    실제 `Floor1/2/3.json`(방 6/10/13) 전부 `IsCorrupted=False` 유지 확인.
+- `GameBalance` 리팩터(동작 불변): `LoadPlayerBaseStats` 파싱 단계를 `internal ParsePlayerBaseStats(json)`
+  로 분리(null/공백/파싱실패 → 내장 기본값, throw·null 없음). 나머지 3개 로더(passive/drop table/
+  active skills)도 같은 시크릿 필요 — Phase 2 후속으로 남김.
+- 테스트 20개: `GameFloorsTests` 16(정상 로드/파일순서 우선/비-JSON·null·빈 방·start 없음·boss
+  없음·startId 불일치·중복 id·잘못된 roomType·잘못된 variant·**dangling connection**·**단절 방**
+  → 전부 emergency+`IsCorrupted`; 2파일 카운트/빈 폴더→emergency/갭 정지+경고),
+  `GameBalanceTests` 4(정상 값/`null`·garbage·공백 → 기본값).
+
+**테스트 스위트 Phase 4 — CI (내 몫: 워크플로 작성 / 유저 몫: 라이선스·시크릿)**
+- 사전 확인: GameCI `unityci/editor` Docker 이미지에 **`6000.3.22f1` 존재 확인**(Docker Hub 태그
+  조회 — ubuntu/windows 다수 타겟). 초기에 우려했던 "6000.3 이미지 부재" 리스크 해소.
+- `.github/workflows/ci.yml` 신규: push/PR(main) + `workflow_dispatch` → `actions/checkout@v4` →
+  `actions/cache@v4`로 `Library/` 캐시(콜드 임포트 ~15분 → 웜 ~2분) → `game-ci/unity-test-runner@v4`
+  (`unityVersion: 6000.3.22f1`, `testMode: all`, `checkName`으로 커밋에 체크런) → 결과 아티팩트 업로드.
+  `concurrency`로 같은 ref 중복 실행 취소.
+- **활성화 방식 변경 반영**: `game-ci/unity-request-activation-file`는 v4에서 폐지(`.alf` 왕복
+  불필요). GameCI v4 Personal 라이선스는 **로컬 Unity Hub가 이미 만든 `.ulf`**(Windows:
+  `C:\ProgramData\Unity\Unity_lic.ulf`)를 그대로 시크릿에 넣으면 됨 + `UNITY_EMAIL`/`UNITY_PASSWORD`
+  3개. 그래서 임시 `activation.yml`은 만들었다가 삭제, `ci.yml` env에 3개 시크릿 참조.
+- `.gitignore`에 `/artifacts/`, `TestResults*.xml`, `[Tt]est[Rr]esults/`, `/CodeCoverage/`,
+  `*.alf`/`*.ulf` 추가.
+- **다음(유저)**: (1) 커밋+푸시 → (2) `C:\ProgramData\Unity\Unity_lic.ulf` 내용 + Unity 계정
+  이메일/비번을 저장소 Settings → Secrets에 `UNITY_LICENSE`/`UNITY_EMAIL`/`UNITY_PASSWORD`로 등록
+  → (3) 푸시 시 `ci.yml` 자동 실행, 초록불 확인. 이후 내가 README 배지 추가.
+
+**테스트 스위트 Phase 3 — PlayMode 테스트**
+- `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →
+  `[SerializeField] private` 필드를 리플렉션으로 주입 → 활성화하는 패턴. `MakeEnemyData`(빈
+  `attackPatterns` + 범위 지정), `BuildEnemy`(Rigidbody 실프리팹처럼 no-gravity/Y·회전 고정),
+  `BuildRoom`(`Initialize`로 `RoomSize` 세팅 + 지오메트리), `MakePlayer`(Player 태그).
+- 테스트 10개 (`[UnityTest]` IEnumerator, `WaitForFixedUpdate`로 물리 스텝):
+  - `PoolTests` 4 — `PooledObject.ReturnToPool` 2회 안전(2026-08-31 이중반환 가드), `NotifyTakenFromPool`
+    재장전, `GameObjectPool.Get` 활성·부모 세팅, Release→Get 동일 인스턴스 재사용
+  - `EnemyContainmentTests` 3 — **2026-09-09 방 이탈 블로킹 버그 회귀 잠금**: `MoveTo`(방 밖 좌표)
+    → 내부 클램프 / `MoveTo`(안) → 그대로 / 방 밖으로 순간이동 → `EnforceRoomContainment`가 스폰
+    지점으로 스냅
+  - `EnemyFsmTests` 3 — 플레이어 DetectionRange 안 → Idle→Chase / 멀면 Idle 유지 / 피격 → Stunned
+
+### 테스트 결과
+
+**테스트 스위트 Phase 3**
+- [x] PlayMode 테스트 **10개 전부 통과** (`TestRunnerApi` PlayMode 실행 → `TestResults.xml`
+      `total="10" passed="10" failed="0"`). MCP로 PlayMode 실행도 정상 작동(play mode 진입→실행→종료).
+- [x] EditMode + PlayMode 합계 **49개 전부 통과** (39 + 10). 콘솔 에러 0.
+
+**테스트 스위트 Phase 2**
+- [x] EditMode 테스트 **39개 전부 통과** (`TestRunnerApi`: `started cases=39` →
+      `FINISHED status=Passed pass=39 fail=0 skip=0 incon=0`). Phase 1의 19 + Phase 2의 20.
+- [x] `ValidateGraph` 회귀: 실제 `Floor1/2/3.json` 로드 → 방 6/10/13, `IsCorrupted=False` 전부,
+      `CORRUPTED COUNT: 0` (Play Mode `GameFloors.Floors`).
+- [x] `GameFloors`/`GameBalance` 리팩터 후 전체 재컴파일 콘솔 에러 0.
+
+**테스트 스위트 Phase 1**
+- [x] EditMode 테스트 **19개 전부 통과** (`TestRunnerApi` 실행: `started cases=19` →
+      `FINISHED status=Passed pass=19 fail=0 skip=0 inconclusive=0`). 이 세션에서 EditMode 테스트
+      실행은 MCP로 정상 작동(Play Mode 프레임 고정과 무관).
+- [x] 추출 리팩터 회귀 확인(`RunCommand`): `KnockbackMath.Distance` 0/0.5/1/2 → 1.5/0.75/0/0
+      (인라인과 동일). `RoomBounds` 한계 18.9, 클램프 (18.90, 5, -3)(Y 불변), slack 밴드 True.
+- [x] 전체 재컴파일 콘솔 에러 0.
+
+**테스트 스위트 Phase 0 (asmdef)**
+- [x] `RogueLike.asmdef` import 후 재컴파일 콘솔 에러 0. 참조는 `Unity.InputSystem` + `UnityEngine.UI`
+      2개로 충분(사전 조사대로 — 추가 참조 캐스케이드 없음).
+- [x] Play Mode `RunCommand` 검증: 게임 타입 9종(`EnemyStateMachine`/`RoomController`/`GameFloors`/
+      `Health`/`GameFlow`/`SceneTransitionController`/`PlayerMovement`/`UIManager`/`GameObjectPool`)
+      전부 `RogueLike` 어셈블리 소속. `RogueLike` 타입 149개(116 파일). 참조 어셈블리 =
+      `netstandard, Unity.InputSystem, UnityEngine.CoreModule/JSONSerializeModule/PhysicsModule/
+      TextRenderingModule/UIModule, UnityEngine.UI`.
+- [x] `Assembly-CSharp`는 잔존(타입 7개 = `Assets/TutorialInfo/`의 템플릿 Readme 스크립트) — 게임
+      코드 무참조, 무해. 별도 정리 대상으로 남김.
+- [x] 스크립트 `.cs` 변경 0줄. 런타임 동작 불변(어셈블리 이름만 부여).
+
+**적 방 이탈 수정**
+- [x] 변경 8파일(`RoomController`/`EnemySpawner`/`EnemyStateMachine`/`EnemyChaseState`/
+      `EnemyPatrolState`/`EnemyStunnedState`/`EnemyAttackState`/`MeleeAttackPattern`/
+      `RangedKitingBehavior`/`EnemyMovementFlavor`) `ValidateScript` + 재컴파일 콘솔 에러 0.
+- [x] `ClampToInterior` 수치 검증(Play Mode `RunCommand`): 방2(size 40, center (50,0,0)) 기준
+      `(150,0,100)` → local `(18.90, 18.90)` = `20 - 0.5 - 0.5 - 0.1` 정확히 일치. 내부 점은 불변.
+      `IsInsideInterior` 밖 False / 안 True.
+- [x] 이동 초크포인트: 6개 이동 호출부 전부 `MoveTo` 경유(grep 확인). 직접 `MovePosition`는
+      회전(`MoveRotation`)만 남음.
+- [ ] **런타임 동작(넉백이 벽에서 멈춤 / 후퇴가 방 안 유지 / 밖으로 나간 적 스냅백 / 전투 회귀
+      없음)은 사람 플레이 확인 필요** — 이 자동화 세션은 Play Mode `Time.frameCount`가 3130에
+      고정돼 FixedUpdate가 안 돌아 런타임 검증 불가(룸/벤치 작업 때도 겪은 환경 한계). 코드 결함 아님.
+
+**씬 전환 페이드**
+- [x] `Unity_ValidateScript`(standard) 두 파일 0건, 컴파일 에러/경고 0건(`SceneTransitionController`,
+      `GameFlow` 재컴파일 후 콘솔 클린 — 무관한 `[RelayService]` 경고만 있음).
+- [x] Play Mode + `Unity_RunCommand` 구조 검증: `EnsureExists()` 2회 호출 → 동일 인스턴스 1개
+      (`first == second`, 씬 내 STC 카운트 1), 루트 오브젝트, `scene == "DontDestroyOnLoad"`,
+      `Canvas ScreenSpaceOverlay / sortingOrder 32767`, `GraphicRaycaster` 존재,
+      `CanvasGroup alpha 0 / blocksRaycasts false`, `Image` 불투명 검정, RectTransform 전체 스트레치.
+- [x] 전체 전환 1회 실측(Title→Prototype): `FadeAndLoad` 호출 → ~1초 뒤 active scene = Prototype,
+      `timeScale` 1로 복구(`ForceResume` 발화 확인), STC 인스턴스가 Single 로드 후에도 생존·중복 0,
+      `alpha` 0으로 페이드 인 완료, `blocksRaycasts` 해제, Player 정상 존재.
+- [x] 재진입 가드: 한 프레임에 `FadeAndLoad("Title")` + `FadeAndLoad("Prototype")` → 2번째 무시
+      (씬은 한 전환만 진행).
+- [x] Stop 후 누수 0: STC 인스턴스 0, 정적 `Instance` 해제, `timeScale` 1, 에디트 모드 씬 무변경.
+- [ ] **연속 전환의 페이드 코루틴 완주는 사람 플레이 확인 필요** — 자동화 Play Mode에서 첫 전환은
+      완주했으나 이후 `yield return null` 코루틴이 멈추는 알려진 환경 한계(2026-08-18/08-31에도 관측).
+      코드 결함 아님. 아래 체크리스트로 유저 확인.
+
+### 이슈/메모
+- **미세 트레이드오프(수용)**: `PauseState.ForceResume`가 페이드 아웃 시작 시점이 아니라 로드
+  직전(`onBeforeActivate`)에 발화하도록 했으므로, 이전 코드(동기 로드) 대비 이전 씬이 추가로 도는
+  시간은 없음. 반대로 만약 `ForceResume`를 `GameFlow`에서 먼저 부르면 페이드 아웃 0.35초 동안
+  월드가 틱함 — 그래서 콜백으로 넘김.
+- 페이드 지속시간은 `const`(0.35s). 코드 생성 오브젝트라 인스펙터가 없음. 단색 페이드라 시각
+  이터레이션 대상이 아니라고 판단, 튜닝은 한 줄 수정. (인런 `FloorTransitionUI`는 극적 연출이라
+  1s 유지 — 씬/메뉴 전환은 더 빠른 게 나음.)
+- 이 오버레이는 의도적으로 프로젝트 유일의 `DontDestroyOnLoad`. 목적이 명확한 단일 전환 표면 +
+  결정적 중복 가드 + 단일 생성 경로(`GameFlow`)라, 아키텍처 스킬이 경고하는 "모든 매니저를 DDOL"
+  안티패턴이 아니라 권장하는 "명시적 부트스트랩 경로"에 해당. 추가 영속 상태가 필요해지면 여기
+  statics를 늘리지 말고 별도 부트스트랩으로.
+
+### 다음 작업
+- 적 방 이탈 수정 — 유저 실플레이 체크리스트:
+  - 1층 전투방에서 근접 적을 벽 쪽으로 몰아 여러 번 때려도 벽 밖으로 안 나가는지(넉백 관통)
+  - 원거리 적이 후퇴하다 벽에 닿으면 벽 앞에서 멈추는지(관통·미끄러짐 없음)
+  - 혹시라도 밖으로 나간 적이 즉시 스폰 지점으로 복귀하는지
+  - 전투 회귀: 적 추격/순찰/공격, 근접 런지 명중, 방 클리어 정상, 여러 방 연속 주파
+- 씬 전환 페이드 — 유저 실플레이 체크리스트(1주파):
+  - 타이틀 → 캐릭터 선택 → 런: 양방향 페이드, 아키타입 전달
+  - 3층 풀 주파: 층1→2, 2→3 인런 페이드(회귀 확인), 마지막 층 도달
+  - 마지막 층 클리어 → `FloorCompleteUI` 재시작/타이틀 — 둘 다 페이드
+  - 사망 → `GameOverUI` 재시작/타이틀 — 둘 다 페이드
+  - 런 중 ESC → 재시작/타이틀 — 둘 다 페이드
+  - JSON 외부화 확인: 1~3층이 `Floor{1,2,3}.json`에서 로드(방 6/10/13), 손상 폴백
+  - 재시작 후 런 상태 초기화, 타이틀 복귀 시 아키타입 클리어
+- 위 통과 시 로드맵 §6 #6 종료 → 남은 건 Phase 4(아트)/5(Addressables)/7(문서화).
+
+---
+
 ## 2026-09-08
 
 ### 진행 내용
@@ -334,6 +588,40 @@ Median GC Alloc은 4종·전 구간에서 전부 0 bytes(스폰/공격 순간에
 **Claude 판단**: 1(테스트+CI)은 위험 없이 논지와 정확히 맞아 거의 무조건. 2(경로탐색)가 기능
 공백+기술 깊이 둘 다 채움. 3(절차적 생성)은 "설계가 갚인" 서사가 강함. 상세 논의는
 2026-09-08 대화 참고.
+
+---
+
+**2026-09-09 결정 — 장르 명시 + 우선순위 확정**
+
+유저가 장르를 명시 선언: **"3D 바인딩 오브 아이작 / 엔터 더 건전" 계열**(문 연결 공간형 방,
+절차적 생성 층, 타이트한 트윈스틱식 이동/회피, 런 기반). `ProjectPlan.md` §2 Genre / `ClaudeSessionSummary.md`
+§1 에 반영. 앞으로 작업 제안·범위 판단의 기준점.
+
+이 선언으로 위 "추천 상위 3"에서 **2(경로탐색) ↔ 3(절차적 생성) 순서가 뒤바뀜** — 아이작=절차적
+생성이 장르 정체성이라, 고정 3층이 "선언한 장르"와 현재 구현의 가장 큰 간극. 확정 순서:
+
+| # | 항목 | 규모 | 이 위치인 이유 |
+|---|---|---|---|
+| 0 | §6 #6 마감(씬 페이드 + 3층 주파 검증) | — | 루프를 반쯤 검증된 채 두지 않기. 포트폴리오 항목 아님 |
+| 1 | 자동화 테스트 + CI | 2~3세션 | 과설계 위험 0, §12 직접 답, 뒤 작업(2·3, 둘 다 subtle)의 안전망. 이 환경 Play Mode `frameCount` 고정 우회(GameCI=실제 헤드리스 에디터) |
+| 2 | 결정론적 시드 절차적 층 생성 | 3~4세션 | 장르 정체성 간극. `IFloorLayoutProvider` 심 회수(소비자 0줄 수정 diff = §10 서사). per-system 시드 RNG 아키텍처. 층 수 3 고정, 레이아웃만 절차적, JSON provider는 고정시드 디버그 폴백 유지 |
+| 3 | 적 경로탐색(그리드 A* 권장) + 방 장애물 | 4~5세션 | 절차적 방이 생긴 뒤 가치↑(장애물=생성기 일부). `EnemyChaseState` 이동만 교체. 프로파일러 계측(원래 #7) 흡수 |
+| 4 | 입력 버퍼링 + 프레임레이트 독립성 | 1세션 | 건전식 타이트 조작. 게임필 우선 시 3과 순서 교체 가능 |
+| 5 | 커스텀 에디터 툴링(SO 검증 패스) | 1세션 | 노력 대비 신호 큼, 절차적 생성 출력 검증과 궁합 |
+| 6 | 세이브/로드(버전드 직렬화 + 런 이어하기) | 2~3세션 | 아무것도 언블록 안 함. 가장 나중 또는 마감 시 스킵 |
+
+**아트 리소스 적용(무료 에셋 / AI 생성) 시점 — 권장: 2번(절차적 생성) 착수 직전 ~ 진행 중 병행.**
+- **1번보다 뒤인 이유**: 테스트+CI는 순수 인프라라 아트와 무관. 아트를 먼저 넣으면 CI 빌드 파이프라인만
+  무거워지고 얻는 게 없음.
+- **6번까지 미루지 않는 이유**: (a) 절차적 생성·경로탐색은 회색 프리미티브 영상에선 임팩트가 약함 —
+  포트폴리오 스크린샷/영상이 이 시점부터 찍히기 시작함. (b) 콜라이더·히트박스·스폰 오프셋·카메라
+  구도는 아트 들어오면 어차피 재조정(플레이스홀더 지오메트리 노트, `ClaudeSessionSummary.md` §5) —
+  절차적 생성/경로탐색을 회색 캡슐 기준으로 튜닝하면 아트 후 재작업. 아트를 2번과 겹치면 생성기
+  튜닝을 처음부터 실제 크기·비주얼로 함. (c) Stage 3 최적화 After(Phase 6)와 Addressables(Phase 5)가
+  아트에 게이팅되어 있어, 아트가 이르면 그 트랙들도 일찍 열림.
+- **범위 주의**: 일관된 스타일 1세트(플레이어/적 3~5종/보스/방 타일/문/기본 VFX)로 한정. 팩 섞지 말 것
+  (`ProjectPlan.md` Phase 4). AI 생성은 캐릭터 일러스트·UI엔 이미 씀(`Assets/Art/UI/`), 3D 메시는
+  무료 에셋(Kenney, Synty 무료분, itch.io CC0)이 현실적. 스타일 통일이 최우선 판단 기준.
 
 ---
 

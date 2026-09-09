@@ -184,18 +184,27 @@ public static class GameBalance
 
         try
         {
-            string json = File.ReadAllText(path);
-            PlayerBaseStatsData data = JsonUtility.FromJson<PlayerBaseStatsData>(json);
-            if (data == null)
-            {
-                throw new Exception("Parsed data was null.");
-            }
-
-            return data;
+            return ParsePlayerBaseStats(File.ReadAllText(path));
         }
         catch (Exception e)
         {
             Debug.LogWarning($"GameBalance: failed to load '{path}' ({e.Message}). Using built-in fallback player stats.");
+            return DefaultPlayerBaseStats();
+        }
+    }
+
+    // Parse step split from file I/O so EditMode tests can feed JSON strings directly. Returns
+    // the built-in defaults (never null, never throws) for null/empty/garbage input - the same
+    // all-or-nothing degrade the file-load path uses.
+    internal static PlayerBaseStatsData ParsePlayerBaseStats(string json)
+    {
+        try
+        {
+            PlayerBaseStatsData data = string.IsNullOrWhiteSpace(json) ? null : JsonUtility.FromJson<PlayerBaseStatsData>(json);
+            return data ?? DefaultPlayerBaseStats();
+        }
+        catch (Exception)
+        {
             return DefaultPlayerBaseStats();
         }
     }

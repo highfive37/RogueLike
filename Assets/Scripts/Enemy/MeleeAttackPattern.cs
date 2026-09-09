@@ -86,7 +86,7 @@ public class MeleeAttackPattern : IAttackPattern
             step = Mathf.Min(step, Mathf.Max(0f, gap.magnitude - LungeContactBuffer));
         }
 
-        machine.Body.MovePosition(machine.Body.position + _lungeDirection * step);
+        machine.MoveTo(machine.Body.position + _lungeDirection * step);
 
         if (_lungeElapsed >= _data.LungeDuration)
         {

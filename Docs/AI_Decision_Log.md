@@ -44,6 +44,151 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-09 (2) — 테스트 도입을 위한 asmdef: 단일 래핑 vs 계층 분리 vs 순수 코어만
+
+### 배경 / 문제
+- 포트폴리오 기술 트랙 #1 = 자동화 테스트(EditMode+PlayMode) + CI (`DevLog.md` 2026-09-09 확정 순서).
+- Unity Test Framework는 테스트 코드가 **asmdef 어셈블리**에 있어야 하고, asmdef는 기본
+  `Assembly-CSharp`를 **참조할 수 없음**(참조는 Assembly-CSharp → asmdef 단방향). ⇒ 테스트하려는
+  게임 코드가 asmdef 안으로 들어와야 함.
+- 현 프로젝트는 asmdef 0개(전부 `Assembly-CSharp`). 과거 "asmdef는 규모상 과설계"로 명시 보류
+  (`ClaudeSessionSummary.md` §2).
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A1 — 단일 `RogueLike.asmdef`로 `Assets/Scripts/` 전체 래핑 + 테스트 asmdef 2개 | 파일 1개, 어셈블리 구조 불변(이름만 붙음), 회귀 위험 최소, EditMode/PlayMode 둘 다 가능. 참조 캐스케이드 조사 완료 = `Unity.InputSystem` + `UnityEngine.UI` 2개뿐 | 컴파일 스코핑·의존성 방향 강제 같은 모듈화 이득은 없음(테스트 인에이블러로만) |
+| A2 — Core(순수)/Runtime(MonoBehaviour)/Editor + 영역별 테스트 | 진짜 모듈 경계 + 의존성 방향 명시 서사(§10) | 지금 의존성 얽힘을 실제로 풀어야(순환 위험), 번복을 크게, 러빗홀 위험 |
+| A3 — 순수 C#만 Core.asmdef, 나머지 Assembly-CSharp 유지 | 가장 쌈 | PlayMode에서 실제 MonoBehaviour(FSM/룸/풀) 테스트 불가 = 유저가 원하는 목표 미달 |
+
+### Claude 제안
+- A1. 최소 단계로 목표(EditMode+PlayMode+CI) 달성, "필요할 때 도입" 원칙과 일치. A2 분리는 실제
+  의존성 방향 문제가 드러나면 그때.
+
+### 선택한 방향
+- **A1 채택 (유저 승인 2026-09-09).** `Assets/Scripts/RogueLike.asmdef`
+  (references: `Unity.InputSystem`, `UnityEngine.UI`; `autoReferenced: true`). Editor asmdef는
+  `Assets/Scripts/`에 `UnityEditor` 사용처가 0이라 불필요(조사 완료). `Assets/TutorialInfo/`의
+  템플릿 잔재 스크립트 2개는 `Assembly-CSharp`에 남되 게임 코드가 참조 안 하므로 무해. 테스트
+  asmdef 2개(`RogueLike.Tests.EditMode` `includePlatforms:[Editor]`, `RogueLike.Tests.PlayMode`)는
+  Phase 1에서.
+
+### 선택 이유
+- asmdef 도입이 이제 "필요"해짐(테스트) — 원칙상 최소 도입이 맞음. 전체를 한 어셈블리로 두면
+  컴파일 단위·런타임 동작이 지금과 동일해 회귀 위험 사실상 0.
+- A2의 계층 분리는 실제 중복·순환이 관측 안 된 상태의 추측 설계. §2가 asmdef를 미룬 이유(규모)가
+  여전히 유효 — 테스트라는 단일 사유에만 대응.
+- **재검토 조건**: 절차적 생성(#2)·경로탐색(#3)에서 순수 로직 계층이 뚜렷해지거나, 컴파일 시간이
+  문제되거나, 의존성 방향을 강제하고 싶어지면 A2로 분리.
+
+### 관련 파일
+- `Assets/Scripts/RogueLike.asmdef` (신규, Phase 0)
+- 이후 `Assets/Tests/EditMode/*`, `Assets/Tests/PlayMode/*` (Phase 1+)
+
+---
+
+## 2026-09-09 — 적이 방 밖으로 나가 진행 불가: 방 내부 클램프 vs 물리 완화 vs LOS
+
+### 배경 / 문제
+- 유저 제보(블로킹): 방 진입 시 간혹 적이 방 밖에 스폰되거나 밖으로 이동 → 못 죽여 방 클리어
+  불가 → 진행 정지.
+- 추적 결과 원인 3중: (1) 적 이동 6곳 전부 생짜 `Rigidbody.MovePosition`, 벽 클램프·스윕 전무 —
+  방 유지가 벽 콜라이더 충돌뿐인데 적 Rigidbody가 Discrete, 벽 두께 1. (2) 2026-09-08 넉백이
+  `MovePosition`으로 절대 목표점(`시작+방향×1.5`)을 ease-out 러프, 첫 스텝 ≈0.46유닛 → 벽 쪽
+  넉백이면 캡슐 중심이 벽 중간면을 넘어 솔버가 바깥 배출, 절대점 재조준이라 반력 무효(2026-09-04
+  플레이어 벽 관통과 동일 계열). 2026-09-08부터 모든 원거리 변형이 후퇴까지 해 빈도 증가.
+  (3) `CanSeePlayer`가 순수 거리라 벽 밖 적도 플레이어를 "봄" → Chase/Attack 유지·벽 관통 사격,
+  `leashRange 9`(방 40) 안이라 복귀도 안 함 → 영구 블록.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 방 내부 AABB 클램프(`RoomController.ClampToInterior` + `EnemyStateMachine.MoveTo` 단일 초크포인트) | 물리 튜닝·충돌 모드에 의존 안 하는 **결정적** 차단. 넉백/후퇴/향후 이동 헬퍼 자동 커버. 스폰 좌표도 같은 클램프. 플레이어 `WallClamp` 중앙화와 같은 패턴 | 적→방 참조 주입 1건, 이동 호출부 6곳 리팩터. 문 간격 무시(적은 방 간 이동 안 하므로 무해) |
+| B. 안전망 — `FixedUpdate`에서 방 밖 감지 시 스폰 지점 스냅 | authoring 좌표가 벽에 박힌 경우·미래 회귀 대비 보험. 싸다 | A 있으면 거의 안 걸림(순수 보험) |
+| C. 물리 완화 — 적 Rigidbody Continuous(Speculative) + 넉백 스텝 상한, 또는 넉백을 `AddForce`+damping으로 | 거의 공짜, 배선 없음 | 모서리 짜냄·솔버 배출은 잔존 → "간혹"이 "드물게"로 줄 뿐. 단독 불충분 |
+| D. `CanSeePlayer`에 LOS 레이캐스트 | 벽 뒤 적이 Patrol 복귀 → AI 품질 개선 | 물리적으로 벽 밖에 낀 적을 도로 넣진 못함. 블록 해결의 주 수단 아님 |
+
+### Claude 제안
+- **A + B.** A가 근본(결정적 컨테인먼트), B가 보험. C는 defense-in-depth로 여유 시, D는 후속 품질 과제.
+
+### 선택한 방향
+- **A + B 채택(유저 승인).**
+  - A: `RoomController`에 `RoomSize` + `ClampToInterior(worldPos, bodyRadius)` /
+    `IsInsideInterior(worldPos, bodyRadius, slack)`. 한계 = `RoomSize/2 - WallThickness/2 -
+    bodyRadius - 0.1`. `EnemyStateMachine`에 `SetRoom` + `MoveTo(worldPos)`(6개 호출부를 여기로
+    수렴, 회전은 그대로). `EnemySpawner.SpawnRoom(RoomData, RoomController)`로 시그니처 변경 +
+    스폰 좌표 클램프 + `Physics.SyncTransforms()`.
+  - B: `EnforceRoomContainment()` in `FixedUpdate` — slack 1유닛(벽 두께 1보다 작음) 넘으면
+    스폰 지점 스냅 + 속도 0 + `SyncTransforms` + Idle.
+
+### 선택 이유
+- A만이 물리 튜닝·충돌 모드·"모든 미래 이동 코드가 벽 체크를 기억할 것"에 기대지 않고 컨테인먼트를
+  **보장**. 방은 축 정렬 박스라 점을 AABB에 클램프하는 건 자명하고 확실.
+- B는 프로젝트에서 물리 관통 계열 버그가 2번째(플레이어 2026-09-04)라, 단일 경로 누락이 다시
+  클리어 불가 런을 만들지 못하게 하는 값싼 보험.
+- C 미채택: A가 결정적이라 불필요. 단, 아트 통합(Phase 4)에서 지오메트리·콜라이더 재조정 시
+  적 Continuous 전환은 같이 검토(플레이스홀더 노트에 이미 물리 관통 항목 있음).
+- D는 별건(AI 품질)이라 이번 블록 수정 범위에서 제외, 후속.
+- **재검토 조건**: 적이 방 사이를 이동하는 설계가 생기면(현재 없음) A의 "문 간격 무시" 클램프를
+  문 통로를 예외로 두는 형태로 확장.
+
+### 관련 파일
+- `Assets/Scripts/Room/RoomController.cs`(`RoomSize`/`ClampToInterior`/`IsInsideInterior`, `SpawnRoom` 호출 인자)
+- `Assets/Scripts/Enemy/EnemyStateMachine.cs`(`SetRoom`/`MoveTo`/`EnforceRoomContainment`, 캡슐 반지름 캐시)
+- `Assets/Scripts/Enemy/EnemySpawner.cs`(`SpawnRoom` 시그니처·스폰 클램프·`SyncTransforms`)
+- `EnemyChaseState`/`EnemyPatrolState`/`EnemyStunnedState`/`EnemyAttackState`/`MeleeAttackPattern`/
+  `RangedKitingBehavior`(`Body.MovePosition` → `machine.MoveTo`), `EnemyMovementFlavor`(주석 정정)
+
+---
+
+## 2026-09-09 — 씬 전환 페이드: 영속 페이드 캔버스 vs 씬별 오버레이 vs 페이드 인만
+
+### 배경 / 문제
+- 로드맵 §6 #6 잔여. `GameFlow.LoadScene()`이 `SceneManager.LoadScene`을 동기 호출해
+  타이틀↔인게임·인게임 재시작 전환이 전부 하드 컷. 전환 지점 4곳이 모두 `GameFlow`의
+  `StartRun`/`RetryRun`/`ReturnToTitle`을 지남.
+- 핵심 제약(아키텍처 스킬 `scenes-prefabs-and-object-lifetimes.md` + 코드 확인): 동기
+  `SceneManager.LoadScene`은 `DontDestroyOnLoad`가 아닌 모든 오브젝트를 즉시 파괴 → 페이드
+  아웃은 로드 전에 끝나야 하고, 페이드 인은 새 씬에서 일어나야 함.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A1 — 영속 페이드 캔버스(`DontDestroyOnLoad` 단일 오브젝트) + `LoadSceneAsync` | 4개 전환점을 구현 1개로 대칭 처리, 튜닝 지점 1곳, 씬별 배선 불필요. async + 1프레임 대기로 새 씬 `BuildFloor` hitch까지 암전으로 가림. 스킬의 "전환 = 상태 머신 + 명시적 부트스트랩"과 일치 | 프로젝트 최초의 `DontDestroyOnLoad` + 부트스트랩 계약. 중복 가드 필요 |
+| A2 — 씬별 페이드 인 오버레이 + 호출부 페이드 아웃(영속 오브젝트 없음) | DDOL 없음, "영속 싱글턴 회피" 유지. `FloorTransitionUI` 패턴 재사용 | 페이드 아웃에 살아있는 MonoBehaviour 필요 + 로드를 코루틴 끝으로 미뤄야 → `GameFlow`가 정적인 채로 코루틴을 못 돌림. 오버레이 2개 동기화. 아웃/인이 다른 씬의 다른 코드 경로(비대칭) |
+| A3 — 페이드 인만(나갈 때 하드 컷 허용) | 최소 — 씬당 `CanvasGroup` 1개 + 10줄, `GameFlow` 무수정, 영속 오브젝트·정적 코루틴 문제 없음 | 나가는 하드 컷이 보임(동기 로드 stall만큼 정지 후 암전). 양방향 페이드하는 인런 `FloorTransitionUI`와 톤 불일치 |
+
+### Claude 제안
+- A1 추천(대칭·일관·async로 hitch 은폐). "영속 싱글턴 회피" 원칙은 *매니저를 여기저기서 만들지
+  말자*는 뜻이고, 목적이 명확한 전환 캔버스 하나를 결정적 중복 가드와 함께 부트스트랩하는 건
+  스킬이 지지하는 "명시적 부트스트랩". A3를 값싼 폴백으로 제시.
+
+### 선택한 방향
+- **A1 채택.** 단, 프리팹/Resources 없이 `SceneTransitionController`가 오버레이를 전부 코드로
+  생성(`EnsureExists()`). 페이드 지속시간은 `const`(0.35s in/out). `GameFlow`는 정적 유지 —
+  코루틴은 영속 오브젝트가 소유하고, `GameFlow.LoadScene`은 `EnsureExists().FadeAndLoad(name,
+  PauseState.ForceResume)` 한 줄로 위임.
+
+### 선택 이유
+- 4개 전환점을 대칭·일관되게 처리하는 유일한 안. `LoadSceneAsync` + 1프레임으로 새 씬 준비
+  완료까지 암전 유지 → Prototype 진입 시 `StageManager.BuildFloor()` 동기 인스턴스화 hitch도 덮임.
+- 코드 생성(프리팹 X): 칠할 게 없는 단색 페이드라 authoring 대상이 아니고, 씬에서 빠뜨리거나
+  빌드에서 누락될 실패 모드가 없어짐. 프로젝트의 절차적 생성 선호(`RoomController.Initialize`
+  방 지오메트리)와도 일관.
+- `PauseState.ForceResume`를 `onBeforeActivate` 콜백으로 넘긴 이유: 페이드 아웃(unscaled) 동안엔
+  이전 씬이 pause를 유지하고 새 씬 진입 직전에만 timeScale 복구. `GameFlow`에서 미리 부르면
+  페이드 0.35초간 월드가 틱함. 콜백으로 `SceneTransitionController`는 `PauseState`를 모른 채 유지.
+- **트레이드오프 / 재검토 조건**: (1) 페이드 시간을 실제로 튜닝하고 싶어지면 → 직렬화 프리팹으로
+  전환(범위 국한된 변경). (2) 로딩 시간이 길어지면(아트/씬 규모 ↑) → Phase 5에서 Addressables +
+  실제 로딩 화면으로 `FadeAndLoadRoutine` 내부만 교체. (3) 영속 상태가 더 필요해지면 → 여기
+  statics를 늘리지 말고 별도 부트스트랩 오브젝트.
+
+### 관련 파일
+- `Assets/Scripts/Core/SceneTransitionController.cs` (신규)
+- `Assets/Scripts/Core/GameFlow.cs` (`LoadScene` 재배선, `using UnityEngine.SceneManagement` 제거)
+
+---
+
 ## 2026-09-08 (8) — 가만히 맞으면 근접 런지마다 뒤로 밀림: 그대로 두기 vs 런지 오버슈트 클램프 vs 치고 빠지기 vs 몸빵 제거 vs 플레이어 넉백 시스템
 
 ### 배경 / 문제

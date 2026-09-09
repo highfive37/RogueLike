@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 // The single place that knows the game's top-level flow: which scenes exist, how
 // you move between them, and the one piece of state that has to survive a scene
@@ -54,13 +53,15 @@ public static class GameFlow
 
     private static void LoadScene(string sceneName)
     {
-        // Time.timeScale is engine-global and a scene load does NOT reset it. The
-        // clear screen pauses via PauseState (timeScale 0), so leaving from a
-        // button there without clearing it first would start the next scene
-        // frozen. ForceResume drops every outstanding pause owner and restores
-        // timeScale before we go. Synchronous load for now - async + a loading
-        // screen is the Phase 5 (Addressables) upgrade.
-        PauseState.ForceResume();
-        SceneManager.LoadScene(sceneName);
+        // Fade out -> load -> fade in, through the persistent SceneTransitionController
+        // overlay (created lazily on this first call, then reused). The fade runs on
+        // unscaled time, so the outgoing scene can stay paused right up to the load:
+        // PauseState.ForceResume is handed in as the on-activate step and fires only
+        // once the screen is black. Time.timeScale is engine-global and a scene load
+        // does NOT reset it, so the clear/game-over screen's pause (timeScale 0) has
+        // to be dropped there or the next scene starts frozen. The load itself is
+        // async inside the overlay; a real loading screen is still the Phase 5
+        // (Addressables) upgrade.
+        SceneTransitionController.EnsureExists().FadeAndLoad(sceneName, PauseState.ForceResume);
     }
 }

@@ -94,7 +94,11 @@ public class CharacterSelectUI : MonoBehaviour
             _armRoutine = null;
         }
 
-        panel.SetActive(false);
+        // Deliberately NOT hiding the panel here: _onChosen kicks off the scene
+        // transition (GameFlow.StartRun -> SceneTransitionController), and the
+        // fade-out should play over this screen while it is still visible, not
+        // over an already-blank one. The transition overlay blocks further input
+        // immediately, and the Title scene unload destroys this panel anyway.
         _onChosen?.Invoke(archetype);
     }
 }

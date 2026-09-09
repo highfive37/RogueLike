@@ -19,7 +19,7 @@ The goal is not to make the largest possible game. The priority is to complete a
 ## 2. Game Concept
 
 ### Genre
-3D quarter-view action roguelite.
+3D quarter-view action roguelite, **in the style of a 3D _The Binding of Isaac_ / _Enter the Gungeon_** — spatial rooms connected by doors, procedurally generated floors, tight twin-stick-style movement and dodging, run-based structure. (Genre explicitly declared by the developer 2026-09-09 to anchor future scope decisions; see `ClaudeSessionSummary.md` §1.)
 
 ### Starting Character / Weapon Type
 The player's initial combat style will depend on the character selected at the start of a run.

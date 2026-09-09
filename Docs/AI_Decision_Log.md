@@ -44,6 +44,57 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-09 (3) — 절차적 층 생성: 알고리즘 / 시드 / 범위 / 결정성 (포트폴리오 트랙 #2 설계 확정)
+
+### 배경 / 문제
+- 장르를 "3D Binding of Isaac / Enter the Gungeon 계열"로 명시(유저 선언 2026-09-09). 그런데 현재
+  층은 손authoring된 고정 3개(`FloorN.json`) — "선언한 장르 = 절차적 생성"과 현 구현의 최대 간극.
+- `IFloorLayoutProvider` 심은 애초에 이 교체를 위해 만들어짐(isaac-room-system 메모리:
+  "user explicitly wants random map generation eventually", `RoomData`의 next-room을 방향→id
+  리스트로 모델링한 것도 대비).
+
+### 검토한 대안 (5개 축, 유저와 논의해 확정)
+| 축 | 대안 | 선택 |
+|---|---|---|
+| **생성 알고리즘** | A 아이작식 큐 성장 / B 스패닝트리+추가엣지 / C 템플릿 조립 | **A** — 장르 그 자체 알고리즘, ~60줄, 시작에서 자라 자연히 연결, 데드엔드가 특수방으로 자연 배정. B는 A로 수렴, C는 authoring 과함 |
+| **시드 출처** | a run마다 랜덤 / b 디버그 고정 / c 둘 다(기본 랜덤 + 오버라이드) | **c** — 타이틀 시드 입력칸은 Phase 2b로 분리 |
+| **절차화 범위** | i 그래프+타입만 / ii + 방별 적 구성 / iii + 아이템 드랍 | **ii** — 스폰 위치는 `RoomBounds` 안 지터, 변형 믹스는 층별 가중 테이블. AI 미세 랜덤(wobble 위상)은 `UnityEngine.Random` 유지 |
+| **JSON provider 운명** | 삭제 / 디버그 대안 모드로 유지 | **유지** — "이런 작업을 했었다"는 흔적 + 손상 폴백 로직(`GameFloors` 비상층 + `IsCorrupted` 팝업) 재활용 |
+| **난이도 스케일 저장** | a 코드 상수 / b JSON 파일 / c ScriptableObject | **b** `Assets/StreamingAssets/Balance/Stage/ProceduralRules.json` — `GameFloors`/`GameBalance`와 동일 패턴(텍스트 튜닝 + 내장 폴백). 층별 rule 3줄(이산 표, 곡선 함수 아님): `roomCount{min,max}` / `itemRoomChance` / `enemiesPerCombatRoom{min,max}` / `variantWeights{Melee,Ranged,ErraticMelee,BurstRanged}`. 층 수 초과 시 마지막 rule 반복 |
+
+### 결정성 범위
+- 시드가 좌우: 레이아웃 + 적 구성. per-system 스트림 `RngStreams`(마스터 시드 → 이름별 서브스트림,
+  안정 문자열 해시로 파생) — `layout` / `enemies` 스트림 사용, `drops`는 이름만 예약(범위 iii 확장 시).
+- **같은 시드 + 같은 `ProceduralRules.json` + 같은 생성기 코드 → 항상 동일한 3개 층.** 규칙 파일은
+  시드와 나란한 입력이라 편집하면 같은 시드라도 다른 층(정상, 문서 명시).
+- 전투 미세 랜덤(크리·wobble 등)은 결정성 대상 아님.
+- 층 번호(1/2/3)로 rule 인덱싱. 층 수가 가변이 되면 정규화 깊이 `depth∈[0,1]` + 공식/AnimationCurve로
+  전환 — 후일 과제.
+
+### 심 위치
+- `FloorLayout` 리스트 생산지(`GameFloors.Floors`)에 `IFloorSource` 추상 → `JsonFloorSource`(현행
+  래핑) / `ProceduralFloorSource`(신규). `StageManager`는 `FloorLayout` 형태가 같아 소비 코드 거의 불변.
+- `RunConfig`(시드 + `FloorSourceMode`)를 `GameFlow`가 run 넘겨 전달. 에디터 직접 실행은 기본
+  `RunConfig`(랜덤 시드) 폴백.
+
+### 작업 단계 (승인됨, 순차)
+A) RNG 아키텍처(`IRng`/`DeterministicRng`(자체 PRNG, xorshift+splitmix 시딩)/`RngStreams`/`RunConfig`).
+B) `IFloorSource` 심 추출(`JsonFloorSource`, 동작 불변, 49 테스트 유지).
+C) `ProceduralFloorGenerator`(아이작식 큐 성장 → `FloorLayout`).
+D) 절차적 적 구성(`ProceduralRules.json` 로더 + `RoomBounds` 안 지터 배치).
+E) 프로퍼티 테스트(같은 시드→동일 그래프 / 항상 연결+Start+Boss+유효 startRoomId / 방 수 범위 /
+   보스방=데드엔드) + 기본을 절차적으로 전환, JSON 선택 유지.
+F) 시드 노출(일시정지/게임오버). 타이틀 시드 입력은 2b.
+규모 ~3~4 세션. 아트 리소스 적용(무료 CC0 3D 1세트)을 이 즈음 병행.
+
+### 관련 파일 (예정)
+- 신규: `Assets/Scripts/Core/{IRng,DeterministicRng,RngStreams,RunConfig}.cs`,
+  `Assets/Scripts/Stage/{IFloorSource,JsonFloorSource,ProceduralFloorSource,ProceduralFloorGenerator}.cs`,
+  `Assets/Scripts/Stage/ProceduralRules.cs`, `Assets/StreamingAssets/Balance/Stage/ProceduralRules.json`
+- 수정: `GameFlow.cs`(RunConfig), `StageManager.cs`(IFloorSource 소비)
+
+---
+
 ## 2026-09-09 (2) — 테스트 도입을 위한 asmdef: 단일 래핑 vs 계층 분리 vs 순수 코어만
 
 ### 배경 / 문제

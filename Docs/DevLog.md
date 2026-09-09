@@ -203,6 +203,34 @@
   절차적으로 전환 F) 시드 노출(일시정지/게임오버). 규모 ~3~4 세션. 상세는 대화 2026-09-09.
 - 아트 리소스 적용(무료 CC0 3D 1세트)을 이 즈음 병행 — 생성기/카메라를 회색 캡슐 아닌 실제 크기로.
 
+**트랙 #2 Phase A+B 착수 — RNG 아키텍처 + `IFloorSource` 심 (동작 불변)**
+- 서브 항목 5개 유저 확정: 알고리즘 A / 시드 c(랜덤+오버라이드) / 범위 ii(그래프+타입+적 구성) /
+  JSON provider 대안 모드로 유지 + 손상 폴백 재활용 / 난이도는 `ProceduralRules.json`(층별 이산 표,
+  곡선 함수 아님; F3 아이템 방은 확률). 상세 `AI_Decision_Log.md` 2026-09-09 (3).
+- **Phase A — RNG** (`Assets/Scripts/Core/`):
+  - `IRng` — 결정적 난수 스트림 인터페이스(`NextUInt`/`Range(int/float)`/`Next01`/`Chance`).
+  - `DeterministicRng` — 자체 PRNG: xorshift128(Marsaglia) + SplitMix64 시딩. `System.Random`은
+    .NET 런타임 버전에 따라 시퀀스가 바뀔 수 있어(공유 시드 무의미) 자체 구현. `Range(int)`는
+    거부 표본추출로 무편향.
+  - `StableHash.Fnv1a` — `string.GetHashCode()`가 최신 .NET에서 프로세스마다 랜덤이라 스트림
+    이름 해시가 재현 안 됨 → FNV-1a 고정.
+  - `RngStreams` — 마스터 시드 → 이름별 독립 서브스트림(`Stream("layout")` / `Stream("enemies")`).
+    하나 뽑아도 다른 게 안 흔들림. `drops`는 범위 iii 확장 시.
+  - `RunConfig`(시드 + `FloorSourceMode` {Procedural, Json}) + `RunConfig.NewRandom`.
+  - `GameFlow`: `CurrentRun` 추가, `StartRun`/`RetryRun`이 `NewRandom` 생성(RetryRun은 새 시드 =
+    새 던전, "같은 시드 재생"은 후일), `ReturnToTitle`이 clear, 에디터 직접 실행용 `EnsureRun()`.
+    현재 `DefaultFloorSource = Json`(생성기 나오면 한 줄 flip).
+- **Phase B — `IFloorSource` 심** (`Assets/Scripts/Stage/`):
+  - `IFloorSource { IReadOnlyList<FloorLayout> Floors }`. `JsonFloorSource`가 `GameFloors.Floors`
+    래핑(손상 폴백 포함). `StageManager.Awake`가 `GameFloors.Floors` 직접 참조 → `BuildFloorSource()`
+    (`RunConfig.FloorSource` switch, 지금은 Json만). `ProceduralFloorSource`는 Phase C에서 합류.
+- **검증**: EditMode **52개**(기존 39 + 신규 `RngTests` 13: 같은 시드→동일 시퀀스 / 다른 시드→다름 /
+  `Range` 경계·양끝 도달·max 미도달·예외 / `Next01` 구간 / `Chance` 0·1·0.5(4만 표본 ±0.02) /
+  스트림 동일이름 동일·다른이름 독립·인스턴스 간 재현 / `StableHash` 고정값) 전부 통과. PlayMode
+  **10개** 그대로 통과(심 리팩터 동작 불변). `RunCommand` 새너티: RngStreams 재현성, layout/enemies
+  독립, `EnsureRun` 기본값(mode Json), `JsonFloorSource` 3층(6/10/13) 정상. 콘솔 에러 0.
+- 다음: Phase C — `ProceduralFloorGenerator`(아이작식 큐 성장).
+
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →
   `[SerializeField] private` 필드를 리플렉션으로 주입 → 활성화하는 패턴. `MakeEnemyData`(빈

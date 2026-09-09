@@ -88,8 +88,23 @@ public class StageManager : MonoBehaviour
     {
         _runStartTime = Time.time;
         _floorStartTime = Time.time;
-        _floors = GameFloors.Floors;
+        _floors = BuildFloorSource().Floors;
         BuildProvider();
+    }
+
+    // Picks the floor graph source for this run. Only JsonFloorSource exists so
+    // far, so today this is always the hand-authored FloorN.json data;
+    // ProceduralFloorSource joins the switch in a later step and becomes the
+    // default (RunConfig.FloorSource decides).
+    private IFloorSource BuildFloorSource()
+    {
+        RunConfig run = GameFlow.EnsureRun();
+        switch (run.FloorSource)
+        {
+            case FloorSourceMode.Json:
+            default:
+                return new JsonFloorSource();
+        }
     }
 
     private void Start()

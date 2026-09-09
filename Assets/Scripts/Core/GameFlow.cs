@@ -9,9 +9,8 @@ using UnityEngine;
 // behaviour, and a button-click handler in any scene must be able to reach it
 // without that scene holding a reference to a manager object. Nothing here is a
 // MonoBehaviour, so there is no GameObject to place, lose, or duplicate across
-// scenes. When a run needs more carried state (settings, meta-progression, a
-// seed), this grows a small serializable "run config" rather than a pile of
-// statics - not needed yet.
+// scenes. The one bit of carried run state beyond the archetype now lives in
+// RunConfig (seed + floor-source mode).
 public static class GameFlow
 {
     // Scene NAMES, not build indices: indices silently shift when the Build
@@ -28,27 +27,47 @@ public static class GameFlow
     // CharacterSelectController falls back to a serialized default for that.
     public static CharacterArchetypeData PendingArchetype { get; set; }
 
-    // Title "Start" -> an archetype was chosen -> load into gameplay.
+    // The active run's seed + floor-source mode. Set at run start, read by
+    // StageManager when it builds the floors. Null when the gameplay scene is
+    // entered directly in the editor - EnsureRun() covers that.
+    public static RunConfig CurrentRun { get; private set; }
+
+    // FloorSourceMode.Json until ProceduralFloorSource exists; flip to Procedural
+    // then (single call site on purpose, easy to find).
+    private const FloorSourceMode DefaultFloorSource = FloorSourceMode.Json;
+
+    // Title "Start" -> an archetype was chosen -> load into gameplay with a fresh
+    // random-seeded run.
     public static void StartRun(CharacterArchetypeData archetype)
     {
         PendingArchetype = archetype;
+        CurrentRun = RunConfig.NewRandom(DefaultFloorSource);
         LoadScene(GameplayScene);
     }
 
     // "다시하기" on the clear screen: straight back into a fresh gameplay scene,
-    // reusing the archetype already picked (no trip through the title). The scene
-    // reload is what resets the whole run - Player, StageManager, pools, and
-    // GameFloors' cached floor data all come back fresh.
+    // reusing the archetype but with a NEW seed (a fresh dungeon, Isaac-style).
+    // A "replay this seed" option is later work. The scene reload resets the rest
+    // of the run - Player, StageManager, pools, GameFloors' cache.
     public static void RetryRun()
     {
+        CurrentRun = RunConfig.NewRandom(DefaultFloorSource);
         LoadScene(GameplayScene);
     }
 
-    // "타이틀로" on the clear screen: back to square one, archetype cleared.
+    // "타이틀로" on the clear screen: back to square one, archetype + run cleared.
     public static void ReturnToTitle()
     {
         PendingArchetype = null;
+        CurrentRun = null;
         LoadScene(TitleScene);
+    }
+
+    // For entering the gameplay scene directly in the editor (no title): there is
+    // no run config, so give it a default random one.
+    public static RunConfig EnsureRun()
+    {
+        return CurrentRun ??= RunConfig.NewRandom(DefaultFloorSource);
     }
 
     private static void LoadScene(string sceneName)

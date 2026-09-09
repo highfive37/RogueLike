@@ -229,7 +229,35 @@
   스트림 동일이름 동일·다른이름 독립·인스턴스 간 재현 / `StableHash` 고정값) 전부 통과. PlayMode
   **10개** 그대로 통과(심 리팩터 동작 불변). `RunCommand` 새너티: RngStreams 재현성, layout/enemies
   독립, `EnsureRun` 기본값(mode Json), `JsonFloorSource` 3층(6/10/13) 정상. 콘솔 에러 0.
-- 다음: Phase C — `ProceduralFloorGenerator`(아이작식 큐 성장).
+**트랙 #2 Phase C — `ProceduralFloorGenerator` (아이작식 큐 성장)**
+- `FloorGraph.Validate(rooms, startId)` — Phase 2에서 `GameFloors`에 넣었던 그래프 검증(dangling
+  connection + start에서 BFS 연결성 + 중복 id + startRoomId 존재)을 공용 static으로 추출.
+  `GameFloors.ParseFloorJson`이 이걸 호출하도록 변경(동작 불변), 생성기도 self-check로 사용.
+- `FloorGenParams`(struct) — 층별 노브 `MinRooms`/`MaxRooms`/`ItemRoomChance`. 지금은
+  `ProceduralFloorSource`에 하드코딩 기본값(F1 6~8, F2 9~11, F3 12~14 / 아이템 확률 1/1/0.5),
+  Phase D에서 `ProceduralRules.json` 로더로 교체.
+- `ProceduralFloorGenerator.Generate(floorNumber, isLast, params, RngStreams)`:
+  - 격자 중앙(0,0)에 시작방 → 반복 홍수 패스: 배치된 셀들을 `(y,x)` 정렬 순회, 각 빈 직교
+    이웃이 "기존 방 이웃 정확히 1개"면 50% 확률로 추가. 목표 방 수 도달 or 성장 불가까지.
+  - 데드엔드(완성 후 문 1개, start 제외) 계산 → 보스 = start에서 BFS 최원거리 데드엔드(거리
+    동률은 `(y,x)` 순), 아이템 = 남은 데드엔드 중 `ItemRoomChance`로 하나, 나머지 Combat.
+  - 방 id = start에서 BFS 순서(고정 이웃 순 N/E/S/W) → start 항상 `floorNumber*1000+1`. 방 리스트는
+    id 오름차순으로 방출(`Dictionary` 열거 순서 비보장 회피 — 그래프뿐 아니라 리스트도 결정적).
+  - 문 = 인접한 두 배치 셀 사이 양방향. 방 크기 타입별(Start 16 / Item 20 / Combat·Boss 40).
+    적은 빈 배열(Phase D).
+  - `(masterSeed, floorNumber, attempt)`로 스트림 파생 → 제약 미충족(방 부족/데드엔드 없음/그래프
+    무효) 시 다음 attempt로 재시도(최대 40, 각 attempt 저렴). 전부 실패 시(사실상 불가) trivial
+    start-combat-boss 라인 폴백 + 경고.
+- `ProceduralFloorSource(masterSeed) : IFloorSource` — 3개 층 생성(층당 파생 스트림, N번째만 isLast).
+  `StageManager.BuildFloorSource` switch에 `FloorSourceMode.Procedural` case 추가. **기본은 여전히
+  `Json`**(`GameFlow.DefaultFloorSource`) — 절차적은 도달 가능하지만 아직 기본 아님.
+- **검증**: EditMode **66개**(기존 52 + 신규 14: `ProceduralFloorGeneratorTests` 9 — 같은 시드→동일
+  레이아웃 / 다른 시드→다름 / 항상 유효 그래프+Start1+Boss1 / 방 수 범위 / 보스=데드엔드 /
+  id 층 네임스페이스 / 문 양방향 / 아이템 확률 0→없음·1→있음. `ProceduralFloorSourceTests` 5 —
+  3층+isLast / 전부 유효·비손상 / 같은 마스터시드 전 층 재현 / 다른 시드 다름 / 후반 층 방 수 증가)
+  전부 통과. PlayMode **10개** 그대로. `RunCommand` ASCII 미리보기: 시드 20260909 → 7/11/12방,
+  아이작형 스프롤, 보스 원거리 데드엔드, 같은 시드 재현 True. 콘솔 에러/폴백 경고 0.
+- 다음: Phase D — `ProceduralRules.json` 로더 + 절차적 적 구성(`RoomBounds` 안 지터 배치).
 
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →

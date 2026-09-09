@@ -92,15 +92,16 @@ public class StageManager : MonoBehaviour
         BuildProvider();
     }
 
-    // Picks the floor graph source for this run. Only JsonFloorSource exists so
-    // far, so today this is always the hand-authored FloorN.json data;
-    // ProceduralFloorSource joins the switch in a later step and becomes the
-    // default (RunConfig.FloorSource decides).
+    // Picks the floor graph source for this run from RunConfig.FloorSource. The
+    // default is still Json (see GameFlow.DefaultFloorSource) - Procedural is
+    // reachable but not yet the default.
     private IFloorSource BuildFloorSource()
     {
         RunConfig run = GameFlow.EnsureRun();
         switch (run.FloorSource)
         {
+            case FloorSourceMode.Procedural:
+                return new ProceduralFloorSource(run.Seed);
             case FloorSourceMode.Json:
             default:
                 return new JsonFloorSource();

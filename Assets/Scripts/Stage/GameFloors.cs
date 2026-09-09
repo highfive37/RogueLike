@@ -183,7 +183,8 @@ public static class GameFloors
                 throw new Exception($"startRoomId {dto.startRoomId} is not one of the floor's rooms.");
             }
 
-            ValidateGraph(rooms, dto.startRoomId);
+            // Shared structural check (dangling connections, unreachable rooms) - see FloorGraph.
+            FloorGraph.Validate(rooms, dto.startRoomId);
 
             return new FloorLayout(floorNumber, isLastByPosition, isCorrupted: false, dto.startRoomId, rooms);
         }
@@ -191,49 +192,6 @@ public static class GameFloors
         {
             Debug.LogError($"GameFloors: failed to parse floor {floorNumber} ({e.Message}). Using a built-in emergency layout - fix the file and re-run.");
             return EmergencyFloor(floorNumber, isLastByPosition);
-        }
-    }
-
-    // Every connection must point at a real room, and every room must be reachable from the
-    // start room by following connections. A dangling or disconnected graph reads as a softlock
-    // in play (a room you can't leave, or can never enter) rather than a crash, so it's caught
-    // here and treated like any other structural fault -> emergency floor.
-    private static void ValidateGraph(List<RoomData> rooms, int startRoomId)
-    {
-        var byId = new Dictionary<int, RoomData>(rooms.Count);
-        foreach (RoomData room in rooms)
-        {
-            byId[room.RoomId] = room;
-        }
-
-        foreach (RoomData room in rooms)
-        {
-            foreach (RoomDoorConnection conn in room.Connections)
-            {
-                if (!byId.ContainsKey(conn.TargetRoomId))
-                {
-                    throw new Exception($"room {room.RoomId} connects to non-existent room {conn.TargetRoomId}.");
-                }
-            }
-        }
-
-        var reached = new HashSet<int> { startRoomId };
-        var queue = new Queue<int>();
-        queue.Enqueue(startRoomId);
-        while (queue.Count > 0)
-        {
-            foreach (RoomDoorConnection conn in byId[queue.Dequeue()].Connections)
-            {
-                if (reached.Add(conn.TargetRoomId))
-                {
-                    queue.Enqueue(conn.TargetRoomId);
-                }
-            }
-        }
-
-        if (reached.Count != rooms.Count)
-        {
-            throw new Exception($"{rooms.Count - reached.Count} room(s) unreachable from start room {startRoomId} by following connections.");
         }
     }
 

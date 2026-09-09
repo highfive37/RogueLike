@@ -452,6 +452,68 @@
 
 ---
 
+## 다음 세션 인수인계 (2026-09-09 세션 종료 시점 · 다음 작업일 2026-09-10 예정)
+
+> 새 세션에서 이 로그를 처음 읽는 경우를 위한 정리. 위 2026-09-09 항목들이 이 세션에서
+> 한 일, 아래가 "다음에 할 일". 상세 근거는 `ClaudeSessionSummary.md` §6 / `AI_Decision_Log.md`.
+
+### 0. 커밋 대기 (이 세션 결과물, 아직 미커밋)
+
+- 워킹 트리에 다음이 스테이징 안 된 채 남아 있음. 유저가 Fork GUI로 직접 커밋한다.
+  커밋 메시지(subject/description)는 세션 대화에서 이미 제공함 — 필요하면 다시 만들어 줄 것.
+  - 코드: `Assets/Scripts/Combat/Projectile.cs`, `Assets/Scripts/Core/{GameFlow,RunConfig}.cs`,
+    `Assets/Scripts/Room/RoomController.cs`, `Assets/Scripts/UI/DebugOverlayController.cs`,
+    `Assets/Scenes/Prototype.unity`(레거시 `Ground` 삭제)
+  - 신규: `Assets/Tests/EditMode/ProceduralInvariantsTests.cs`, `Assets/Tests/PlayMode/ProjectileTests.cs`
+  - 문서: `Docs/{DevLog,ClaudeSessionSummary,AI_Decision_Log}.md`
+- 내용 = (1) 절차적 던전 생성을 기본 모드로 전환 + 시드 표시/양수화/R재시작/체커 바닥/Ground 삭제,
+  (2) 적·아군 발사체 상호 통과. 한 커밋으로 묶는 것을 권장(파일이 깔끔히 나뉘면 2커밋도 가능).
+
+### 1. 트랙 #2 (절차적 생성) 마무리 — 최우선
+
+- **유저 1주파 실플레이 검증 (핵심 체크포인트, 미완)**:
+  - 런 시작마다 다른 던전 / 같은 시드 = 같은 던전
+  - F1로 시드 확인 → R로 재시작 → 시드·던전 바뀜
+  - 1→2→3층 방 수·적 수 증가, 변형 믹스가 후반에 원거리/버스트로 이동
+  - 방-방 전환·미니맵·보스방 Floor Exit·아이템방 드랍이 여러 레이아웃(4방향 허브·긴 체인·루프)
+    에서도 정상인지 — 코드 스모크는 통과, 카메라/미니맵 체감은 사람 확인 필요
+- **Phase F (미착수)**: 시드를 일시정지·게임오버 화면에도 표시 + 타이틀 화면에 시드 입력칸
+  (같은 시드 재생). `DebugOverlayController`의 `SEED` 표시 패턴 재사용 가능. 타이틀 입력은
+  `RunConfig`에 시드 오버라이드를 넣고 `GameFlow.StartRun` 경로에서 읽는 형태.
+
+### 2. 이월된 유저 실플레이 (이전 세션 미완, 위 "다음 작업"의 체크리스트 참고)
+
+- 씬 전환 페이드 1주파 (타이틀↔선택↔런, 층 1→2→3 인런, 클리어/게임오버/ESC 전부 페이드)
+- 적 방 이탈 수정 체크리스트 (근접 넉백·원거리 후퇴 벽 앞 정지·밖으로 나가면 복귀)
+- 신규 적 변형(ErraticMelee/BurstRanged)이 2·3층에 실제로 섞여 나오는지 육안 확인
+- 대시 무적 프레임 최종 확인 (`ClaudeSessionSummary.md` §6 #3)
+- 발사체 상호 통과: **유저 실플레이 확인 완료** — 재검증 불필요. 추후 의도적 상쇄/블랭크
+  메커닉을 넣게 되면 `Projectile.OnTriggerEnter` 가드 한 곳 + `ProjectileTests`만 고치면 됨.
+
+### 3. 포트폴리오 기술 트랙 — 확정 순서 (`ClaudeSessionSummary.md` §6)
+
+1. ~~테스트 스위트 + CI~~ ✅ 완료
+2. **절차적 층 생성** — 대부분 완료. 위 1번(Phase F + 실플레이)만 남음
+3. **적 경로탐색 (그리드 A* 권장) + 방 안 장애물** — 절차적 방이 생겨 가치 상승(장애물이
+   생성기의 일부). `EnemyChaseState` 이동만 교체. 프로파일러 계측(원래 #7)을 여기 흡수. ~4~5 세션
+4. **입력 버퍼링 + 프레임레이트 독립성** — 건전식 타이트 조작. ~1 세션. 게임필 우선이면 3과 교체 가능
+5. **커스텀 에디터 툴링 — SO 검증 패스** (+ 여유 시 층 그래프 비주얼라이저) — 노력 대비 신호 큼, ~1 세션
+6. **세이브/로드 — 버전드 직렬화 + 런 이어하기** — 언블록 안 함, 가장 나중 또는 마감 시 스킵
+
+### 4. 아트 리소스 적용 시점
+
+- 무료 CC0 / AI 생성 3D 1세트 — **2번(절차적 생성) 착수 직전~진행 중 병행 권장 = 지금 즈음**.
+  회색 캡슐 대신 실제 크기 모델로 바꿔야 생성기/카메라 튜닝이 플레이스홀더에 안 물림.
+
+### 5. 그 뒤 (아트 통합 이후로 의도적 이연)
+
+- Stage 3 최적화 (`EnemyAIManager` AI Tick 분산, `GetComponent` 캐싱) + §6.5 After 측정
+  (Before 표·벤치 인프라는 완료, 현재 실측 병목 없음)
+- Phase 4 아트 교체 / Phase 5 Addressables(아트 후 축소 범위) / Phase 7 포트폴리오 문서화
+- Stage 2.5 잔여: 아이템 방 세부 밸런스, 아이콘 스와치 → 실제 픽토그램
+
+---
+
 ## 2026-09-08
 
 ### 진행 내용

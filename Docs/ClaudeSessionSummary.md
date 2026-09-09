@@ -81,6 +81,15 @@ MoveTo`로 수렴 + 신규 `RoomController.ClampToInterior`로 방 내부 AABB �
 공용 `FloorGraph.Validate` 추출. 자동화 테스트 EditMode 82 + PlayMode 10 전부 초록, `Prototype.unity`
 씬 실측 통과. F1 오버레이에 `SEED` 표시. **유저 실플레이 검증 대기** — §2·§3, `DevLog.md`/
 `AI_Decision_Log.md` 2026-09-09 (3). 남은 것: Phase F(시드 화면 표시 + 타이틀 시드 입력).
+2026-09-09 (6) 트랙 #2 Phase E 마무리 + 발사체 처리 — (a) 방 바닥을 코드 생성 흑백 체커
+머티리얼로(방 크기별 공유, 칸 2유닛 고정), 그 과정에서 드러난 Z-파이팅은 `Prototype.unity`의
+Stage 1 시절 정적 `Ground` Plane(y=0, 룸 바닥과 동일 평면) **삭제**로 해소(유저 "A안"),
+(b) 무작위 시드를 양수 전용(`Random.Next(1, int.MaxValue)`)으로, (c) F1 켠 상태에서 R = 런
+재시작(새 시드) 디버그 단축키, (d) **적 발사체 ↔ 아군 발사체가 서로 상쇄되지 않고 통과** —
+`Projectile.OnTriggerEnter`에서 상대가 `Projectile`이면 즉시 return(데미지·소멸 없음), 신규
+PlayMode 테스트 `ProjectileTests` 1개로 회귀 잠금(유저 실플레이 확인 완료). 자동화 테스트
+**EditMode 82 + PlayMode 11 전부 초록**. §2·§3·§6, 상세는 `DevLog.md`/`AI_Decision_Log.md`
+2026-09-09 (4). 트랙 #2 남은 것은 그대로 Phase F + 절차 생성 유저 1주파 검증.
 
 ---
 
@@ -216,7 +225,9 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 표시 → 근접/원거리 선택 시 `GameFlow.StartRun(archetype)` → `Prototype` 씬 로드.
 
 **`Prototype.unity`** (이하):
-- `Ground`(Ground 레이어 지정), `Player`(프리팹 인스턴스), `Main Camera`
+- `Player`(프리팹 인스턴스), `Main Camera`. (Stage 1 시절의 정적 `Ground` Plane은 2026-09-09
+  삭제 — 룸 시스템이 방마다 `Ground` 레이어+MeshCollider 바닥 Plane을 만들어 완전 대체, 남겨
+  두면 y=0 동일 평면 Z-파이팅. `Ground` **레이어**는 유지.)
 - **방/문 그리드 시스템**(2026-08-31 신규): 씬에 방이 사전 배치되어 있지 않고,
   `StageManager.BuildFloor()`가 현재 층의 `FloorLayout.Rooms`를 기준으로
   `Room_Base.prefab`을 그리드에 전부 인스턴스화(백트래킹 가능). 각 방 인스턴스는 자체 `RoomManager`+
@@ -277,8 +288,9 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 ### 태그 / 레이어
 - 태그: `Player`(기본), `Enemy`(추가) — 변경 없음
 - 레이어: `Ground` — 그레네이드 착탄 지점 레이캐스트가 적 콜라이더를 잘못
-  맞히던 버그를 고치기 위해 도입, `Ground` 오브젝트를 이 레이어로 지정하고
-  관련 레이캐스트를 이 레이어로 제한
+  맞히던 버그를 고치기 위해 도입, 관련 레이캐스트를 이 레이어로 제한. 현재 이 레이어를
+  쓰는 것은 룸 시스템이 방마다 만드는 바닥 Plane(`RoomController.BuildGeometry`) —
+  옛 정적 `Ground` 오브젝트는 2026-09-09 삭제됨
 - 레이어: `Enemy` (2026-09-08 추가) — 대시 중 `Physics.IgnoreLayerCollision(Player, Enemy)`로
   적 관통을 켜고 끄기 위해 도입. `PlayerDodgeRoll`의 오버랩 체크(`Physics.CheckCapsule`)도
   이 레이어 마스크를 씀
@@ -498,6 +510,11 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   단일 초크포인트 `EnemyStateMachine.MoveTo`로 수렴, `FixedUpdate` 안전망이 그래도 벗어난 적을
   스폰 지점으로 스냅. 대안 비교는 `AI_Decision_Log.md` 2026-09-09. 적이 방 사이를 이동하는 설계가
   생기면 문 통로 예외를 넣는 형태로 확장 필요.
+- **발사체는 서로 통과가 기본(2026-09-09)**: `Projectile.OnTriggerEnter`는 상대가 다른
+  `Projectile`이면 즉시 무시 — 적 탄과 아군 탄이 겹쳐도 상쇄·소멸 없음(목표 장르에서 탄 상쇄는
+  기본이 아님). 나머지 충돌(`IDamageable`, 벽)은 불변. 의도적 상쇄/블랭크 메커닉이 필요해지면
+  이 가드 한 곳 + `ProjectileTests` 회귀 테스트만 고치면 됨. 대안 비교는 `AI_Decision_Log.md`
+  2026-09-09 (4).
 
 ---
 
@@ -593,9 +610,12 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
    **CI에서 49개(EditMode 39 + PlayMode 10) 전부 초록.** 방법 B 활성화(UNITY_EMAIL/PASSWORD
    시크릿만, Unity 6 엔타이틀먼트 라이선싱이라 `.ulf` 없음). `KnockbackMath`/`RoomBounds` 순수
    추출 + `GameFloors.ValidateGraph`(BFS 연결성 + dangling 검증) 신규. README + 배지.
-2. **결정론적 시드 절차적 층 생성** — 장르 정체성 간극(고정 3층 → 절차적). `IFloorLayoutProvider`
-   심의 회수 + per-system 시드 RNG 아키텍처. 규모 3~4 세션. 층 수는 3 고정, 레이아웃만 절차적,
-   JSON provider는 고정 시드 디버그 폴백으로 유지.
+2. **결정론적 시드 절차적 층 생성** — **대부분 완료(2026-09-09, Phase A~E).** 기본 던전이 이제
+   시드 기반 절차 생성(`DeterministicRng`/`RngStreams`/`RunConfig`/`IFloorSource`/
+   `ProceduralFloorGenerator`/`ProceduralRules.json`). 층 수 3 고정, 레이아웃·방 타입·문·적
+   구성이 절차적. JSON provider는 `FloorSourceMode.Json` 디버그 폴백으로 유지. EditMode 82 +
+   PlayMode 11 초록. **남은 것: Phase F**(시드를 일시정지·게임오버 화면 표시 + 타이틀 시드
+   입력칸) + **유저 1주파 실플레이 검증**(여러 레이아웃에서 카메라/미니맵/전환 체감).
 3. **적 경로탐색(그리드 A* 권장) + 방 안 장애물** — 절차적 방이 생긴 뒤 가치 상승(장애물이
    생성기의 일부). `EnemyChaseState` 이동만 교체. 프로파일러 계측(원래 #7)을 여기 흡수. 규모 4~5 세션.
 4. **입력 버퍼링 + 프레임레이트 독립성** — 건전식 타이트 조작. 규모 1 세션. 게임필 우선 시 3과 순서 교체 가능.

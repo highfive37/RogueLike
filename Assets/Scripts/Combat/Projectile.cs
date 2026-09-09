@@ -65,6 +65,11 @@ public class Projectile : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
+        if (other.transform == _owner)
+        {
+            return;
+        }
+
         if (other.TryGetComponent<IDamageable>(out var damageable))
         {
             damageable.TakeDamage(_damage, _owner);

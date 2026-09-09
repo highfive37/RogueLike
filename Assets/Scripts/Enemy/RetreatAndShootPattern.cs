@@ -1,23 +1,26 @@
 using UnityEngine;
 
-// Triggers when the player gets too close. Instead of meleeing, the boss
-// turns to face the player, backs away until it reaches its preferred
-// (ranged) firing distance, then fires a projectile.
+// Triggers when the player gets too close (Range here means "player invaded close range" - the
+// trigger distance, see RetreatAndShootPatternData). Backs away to PreferredRange, telegraphs,
+// then fires - implemented via the shared RangedKitingBehavior (also used by
+// RangedAttackPattern/BurstRangedAttackPattern) instead of its own copy of the same reposition/
+// wind-up state machine.
 public class RetreatAndShootPattern : IAttackPattern
 {
     private readonly RetreatAndShootPatternData _data;
     private readonly GameObjectPool _projectilePool;
+    private readonly RangedKitingBehavior _kiting;
     private float _cooldownRemaining;
-    private bool _isRepositioning;
 
     public RetreatAndShootPattern(RetreatAndShootPatternData data, GameObjectPool projectilePool)
     {
         _data = data;
         _projectilePool = projectilePool;
+        _kiting = new RangedKitingBehavior(data.Range, data.PreferredRange, data.WindUpDuration);
     }
 
     public bool IsReady => _cooldownRemaining <= 0f;
-    public bool IsBusy => _isRepositioning;
+    public bool IsBusy => _kiting.IsBusy;
 
     public bool IsInRange(EnemyStateMachine machine)
     {
@@ -26,7 +29,7 @@ public class RetreatAndShootPattern : IAttackPattern
 
     public void Execute(EnemyStateMachine machine)
     {
-        _isRepositioning = true;
+        _kiting.Start(machine, aimDirection => FireShot(machine, aimDirection));
     }
 
     public void Tick(float deltaTime)
@@ -39,47 +42,23 @@ public class RetreatAndShootPattern : IAttackPattern
 
     public void PhysicsTick(EnemyStateMachine machine, float fixedDeltaTime)
     {
-        if (!_isRepositioning)
-        {
-            return;
-        }
-
-        if (machine.Player == null)
-        {
-            _isRepositioning = false;
-            return;
-        }
-
-        Vector3 awayFromPlayer = machine.Body.position - machine.Player.position;
-        awayFromPlayer.y = 0f;
-        float distance = awayFromPlayer.magnitude;
-
-        Vector3 facing = -awayFromPlayer;
-        if (facing.sqrMagnitude > 0.0001f)
-        {
-            machine.Body.MoveRotation(Quaternion.LookRotation(facing.normalized));
-        }
-
-        if (distance >= _data.PreferredRange)
-        {
-            Fire(machine);
-            return;
-        }
-
-        Vector3 retreatDirection = awayFromPlayer.sqrMagnitude > 0.0001f ? awayFromPlayer.normalized : machine.transform.forward;
-        Vector3 nextPosition = machine.Body.position + retreatDirection * _data.MoveSpeed * fixedDeltaTime;
-        machine.Body.MovePosition(nextPosition);
+        _kiting.Tick(machine, fixedDeltaTime, _data.MoveSpeed);
     }
 
-    private void Fire(EnemyStateMachine machine)
+    public void Interrupt()
     {
-        _isRepositioning = false;
+        _kiting.Interrupt();
+        _cooldownRemaining = _data.Cooldown;
+    }
+
+    private void FireShot(EnemyStateMachine machine, Vector3 aimDirection)
+    {
         _cooldownRemaining = _data.Cooldown;
 
-        Vector3 direction = machine.Player.position - machine.transform.position;
-        direction.y = 0f;
-        direction = direction.sqrMagnitude > 0.0001f ? direction.normalized : machine.transform.forward;
-
-        ProjectileSpawner.Spawn(_projectilePool, machine.transform.position, direction, _data.ProjectileSpawnDistance, _data.Damage, machine.transform);
+        // This pattern fires from PreferredRange (the distance it retreats to), not Range (which
+        // here means "player invaded close range" - the trigger distance) - see
+        // RangedAttackPattern for why the spawn offset is subtracted.
+        float rangeOverride = _data.PreferredRange - _data.ProjectileSpawnDistance;
+        ProjectileSpawner.Spawn(_projectilePool, machine.transform.position, aimDirection, _data.ProjectileSpawnDistance, _data.Damage, machine.transform, 0f, rangeOverride);
     }
 }

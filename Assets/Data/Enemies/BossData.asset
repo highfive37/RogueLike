@@ -21,4 +21,5 @@ MonoBehaviour:
   attackPatterns:
   - {fileID: 11400000, guid: e4c1e41bb19e40d195f40f325676d0de, type: 2}
   - {fileID: 11400000, guid: 4ac40097ab2a49ab89ad5983f8a6be5c, type: 2}
-  stunDuration: 2
+  stunDuration: 0.08
+  knockbackResistance: 1

@@ -44,6 +44,310 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-08 (8) — 가만히 맞으면 근접 런지마다 뒤로 밀림: 그대로 두기 vs 런지 오버슈트 클램프 vs 치고 빠지기 vs 몸빵 제거 vs 플레이어 넉백 시스템
+
+### 배경 / 문제
+- (7) 이후 실플레이: 정지 상태로 근접 적에게 맞으니 "밀고 멈추고" 반복하며 방 뒤로 계속 밀림.
+  넉백 시스템으로 오해됐으나 코드상 **플레이어 피격 넉백은 없음**(`HealthComponent.TakeDamage`는
+  HP만). 원인은 `MeleeAttackPattern` 런지의 물리 충돌: 추격이 `MaxAttackRange`(1.2)에서 멈추고
+  런지 이동량도 `LungeSpeed 8 × LungeDuration 0.15` = 1.2라, 런지가 플레이어 중심까지 관통 →
+  솔버 depenetration이 플레이어를 밀어냄. (7)이 idle sway를 걷어내며 이 런지-shove가 드러남.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 그대로 둔다 | 작업 0, 읽히는 박자이고 실플레이어는 구른다 | 유저가 명시적으로 어색하다고 지적함 |
+| 런지 전진량을 "플레이어와의 거리 − 접촉버퍼"로 클램프(방향은 고정, 거리만 단축) | 몇 줄, 데이터/프리팹 무변경, 근접 두 변형 공용, 비호밍 유지, 박자는 그대로 두고 관통-shove만 제거 | 접촉버퍼 상수 1개 튜닝 |
+| 런지 후 쿨다운 동안 짧게 후퇴(치고 빠지는 근접) | 근접에 리듬감 추가 | 느낌이 크게 바뀜, 코드 큼 — 지금 단계엔 과함 |
+| 적↔플레이어 물리 밀어내기 자체 제거(레이어 분리) | shove 원천 제거 | 몸빵(body block) 사라져 적이 플레이어 관통, 아마 비의도 |
+| 의도적 플레이어 피격 넉백 시스템 | "제대로 된" 버전, 튜닝 가능 | 이연했던 플레이어 넉백 스탯 작업, 큼 |
+
+### Claude 제안
+- 두 번째(클램프)를 즉시 수정으로 제안. 접촉 상태에서 `MovePosition`이 관통해 솔버와 싸우는 게
+  근본 원인이라, 런지가 플레이어 앞에서 멈추게만 하면 박자(윈드업→런지→홀드)는 유지한 채
+  불도저 느낌만 사라짐. 넉백을 "제대로" 하려면 다섯 번째지만 그건 별도 작업.
+
+### 선택한 방향
+- 유저가 두 번째 선택. `MeleeAttackPattern.PhysicsTick` 런지 스텝을
+  `min(step, max(0, gap.magnitude − LungeContactBuffer))`로 클램프. `LungeContactBuffer` const
+  1.1(양 캡슐 radius 0.5 → 살짝 떨어진 접촉; range 1.2 안이라 런지 종료 데미지 판정 정상).
+  이동은 고정 `_lungeDirection`만 따라 → 비호밍 유지. 데이터/프리팹 무변경.
+- 플레이어 피격 넉백(다섯 번째)은 **나중에** 플레이어 넉백 스탯과 함께.
+
+### 선택 이유
+- 세 번째(치고 빠지기)·다섯 번째(넉백 시스템)는 지금 단계(캡슐 placeholder)에서 굳히기 이르고
+  범위가 큼. 네 번째(몸빵 제거)는 부작용이 의도와 반대. 그대로 두기는 유저가 거부.
+- 남는 건 "런지가 관통하지 않게"뿐이고, 방향 고정 + 거리 클램프면 비호밍·회피 가능성을 안
+  건드리면서 shove만 제거됨 — 최소 변경으로 증상 해소.
+
+### 관련 파일
+- `Assets/Scripts/Enemy/MeleeAttackPattern.cs`
+
+---
+
+## 2026-09-08 (7) — 근접 적이 플레이어 주위를 공전: 접촉 거리 정지 게이트 vs 사거리 내 이동을 공격 패턴에만 위임
+
+### 배경 / 문제
+- 실플레이에서 근접 타입 전 개체가 플레이어에 붙어서 공격하지 않고 주위를 불규칙하게 원처럼
+  돌며 비빔. 원인: (1) `EnemyChaseState`에 정지 거리가 없어 접촉 상태에서도 매 FixedUpdate
+  `MovePosition`을 걸고, 오늘 추가한 `EnemyMovementFlavor.ApplyWobble`의 수직 성분만 충돌에
+  안 막혀 캡슐 표면을 미끄러짐. (2) `EnemyAttackState`의 쿨다운 중 positional idle sway가
+  접촉 상태에서 솔버 depenetration과 싸우며 불규칙 궤도 생성. (3) `MaxAttackRange` 경계에서
+  Chase↔Attack 플립플롭.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `EnemyData`에 `holdDistance` 필드 추가 → 그 거리 이하면 Chase 전진 중단 + idle sway 스킵 | 최소 변경(필드 1개), 근접 전 타입 일괄 적용 | 튜닝할 숫자 하나 증가, "근접은 사거리 안에서 안 움직인다"를 데이터로 흐리게 표현 |
+| B. 사거리(`MaxAttackRange`) 안에서는 이동을 공격 패턴의 런지에만 위임, 그 사이엔 완전 정지(회전만). idle sway는 `HoldStillDistance`(const) 밖 = 원거리 적 쿨다운 시에만 | 접촉 거리에서 `MovePosition`이 아예 사라져 물리 싸움 원천 제거, "윈드업→커밋→리셋" 리듬이 명확, 새 직렬화 필드 없음 | 오늘 추가했던 근접 idle sway를 같은 날 되돌리는 셈(원거리에만 남김), 코드 변경이 A보다 약간 큼 |
+| C. idle sway를 라이브 위치 기준 + 플레이어 침범 방지로 매끄럽게 | 기존 연출 유지 | 여전히 작게 공전함 — 유저의 "제자리에 서 있어야" 요구를 못 맞춤 |
+
+### Claude 제안
+- A(최소) 또는 B. 접촉 상태에서 `MovePosition` 계열 호출이 depenetration과 싸우는 게 근본
+  원인이라, 그 구간에서 위치 이동 호출 자체를 없애는 B가 증상을 원천 제거한다고 설명. C는
+  "제자리에 서 있어야"라는 요구와 상충하므로 제외 권고.
+
+### 선택한 방향
+- 유저가 B 선택. `EnemyChaseState.PhysicsTick`: 플레이어와의 거리 ≤ `MaxAttackRange`면 전진
+  중단(`MoveRotation` 회전만), 그보다 멀 때만 wobble 얹은 이동(접근 구간 wobble 유지).
+  `EnemyAttackState`: `ApplyIdleSway` → `HoldOrSway`. 플레이어와 `HoldStillDistance`(const 2.5)
+  이하면 positional 이동 없이 회전만 — 근접 range ~1.2라 근접 적은 항상 이 구간, 공격 사이
+  완전 정지. 그보다 멀면(원거리 적, range ~6) 기존 sine sway 유지.
+- 새 `EnemyData` 필드/데이터·프리팹 변경 없음. `EnemyChaseState.cs` + `EnemyAttackState.cs`.
+
+### 선택 이유
+- A의 `holdDistance`는 결국 `MaxAttackRange`와 거의 같은 값이 됨 — 이미 있는 `MaxAttackRange`를
+  정지 기준으로 재사용하면 새 필드가 필요 없고, "자기 사거리 안에 들어왔으면 공격 패턴이 이동을
+  전담한다"는 규칙이 코드에 그대로 드러남.
+- 오늘 추가한 근접 idle sway를 되돌리는 부분은, 그 sway가 노렸던 "살아있는 느낌"이 접촉 거리
+  에서는 오히려 depenetration과 싸우며 "비비는" 역효과를 낸다는 실플레이 증거에 따른 것.
+  충돌 대상이 없는 원거리 거리에서는 그대로 유효하므로 그 케이스만 남김.
+- C는 유저의 명시적 요구("가만히 있는 게 자연스럽다")와 방향이 다름.
+
+### 관련 파일
+- `Assets/Scripts/Enemy/EnemyChaseState.cs`, `Assets/Scripts/Enemy/EnemyAttackState.cs`
+
+---
+
+## 2026-09-08 (6) — Benchmark 측정 방법론: MCP 브리지로 Play Mode 구동 vs 유저 수동 조작 + 프레임 버퍼 사후 리드백
+
+### 배경 / 문제
+- 계획서 §6.5의 "Enemy N → FPS/GC Alloc Before 표"를 만들려고 `Unity_RunCommand`로
+  Play Mode 진입 → 스폰 → Profiler 값 수집을 자동화했더니, 0/50/100/200마리 전 구간에서
+  median CPU Time이 ~99.5ms로 **동일하게** 나옴. MCP 브리지의 상수 오버헤드가 프레임에
+  올라타서 측정하려는 신호(개체 수에 따른 4~7ms 차이)를 완전히 덮어버림.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 브리지로 계속 구동하되 오버헤드를 빼는 보정값 추정 | 자동화 유지 | 오버헤드가 상수가 아니라 프레임마다 요동 — 보정 불가능, 수치 신뢰도 0 |
+| Development Build를 만들어 빌드에서 측정 | Editor·브리지 오버헤드 완전 제거, 가장 정확 | 빌드 파이프라인·자동 계측 훅 작성 비용, Before 표 하나 뽑자고 과함 |
+| 유저가 직접 Play/버튼/Stop을 수행(그 구간엔 내가 아무 명령도 안 보냄), Stop 후 `ProfilerDriver.firstFrameIndex~lastFrameIndex` 버퍼(Stop 후에도 유지됨)에서 마지막 200프레임을 읽음 | 브리지가 측정 구간 프레임에 개입 안 함 → median 4~5ms대 깨끗한 수치, 추가 인프라 0 | 수동 조작이라 구간 반복이 느림, 절대값은 여전히 Editor Play Mode 기준 |
+
+### Claude 제안
+- 세 번째 대안 제안. 핵심 관찰: 브리지 오버헤드는 "내가 명령을 보내는 동안"만 발생하므로,
+  측정 구간에 명령을 아예 안 보내면 사라짐. Profiler 프레임 히스토리 버퍼는 Stop 이후에도
+  남아 있어 사후에 읽어도 됨.
+
+### 선택한 방향
+- 세 번째 대안 채택. 이번 세션에서 4종 × 50/100/200 Before 표를 이 방식으로 완성.
+- 절대값이 Editor 기준이라는 한계는 표에 명시하고, 세 구간 간 상대 비교만 유효하다고 단서.
+
+### 선택 이유
+- Before 표의 목적은 "개체 수 증가에 따른 상대적 비용 곡선"이지 빌드 성능 절대값이 아님 —
+  Development Build까지 가는 건 그 목적에 과투자. 정확한 절대값이 필요해지는 시점(Phase 6
+  본격 최적화)에 빌드 계측으로 올리기로 함.
+
+### 관련 파일
+- `Assets/Scripts/Benchmark/BenchmarkSpawner.cs`, `Assets/Scenes/BenchmarkScene.unity`
+- `Docs/DevLog.md` 2026-09-08 "이슈/메모"
+
+---
+
+## 2026-09-08 (5) — 각 타입 500/1000마리 스트레스 구간: 지금 측정 vs 스킵(Phase 6로 이연) vs Development Build로 지금
+
+### 배경 / 문제
+- 50/100/200 Before 표를 마친 뒤 500/1000까지 구간을 늘려보려 했으나, Melee 1000마리
+  스폰 직후 화면 깜빡임 → Unity 강제 종료(직전에 Windows 메모리 부족 경고도 발생). 2회 재현.
+- 이 구간을 §6.5 표에 넣을지, 넣는다면 어떻게 측정할지 결정 필요.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 에디터에서 계속 재시도(다른 앱 종료, Deep Profile off 등) | 추가 작업 없음 | 여전히 불안정, 기기 다운 반복 위험, 나온 수치도 Editor+Profiler 왜곡이 200마리 때보다 훨씬 큼 |
+| Development Build로 500/1000 측정 | 크래시 위험↓, 상한 수치 확보 | 빌드 파이프라인 작업, 게임 범위(룸당 수십 마리) 밖 수치라 투자 대비 효용 낮음 |
+| 측정하지 않고 스킵, §6.5 최적화+After 패스는 Phase 6로 이연(현 헤드룸을 근거로 명시) | 조기 최적화 함정 회피, 시간 절약 | §6.5 "before/after" 3단 중 after가 비게 됨 — "측정했더니 여유 있어 최적화 안 함"이라는 서술로 대체 |
+
+### Claude 제안
+- 세 번째 대안 제안. 근거: Profiler 실측상 가장 무거운 BurstRanged 200마리도 median 7.35ms =
+  16.67ms 예산의 44%로 정상 상태 병목이 없음. 병목이 없는데 최적화 항목을 억지로 만드는 건
+  CLAUDE.md가 경고하는 "placeholder 에셋 상대 조기 최적화". 적이 아직 캡슐이라 아트 통합 후
+  프로파일이 통째로 바뀜.
+
+### 선택한 방향
+- 유저가 세 번째 대안 선택. 500/1000 미측정. `DevLog.md` 2026-09-08에 크래시 상황 + 원인
+  분석 + "§6.5 최적화/After는 Phase 6로 의도적 이연" 근거를 기록.
+
+### 선택 이유
+- "먼저 측정했고, 예산 대비 여유가 커서 조기 최적화를 하지 않았다"는 판단 자체가 포트폴리오
+  근거가 됨(무비판적 최적화 회피). 실제 병목은 아트/애니/VFX가 들어오는 Phase 6에서 다시
+  측정해야 의미가 있음.
+
+### 관련 파일
+- `Docs/DevLog.md` 2026-09-08 "이슈/메모 (재부팅 후 후속 세션)"
+- `Docs/ProjectPlan.md` §6.5 / Phase 6
+
+---
+
+## 2026-09-08 (4) — 대시 중 적 관통: 데미지 무적만 유지 vs 적 콜라이더를 트리거로 vs 레이어 충돌 무시 + 오버랩 보정 꼬리
+
+### 배경 / 문제
+- 실플레이에서 대시(구르기)로 적을 통과하려 하면 물리적으로 막히거나 튕겨나감. 기존엔
+  `SetInvulnerable`로 데미지만 무효화했을 뿐 플레이어↔적 물리 충돌은 그대로였음.
+- 대시가 적 콜라이더 안에서 끝나는 경우, 충돌을 그냥 복원하면 솔버가 플레이어를 순간
+  이동시키듯 밀어냄.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 적 콜라이더를 상시 트리거로 바꿔 플레이어와 물리 충돌 자체를 없앰 | 대시 로직 안 건드려도 됨 | 평상시 적-적/적-벽 밀림, 넉백, 근접 접촉이 전부 깨짐 — 영향 범위 과대 |
+| 대시 중 데미지 무적만 유지(현행) + 물리 충돌은 감수 | 구현 없음 | 문제 그대로 — 적 뭉치에 대시가 막힘 |
+| 대시 시작~보정 꼬리 동안만 `Physics.IgnoreLayerCollision(Player, Enemy)`, 대시 종료 시 적과 겹쳐 있으면(`CheckCapsule`) 같은 방향으로 저속(×0.35, ≤0.25s) 미끄러져 빠져나온 뒤 충돌 복원 | 평상시 물리는 완전 그대로, 대시만 관통, 복원 시 팝 없음 | 상태(`_isCorrectingOverlap`)와 분기 추가로 `PlayerDodgeRoll` 복잡도↑ |
+
+### Claude 제안
+- 세 번째 대안 제안. `IgnoreLayerCollision`은 레이어 쌍 단위 전역 토글이지만 대시 창에만
+  걸었다 풀면 부작용 없음. 종료 시 오버랩 보정은 "충돌을 다시 켜되 솔버가 아니라 우리가
+  천천히 밀어낸다"는 접근.
+
+### 선택한 방향
+- 세 번째 대안 채택. `FixedUpdate`를 `RunDash`/`RunOverlapCorrection`으로 분리,
+  `EndDodgeRoll` → `FinishDash`(오버랩 분기) + `CompleteDodgeRoll`(공용 리셋)로 재구성.
+- `CancelDodgeRoll`(문/Floor Exit 전환)은 보정 꼬리를 건너뛰고 즉시 복원(텔레포트/숨김 직전
+  이라 팝이 안 보임).
+- 캡슐 지오메트리 산출은 `WallClamp.GetCapsuleGeometry()`로 추출해 벽 클램프와 오버랩 체크가
+  동일 월드 캡슐 공유.
+
+### 선택 이유
+- 평상시 물리(적 밀림/넉백/접촉)를 절대 건드리면 안 된다는 게 1순위 — 트리거화는 그걸 깨서
+  탈락. 무적만 유지는 문제 미해결. 남는 건 "대시 창에만 국소적으로 끄기"뿐이고, 복원 시 팝은
+  별도 보정으로 흡수하는 게 유일하게 깔끔한 조합.
+
+### 관련 파일
+- `Assets/Scripts/Player/PlayerDodgeRoll.cs`, `Assets/Scripts/Player/WallClamp.cs`
+
+---
+
+## 2026-09-08 (3) — 플레이어 사망 처리: 전용 컨트롤러 신설 vs `RoomFlowManager` 재사용 / 쓰러지는 연출: 물리 래그돌 vs 스크립트 틱오버
+
+### 배경 / 문제
+- 그간 이연되던 Game Over(로드맵 §6 #6 나머지). 플레이어 `HealthComponent.Health.Died`를
+  받아 결과 화면을 띄우고, 죽은 티를 내는 연출이 필요.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 사망 처리 전담 `PlayerDeathController` 신설 | 책임 분리 명확 | `RoomFlowManager`가 이미 갖고 있는 참조(PlayerDodgeRoll, PickupNotificationUI, UIManager, stats 빌더)를 상당수 중복 확보해야 함 |
+| `RoomFlowManager`에 `HandlePlayerDied` 추가 | `HandleFloorCompleted`와 "런이 방금 끝났다 → 결과 화면" 형태가 동일, 스탯 빌더/구르기 취소/알림 숨김 로직 그대로 공유(`BuildCurrentStats()` 추출) | `RoomFlowManager` 책임이 "방 흐름"에서 "런 종료 전반"으로 살짝 넓어짐 |
+| 연출: `isKinematic=false`로 두고 물리 래그돌(임펄스로 넘어뜨림) | "진짜" 물리 반응 | 캡슐 1개짜리 무애니 프리미티브라 래그돌이랄 게 없음, 넘어진 위치·각도 비결정적, 보스 전도 버그와 같은 부류 리스크 |
+| 연출: `isKinematic=true` + 캡슐 밑동 피벗 `RotateAround` 스크립트 틱오버(0.45s, 90°) | 결정적, 지면 안 뚫음, `timeScale=0`에서도 `unscaledDeltaTime`으로 동작 | 임시방편 — 실제 캐릭터 애니 들어오면 폐기 |
+
+### Claude 제안
+- 두 번째(위치) + 네 번째(연출) 조합 제안. 사망은 승리(FloorCompleted)와 같은 "run ended"
+  이벤트의 패배판일 뿐이고, `RoomFlowManager`는 이미 런 종료 순간에 Player 컴포넌트를 만짐.
+  연출은 캐릭터가 캡슐인 현 단계에선 물리보다 스크립트가 예측 가능·안전.
+
+### 선택한 방향
+- 그대로 채택. `RoomFlowManager.HandlePlayerDied`: 구르기 취소 + 픽업 알림 즉시 숨김 +
+  `PlayerInputActions` off + `PauseState.RequestPause` + `PlayerFallOverRoutine` + `ShowGameOver`.
+  승/패 공용 `BuildCurrentStats()` 추출. 연출은 캡슐 밑동 피벗 `RotateAround` + `unscaledDeltaTime`.
+- `GameOverUI`는 `FloorCompleteUI` 대응 구조(3 `CanvasGroup` 레이어, 버튼은 페이드 후 활성),
+  가시성은 프로젝트 공통 `CanvasGroup` 컨벤션(`SetActive` 금지 — 자기-비활성 패널 함정).
+
+### 선택 이유
+- 전용 컨트롤러는 참조 중복 비용이 분리 이득보다 큼 — 두 번째 "런 종료 유사 이벤트"가
+  이미 있고 형태가 같으니 같은 클래스가 맞음.
+- 물리 래그돌은 보스 전도 버그(같은 2026-09-08 로그)에서 이미 데인 부류 — 무애니 캡슐 단계
+  에선 스크립트 틱오버가 정답, 캐릭터 아트/애니 교체 시 재검토(CLAUDE.md 플레이스홀더 노트).
+
+### 관련 파일
+- `Assets/Scripts/UI/GameOverUI.cs`, `Assets/Scripts/UI/UIManager.cs`
+- `Assets/Scripts/Room/RoomFlowManager.cs`
+- `Assets/Art/UI/GamePlay/ui_game_fail.png`
+
+---
+
+## 2026-09-08 (2) — 원거리 카이팅: 플레인 Ranged는 그대로 두기 vs 패턴별로 후퇴 로직 복붙 vs 공유 `RangedKitingBehavior` 클래스
+
+### 배경 / 문제
+- 후퇴 로직은 `RetreatAndShootPattern`(보스 패턴)에만 있었음. 일반 `RangedAttackPattern`과
+  신규 `BurstRangedAttackPattern`은 서 있는 자리에서 그냥 쏴서, 붙어서 밀어붙이면
+  원거리 적이 완전히 무력화됨.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| 플레인 Ranged/Burst는 후퇴 없이 유지 | 작업 없음 | 러시에 취약한 설계 결함 그대로, 3종 행동이 제각각 |
+| 각 패턴 클래스에 후퇴+윈드업 코드를 개별 구현 | 패턴별 미세 조정 자유 | 거의 동일한 상태 머신(후퇴/윈드업/발사 타이밍)을 3벌 복붙 — 버그 3배, `RetreatAndShootPattern`과도 중복 |
+| 후퇴/윈드업 타이밍만 담은 공유 `RangedKitingBehavior` 클래스 + 발사는 `onFire` 콜백으로 각 패턴이 소유 | 3종이 예외 없이 동일하게 "가까우면 후퇴 → 벌어지면 윈드업 → 발사", 단발/버스트 차이는 콜백에만 | 순수 C# 헬퍼 클래스 1개 추가, 패턴이 위임 구조가 됨 |
+
+### Claude 제안
+- 세 번째 대안 제안. 카이팅의 "리포지션/윈드업"과 "실제 사격(단발 vs 연사)"은 관심사가
+  다르니, 전자만 공유 클래스로 빼고 후자는 `Action<Vector3> onFire`로 패턴에 남기면 공유
+  클래스가 shot count에 무지한 채로 재사용됨.
+
+### 선택한 방향
+- 세 번째 대안 채택. `RangedKitingBehavior(retreatTriggerRange, retreatToRange, windUpDuration)`
+  + `Start(machine, onFire)` / `Tick(...)` / `Interrupt()` / `IsBusy`. `RangedAttackPattern`,
+  `BurstRangedAttackPattern`, `RetreatAndShootPattern` 전부 이걸로 통일. 후퇴 이동에도
+  `EnemyMovementFlavor.ApplyWobble` 적용.
+
+### 선택 이유
+- 동일 상태 머신 3벌 복붙은 유지보수상 명백한 악수. 콜백 분리로 "타이밍은 공유, 사격은
+  고유"가 되어 향후 4번째 원거리 패턴도 같은 뼈대를 씀.
+- 2026-08-18에 `RetreatAndShootPattern`을 만들 땐 원거리 패턴이 2개뿐이라 전용으로 둔 게
+  맞았지만, `BurstRanged` 추가로 3개가 되면서 공통화 임계점을 넘음.
+
+### 관련 파일
+- `Assets/Scripts/Enemy/RangedKitingBehavior.cs` (신규)
+- `Assets/Scripts/Enemy/RangedAttackPattern.cs`, `BurstRangedAttackPattern.cs`,
+  `RetreatAndShootPattern.cs`, `EnemyMovementFlavor.cs`
+
+---
+
+## 2026-09-08 (1) — 피격 스태거·넉백 데이터 모델: 전용 필드 세트 신설 vs 기존 `StunDuration` 재활용 + 단일 `KnockbackResistance`
+
+### 배경 / 문제
+- 적이 맞아도 반응이 없어 때리는 맛이 없음. 히트 스태거(잠깐 경직)와 넉백(뒤로 밀림)을
+  넣되, 개체별로 차등(무거운 적/보스는 거의 안 밀리고 안 흔들림)을 두고 싶음.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| `staggerDuration`, `knockbackDistance`, `knockbackImmune`, `staggerImmune` 등 전용 필드 세트 신설 | 각 축을 독립 튜닝 | `EnemyData`에 필드 4개+ 증식, `stunDuration`(이미 있으나 아무도 안 씀)과 의미 중복 |
+| 기존 `stunDuration` 재활용(2s→0.15s 재조정)해 "모든 피격 시 이만큼 경직" + 넉백은 단일 `knockbackResistance`(0~1)만, 거리 = `BaseKnockbackDistance`(1.5, 임시 상수) × (1 - resistance) | `EnemyData` 필드 증가 최소(1개), 죽은 필드 부활, 튜닝 손잡이가 개체당 2개로 단순 | 스태거 길이와 "잠금 저항"을 따로 못 굴림(보스는 stunDuration만 낮추면 됨 — 실용상 충분), 넉백 절대거리가 상수라 나중에 플레이어 스탯과 결합 필요 |
+
+### Claude 제안
+- 두 번째 대안 제안. 지금 필요한 차등은 "보스/헤비는 덜 흔들리고 덜 밀린다" 정도라 축 2개
+  (경직 시간, 넉백 저항)면 충분. `BaseKnockbackDistance`는 상수로 두되, 플레이어 "넉백 파워"
+  스탯이 생기면 그 자리를 대체하도록 주석으로 못박음.
+
+### 선택한 방향
+- 두 번째 대안 채택. `EnemyStateMachine`이 `HealthComponent.AnyDamageTaken`(static) 구독 →
+  `StunDuration`만큼 `EnemyStunnedState`. 넉백 = `BaseKnockbackDistance × (1 - KnockbackResistance)`.
+  `IAttackPattern.Interrupt()` 추가해 윈드업/리포지션 중 스턴 시 안전 취소(쿨다운은 적용).
+
+### 선택 이유
+- 전용 필드 세트는 지금 요구(2축 차등)에 과한 데이터 표면적. 안 쓰이던 `stunDuration`을
+  되살리는 쪽이 필드 수·개념 수 둘 다 최소.
+- 넉백 절대거리 상수화는 "플레이어 넉백 스탯이 아직 없다"는 현 상태에 맞춘 트레이드오프 —
+  스탯이 생기는 시점에 `EnemyStateMachine`의 상수 자리를 공식으로 교체하기로 함.
+
+### 관련 파일
+- `Assets/Scripts/Enemy/EnemyData.cs`, `EnemyStateMachine.cs`, `EnemyStunnedState.cs`,
+  `IAttackPattern.cs`, `EnemyAttackState.cs`
+
+---
+
 ## 2026-09-04 (6) — 타이틀 Start 버튼 홀드 시 캐릭터 선택이 즉시 클릭되는 문제
 
 ### 배경 / 문제

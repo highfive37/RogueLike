@@ -58,6 +58,7 @@ public class EnemySpawner : MonoBehaviour
             if (instance.TryGetComponent(out EnemyStateMachine enemyStateMachine))
             {
                 enemyStateMachine.SetProjectilePool(projectilePool);
+                enemyStateMachine.SetSpawnPosition(worldPosition);
             }
 
             if (instance.TryGetComponent(out HealthComponent health))

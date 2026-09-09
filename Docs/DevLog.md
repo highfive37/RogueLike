@@ -30,6 +30,313 @@
 
 ---
 
+## 2026-09-08
+
+### 진행 내용
+
+**적 AI/행동패턴 보강 2차 — 히트 스태거/넉백, 원거리 카이팅, 보스 물리 버그 수정**
+- 피격 스태거: `EnemyStateMachine`이 `HealthComponent.AnyDamageTaken`(static)을 구독,
+  `EnemyData.StunDuration`(기존에 있었지만 아무도 안 쓰던 필드 재활용, 2s→0.15s로 재조정)만큼
+  `EnemyStunnedState`로 전환. 넉백은 신규 `EnemyData.KnockbackResistance`(0~1) 하나로만 산출
+  (`거리 = BaseKnockbackDistance(1.5, 임시 상수) × (1 - resistance)`) — 추후 플레이어 넉백력
+  스탯이 생기면 이 상수 자리를 대체할 예정. `IAttackPattern.Interrupt()` 추가해 윈드업/리포지셔닝
+  중 스턴 걸려도 안전하게 취소(쿨다운은 정상 적용).
+- 원거리 카이팅: `RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern` 전부
+  신규 공유 클래스 `RangedKitingBehavior`로 통일 — 예외 없이 전 개체가 "너무 가까우면 후퇴 →
+  벌어지면 윈드업 → 발사".
+- 쿨다운 중 유휴 흔들림: `EnemyAttackState`가 공격 종료 지점을 기준으로 작은 sine sway 적용
+  (기존 Wobble 값 재사용, 신규 필드 없음). ※ 같은 날 후속 수정으로 근접 접촉 거리에서는
+  이 sway를 끄고 회전만 하도록 게이트(아래 "근접 적 비비기/공전 수정" 참고) — 원거리 적
+  쿨다운 시에만 유지.
+- 이동 시 비직선 흔들림: 신규 공유 헬퍼 `EnemyMovementFlavor.ApplyWobble()` — 직선 방향에
+  수직 sine 파를 얹어 여러 개체가 같은 자로 그은 듯한 경로로 몰려오지 않게 함. `EnemyChaseState`/
+  `EnemyPatrolState`/`RetreatAndShootPattern`(및 `RangedKitingBehavior`의 후퇴)에서 호출,
+  `EnemyData`에 `wobbleFrequency`/`wobbleAmplitude` 신규 필드. 평균 방향·속도는 불변이라
+  `WallClamp` 통과나 거리 기반 FSM 전환에는 영향 없음. 개체별 위상 시드
+  (`EnemyStateMachine.Awake`에서 `RandomPhaseSeed()`)로 동기화되지 않게 함. (위의 `EnemyAttackState`
+  유휴 sway와는 별개 시스템 — 이쪽은 이동 경로, 저쪽은 정지 중 미세 요동.)
+- **신규 적 변형 2종 추가**: `EnemyVariantType`에 `ErraticMelee`/`BurstRanged` 추가.
+  - `ErraticMelee`(`Enemy_ErraticMelee.prefab` + `EnemyErraticMeleeData.asset`): 공격 패턴
+    애셋은 **일반 Melee와 동일한 `MeleeAttack.asset`을 재사용**(신규 애셋 없음). 차별화는
+    `EnemyData` 값만 — `wobbleFrequency 4.5`/`wobbleAmplitude 0.6`(일반 대비 크게)로 갈지자
+    접근, `moveSpeed 2`. 이동 코드 수정 없이 데이터만으로.
+  - `BurstRanged`(`Enemy_BurstRanged.prefab` + `EnemyBurstRangedData.asset` + 신규
+    `BurstRangedAttack.asset`): 신규 `BurstRangedAttackPattern`/`BurstRangedAttackPatternData` —
+    윈드업(조준 고정) 후 `BurstCount`발을 `BurstInterval` 간격으로 같은 방향에 연사하는
+    "샷건형" 원거리. 단발 `RangedAttackPattern`이 못 덮던 자리. 카이팅은 `RangedKitingBehavior`
+    공유(사격 자체만 패턴이 소유, `onFire` 콜백으로 분리).
+  - `Floor1.json` 실배치: 방2를 두 신규 변형(ErraticMelee+BurstRanged)만으로 교체, 방3/방4는
+    일부 Melee/Ranged를 신규 변형으로 치환 — 실전 방에서 섞여 나오도록.
+- **보스 물리 버그**: 유저가 실전에서 "보스가 넘어져서 제자리 경련하며 혼자 죽는" 현상 발견 →
+  원인 2가지. (1) `Boss_Basic.prefab`만 다른 모든 개체와 달리 Rigidbody `useGravity=1,
+  constraints=0`으로 잘못 설정(플레이어/일반 몹은 `useGravity=0, constraints=84`) — 스태거로
+  상태 전환이 잦아지며 토크가 누적돼 캡슐이 전도. (2) `Projectile.OnTriggerEnter`에 발사 주체
+  제외 로직이 없어서(FlamethrowerActiveItem은 있음) 넘어진 캡슐의 늘어난 충돌 형태에 자기
+  발사체가 재진입 → 자해. 둘 다 수정 후 30연속 피격 스트레스 테스트로 재현 안 됨 확인.
+
+**플레이어 사망 → Game Over 흐름 (로드맵 §6 #6 나머지 — 그간 이연되던 항목)**
+- 신규 `GameOverUI` — `FloorCompleteUI`의 패배판 대응물. `CanvasGroup` 3개(`dimGroup`은
+  0→`dimMaxAlpha`로 완전 검정 아래 제한, `contentGroup`(fail 이미지 + 런 스탯)·`buttonsGroup`은
+  0→1)를 **전부 같은 `fadeDuration` 타임라인**에서 페이드. `buttonsGroup`은 페이드가 끝난
+  뒤에만 `interactable`/`blocksRaycasts` on(버튼도 같이 페이드되지만 완전히 뜨기 전엔 클릭
+  불가). 가시성은 프로젝트의 다른 결과 화면과 동일하게 `CanvasGroup` 컨벤션 — `SetActive`
+  안 씀(자기-비활성 패널 함정 회피). 표시 스탯은 `FloorCompleteUI.FloorCompleteStats`
+  재사용(클리어한 방/패시브 수/액티브 이름/생존 시간).
+  ※ 최초 구현은 버튼을 별도 `buttonsFadeDuration` 코루틴으로 콘텐츠 페이드 **후에** 시작했으나,
+    유저 피드백(버튼 페이드가 살짝 늦게 시작)으로 단일 타임라인에 병합, `FadeInButtonsRoutine`·
+    `buttonsFadeDuration` 필드 제거.
+- `UIManager.ShowGameOver(stats)` 파사드 메서드 추가.
+- `RoomFlowManager`가 플레이어 사망도 담당(전용 컨트롤러 신설 대신) — `HealthComponent.Health.
+  Died` 구독. 처리: 진행 중 구르기 취소(`CancelDodgeRoll`) + 픽업 알림 즉시 숨김 +
+  `PlayerInputActions` 비활성 + `PauseState.RequestPause` + 캡슐 쓰러지는 연출 코루틴 +
+  `ShowGameOver`. 스탯 빌드는 승/패 공용 `BuildCurrentStats()`로 추출.
+- 사망 연출: 물리 아닌 **스크립트 틱오버**(`DeathFallDuration` 0.45s, `DeathFallAngle` 90°).
+  `isKinematic=true` 후 캡슐 밑동(`position - up*height/2`)을 피벗으로 `RotateAround` —
+  transform 원점(캡슐 중심) 기준으로 돌리면 지면을 뚫고 회전하므로. `Time.unscaledDeltaTime`
+  사용(`PauseState`가 이미 `timeScale=0`). 아직 캐릭터가 무애니 프리미티브 캡슐이라 임시 —
+  실제 캐릭터 아트/애니 교체 시 재검토(CLAUDE.md 플레이스홀더 지오메트리 노트).
+- 아트: `Assets/Art/UI/GamePlay/ui_game_fail.png`(GPT 생성) 추가.
+
+**대시 시 적 관통 리워크 (실플레이 피드백 — 적한테 물리적으로 튕겨나감)**
+- 선행: `Enemy` **레이어** 신설(`TagManager.asset`, 기존엔 `Enemy` 태그와 `Ground` 레이어만
+  있었음). 적 프리팹/스폰 개체를 이 레이어로 두고, 아래 레이어 충돌 무시가 이걸 대상으로 함.
+- `PlayerDodgeRoll`: 대시 중 플레이어 레이어 ↔ `Enemy` 레이어 충돌을 `Physics.IgnoreLayerCollision`
+  으로 끔(기존엔 `SetInvulnerable`로 데미지 무효만 있었고 물리 충돌은 그대로라 적한테 막히거나
+  튕김). 대시가 적 콜라이더 안에서 끝나면 충돌을 즉시 복원할 때 솔버가 플레이어를 순간적으로
+  밀어내므로, `IsOverlappingEnemy()`(`Physics.CheckCapsule`, `Enemy` 레이어)면 **오버랩 보정
+  꼬리 상태**로 진입 — 같은 방향으로 `CorrectionSpeedMultiplier`(0.35) 속도로 최대
+  `MaxCorrectionDuration`(0.25s) 미끄러져 빠져나온 뒤 충돌 복원. `CancelDodgeRoll`(문/Floor
+  Exit 전환)은 이 보정을 건너뛰고 즉시 복원(어차피 텔레포트/숨김 직전).
+- 리팩터링: `FixedUpdate` → `RunDash`/`RunOverlapCorrection` 분리, `EndDodgeRoll` →
+  `FinishDash`(오버랩 판정 분기) + `CompleteDodgeRoll`(공용 리셋). 대시 캡슐 지오메트리 산출을
+  `WallClamp.GetCapsuleGeometry()`로 추출해 `WallClamp.ClampDirection`과 오버랩 체크가 동일한
+  월드 캡슐을 쓰게 함(중복 제거).
+
+**Benchmark Baseline 인프라 (계획서 §6.5 대응) — Before 표까지 완성**
+- `Assets/Scenes/BenchmarkScene.unity` 신규: Room/Floor/StageManager 없이 Ground(60×60) +
+  Player + 7개 GameObjectPool(적 4종+Boss+Projectile+Grenade, capacity/maxSize 200마리
+  기준으로 증설)만 있는 격리된 스트레스 테스트 씬.
+- `Assets/Scripts/Benchmark/BenchmarkSpawner.cs` 신규: `SpawnWave(variant, count)`—아레나
+  전체에 그리드+지터로 분산 배치(겹침 방지), `EnemySpawner.SpawnRoom()`과 동일하게
+  `SetProjectilePool`→`SetSpawnPosition` 순서 준수. `ClearAll()`로 웨이브 간 정리.
+  Play Mode에서 50/100/200 전부 정상 스폰·동작·정리 확인(에러 0건).
+- **`Player.prefab` 렌더링 버그 발견/수정**: BenchmarkScene 실행 시 바닥만 보이고 플레이어가
+  안 보인다는 제보 → 스카이박스(Default-Skybox, Built-in RP 전용이라 URP와 비호환)를 먼저
+  의심해 카메라 Clear Flags를 Solid Color로 바꿨으나 무관했음. 실제 원인은 `Player.prefab`의
+  `MeshFilter.m_Mesh`가 애초에 `fileID: 0`(널)이었던 것 — Prototype 씬에 이미 배치된 인스턴스만
+  캡슐 메시가 씌워진 오버라이드를 갖고 있었고 그게 프리팹 에셋에 한 번도 Apply된 적이 없었던
+  기존 버그. `PrefabUtility.LoadPrefabContents`로 프리팹 자체에 캡슐 메시를 채워 넣어 수정.
+  부수적으로, 이번 세션 초반에 `get_components`로 Player를 조회하면서 `MeshFilter.mesh`(공유
+  아님, 인스턴스) 접근이 발생해 이미 배치해둔 BenchmarkScene 쪽 인스턴스에 빈 메시 오버라이드가
+  같이 눌러앉아 있던 것도 별도로 발견해 직접 재배선함. Play Mode 라이브 인스턴스에서
+  `sharedMesh=Capsule, vertexCount=550`으로 확정 확인. 유저 육안 확인 완료.
+- **BenchmarkScene 편의 기능 추가**: 바닥에 체크 패턴 머티리얼(`Assets/Art/Debug/
+  BenchmarkGroundChecker.png/.mat`, 칸 하나 4유닛 — 스케일 참고용) 적용. 화면 우측 상단에
+  UGUI 버튼 패널을 신설해 `BenchmarkSpawner`의 public 메서드에 `Button.onClick` 퍼시스턴트
+  리스너로 연결(기존 `[ContextMenu]` 우클릭 방식은 그대로 유지, 병행 가능). Canvas를 처음에
+  World Space 기본값으로 만드는 바람에 100×100 유닛짜리 사각형이 씬 원점에 벽처럼 박히는
+  실수를 했었고, `Canvas.renderMode`를 Screen Space - Overlay로 명시 설정해 수정.
+  이후 유저 요청으로 스폰 방식을 개편: 적 타입 선택 버튼 4개(Melee/Ranged/ErraticMelee/
+  BurstRanged, Boss 제외) + **추가(additive)** 스폰 버튼(Add 50/100, `[ContextMenu]`엔
+  Add 500/1000도, 기존 절대치 Spawn 50/100/200에서 변경)으로 재구성. 그리드 배치도 `count`
+  단위로 매번 재계산하던 방식에서 고정 32×32(=1024셀) 그리드를 `ClearAll()` 전까지 순차로
+  채워나가는 방식(`_nextGridIndex`)으로 바꿔, Add를 연달아 눌러도 겹치지 않고 이어서 퍼지도록
+  함(한 사이클 ~1000마리까지, 초과 시 셀 재사용). 화면 우측 중단에 현재 선택된 타입의 누적
+  스폰 수를 보여주는 텍스트도 추가(`variantCountLabel`, 타입 전환 시 즉시 그 타입의 카운트로
+  갱신). Play Mode에서 타입 전환 + Add 50 + Add 100(총 150, 겹침 0건)까지 실제 검증.
+
+**근접 적 "비비기/공전" 수정 — 사거리 안에서는 공격 패턴만 이동을 소유 (실플레이 피드백)**
+- 증상(유저): 근접 타입 전 개체가 플레이어에 붙어서 공격하지 않고, 주위를 불규칙하게 원처럼
+  돌며 비빔. 매우 가까울 땐 제자리에 서 있는 게 자연스러움.
+- 원인 3가지 복합: (1) `EnemyChaseState`에 정지 거리가 없어 접촉 상태에서도 매 FixedUpdate
+  플레이어 쪽으로 `MovePosition` — 오늘 넣은 `ApplyWobble`의 **수직 성분**만 충돌에 안 막히고
+  남아 캡슐 표면을 따라 미끄러짐. (2) `EnemyAttackState`의 쿨다운 중 positional idle sway가
+  고정 앵커로 `MovePosition`하는데, 접촉 상태라 솔버의 depenetration(방사형 밀어내기)과
+  "밀림↔되돌림"으로 싸우며 불규칙 궤도 발생. (3) `MaxAttackRange` 경계에서 Chase↔Attack
+  플립플롭 시 매번 wobble 이동 재유입.
+- 수정(옵션 B — `AI_Decision_Log.md` 2026-09-08 (7)): 사거리 안에서는 이동을 공격 패턴의
+  런지에만 맡기고 그 사이엔 정지.
+  - `EnemyChaseState.PhysicsTick`: 플레이어와의 거리가 `MaxAttackRange` 이하면 전진 중단
+    (회전만 `MoveRotation`으로 추적). 그보다 멀 때만 wobble 얹은 이동 — 접근 구간 wobble은 유지.
+  - `EnemyAttackState`: `ApplyIdleSway` → `HoldOrSway`로 개편. 플레이어와 `HoldStillDistance`
+    (const 2.5) 이하면 positional 이동 없이 회전만(근접 range ~1.2라 근접 적은 항상 여기 —
+    공격 사이 완전 정지). 그보다 멀면(원거리 적 쿨다운, range ~6) 기존 sine sway 유지 —
+    거리가 있어 충돌 대상이 없으니 jitter 없음.
+- 새 `EnemyData` 필드/데이터·프리팹 변경 없음. `EnemyChaseState.cs` + `EnemyAttackState.cs` 2파일.
+  `EnemyPatrolState`/원거리 카이팅은 손대지 않음.
+
+**근접 런지 오버슈트 클램프 — 가만히 맞으면 런지마다 뒤로 밀리는 문제 (실플레이 피드백)**
+- 증상(유저): 1층 첫 방에서 근접 적에게 아무것도 안 하고 맞아보니 "밀고 멈추고" 반복. 넉백
+  시스템인지 물었으나 — **플레이어 피격 넉백은 코드상 아예 없음**(`HealthComponent.TakeDamage`는
+  HP만, `AnyDamageTaken` 구독자는 적뿐). 원인은 `MeleeAttackPattern`의 **런지 물리 충돌**:
+  추격이 `MaxAttackRange`(=근접 range 1.2)에서 멈추는데 런지 이동량이 `LungeSpeed 8` ×
+  `LungeDuration 0.15` = 1.2유닛이라 정확히 플레이어 중심까지 파고들어 관통 → 솔버가 겹침을
+  풀며 플레이어(제약 없는 다이나믹 리지드바디)를 뒤로 밀어냄. 밀려서 사거리 밖 → Chase 재접근
+  → 또 런지. B 수정이 sway를 걷어내며 이 런지-shove가 순수 신호로 드러난 것.
+- 수정(옵션 2 — `AI_Decision_Log.md` 2026-09-08 (8)): `MeleeAttackPattern.PhysicsTick`의 런지
+  전진량을 매 tick `min(스텝, max(0, 플레이어와의 직선거리 − LungeContactBuffer))`로 클램프.
+  `LungeContactBuffer` const 1.1(양 캡슐 radius 0.5 → 살짝 떨어진 접촉, 쿨다운 홀드 중 상시
+  접촉 그라인딩 없음. range 1.2 안이라 런지 종료 시 데미지 판정은 그대로 성립). 이동은 고정
+  `_lungeDirection`을 따라서만 → 비호밍 유지(옆으로 피하면 런지가 그대로 지나쳐 헛침).
+- 데이터/프리팹 변경 없음(`MeleeAttack.asset`엔 lunge 필드 미직렬화 = 코드 기본값 사용,
+  일반 Melee·ErraticMelee 공용이라 한 번에 적용). `MeleeAttackPattern.cs` 1파일.
+- 플레이어 피격 넉백은 별도 시스템으로 **나중에**(플레이어 넉백 스탯과 함께) — 유저 결정.
+
+### 테스트 결과
+- [x] 보스 Rigidbody 수정 후 스트레스 테스트(연속 피격 30회) — 전도/자해 재현 안 됨.
+- [x] BenchmarkSpawner로 50/100/200 스폰 — 그리드 분산 확인(X/Z 스프레드가 arenaHalfExtent
+  근처까지 도달), 콘솔 에러 0건, `ClearAll()` 후 활성 EnemyStateMachine 0개 확인.
+- [x] `Player.prefab` 메시 수정 — 유저 육안 확인 완료(캡슐 정상 표시).
+- [x] UGUI 스폰 버튼 — Play Mode에서 `Button.onClick.Invoke()`로 직접 검증(0→50마리), 유저도
+  화면에서 클릭으로 스폰 확인.
+- [x] **Enemy N → FPS/GC Alloc Before 표(계획서 §6.5 포맷) — 완성, 4종 전부.** 아래 참고.
+- [x] 신규 변형 2종(`ErraticMelee`/`BurstRanged`) — 실전 방(`Floor1.json` 방2/3/4) 배치·동작
+  유저 확인 완료. (이동 wobble도 이 과정에서 함께 육안 확인.)
+- [x] 플레이어 사망 → Game Over 전체 흐름 — 감지·캡슐 틱오버 연출·`GameOverUI` 표시 +
+  버튼(재시작/타이틀) 동작까지 유저 확인 완료. (버튼 배선 자체는 이번에 완료 — 이월 아님.
+  타이틀/일시정지 UI 레이아웃 미세조정만 포트폴리오 마감 후로 이연.)
+- [x] `GameOverUI` 페이드 단일 타임라인 병합(dim/content/buttons 동시, 버튼은 페이드 후 클릭
+  가능) — 유저 확인 완료.
+- [x] 대시 적 관통 + 오버랩 보정 꼬리 — 유저 확인 완료.
+- [x] 근접 적 사거리 내 정지(옵션 B) + 런지 오버슈트 클램프(옵션 2) — 1층 첫 방 실플레이로
+  유저 확인 완료. 근접 적이 플레이어를 밀지 않음(공전/불도저 shove 없음). 코드 검증도
+  `Unity_ValidateScript` 0건 + 콘솔 컴파일 에러 없음.
+
+**Before (BenchmarkScene, 단일 종별 개별 측정, Unity Editor Play Mode, Deep Profile 끔)**
+
+Median GC Alloc은 4종·전 구간에서 전부 0 bytes(스폰/공격 순간에만 20~35KB대 스파이크, 개체 수와
+뚜렷한 상관관계는 없음) — 표에서는 Median CPU Time과 예산(16.67ms) 초과 프레임 비율만 기재.
+
+| Enemy 수 | Melee | Ranged | ErraticMelee | BurstRanged |
+|---|---|---|---|---|
+| 50 | 4.77 ms (1.0%) | 3.79 ms (3.5%) | 3.48 ms (3.0%) | 4.39 ms (4.0%) |
+| 100 | 5.11 ms (0.5%) | 3.89 ms (3.5%) | 3.89 ms (4.0%) | 5.33 ms (4.5%) |
+| 200 | 4.43 ms (4.0%) | 6.44 ms (5.5%) | 5.78 ms (4.5%) | 7.35 ms (7.5%) |
+
+가장 무거운 조합은 **BurstRanged 200마리, median 7.35ms**(16.67ms 예산의 약 44%) — 카이팅
+리포지셔닝 + 버스트 발사체 스폰이 겹쳐서 4종 중 가장 비싼 건 예상대로였지만, 여전히 예산 절반
+이하라 안전권.
+
+### 이슈/메모
+- **MCP 브리지 오버헤드 문제 해결**: 이전 시도(`Unity_RunCommand`로 Play Mode를 직접 구동)에서는
+  0/50/100/200마리 전부 median CPU Time이 ~99.5ms로 동일하게 나와 브리지 자체의 상수
+  오버헤드가 신호를 덮어버렸었음. **유저가 직접 Play/버튼 클릭/Stop을 수행하고(내 쪽에서는 그
+  구간 동안 아무 명령도 안 보냄), Stop 후 Profiler의 프레임 히스토리 버퍼(`ProfilerDriver.
+  firstFrameIndex~lastFrameIndex`, Stop 이후에도 유지됨)에서 그 세션의 마지막 200프레임 구간을
+  읽어오는 방식으로 전환하니 median 4~5ms대의 깨끗한 수치가 나옴** — 브리지가 실제로 프레임에
+  개입하지 않으면 문제없다는 뜻. 이 방식이 이번 세션에서 확립한 최종 측정 방법론.
+- 위 표의 수치는 여전히 Unity Editor Play Mode 기준(Development Build 아님) — Editor 자체
+  오버헤드는 포함되어 있으니, 실제 빌드 성능과는 절대값이 다를 수 있음. 다만 브리지 오버헤드
+  문제는 해소됐고, 세 구간(50/100/200) 간 상대 비교는 유효함.
+
+### 다음 작업
+- 4종 전부 200마리까지 여유로워서(가장 무거운 BurstRanged도 median 7.35ms, 예산의 44%) 최적화
+  작업이 시급하진 않음 — 필요 시 §6.5 항목(AI tick distribution, GetComponent 캐싱 등) 중
+  실측 병목(스폰/공격 순간의 GC 스파이크) 위주로 접근.
+- §6.5의 "최적화 → After" 패스는 **Phase 6(아트 통합 이후)로 의도적 이연** — 지금 병목이
+  없고, 캡슐 placeholder 상대로 최적화하면 아트 들어올 때 재작업. Before 표 + 벤치 인프라로
+  §6.5의 이번 단계 분량은 종료(`AI_Decision_Log.md` 2026-09-08 (5)).
+- 4종을 동시에 섞어 스폰하는 "혼합 구성" 시나리오는 아직 안 해봄 — 필요하면 BenchmarkSpawner에
+  다중 변형 웨이브 기능을 추가해서 시도.
+- 사망 연출 / 대시 적 관통 / 신규 변형 2종 실전 배치는 유저 Play Mode 확인 완료(위 "테스트
+  결과"). 남은 건 `GameOverUI` 버튼(재시작/타이틀) 배선 — UI Scene 플레이 루프 작업에서 함께.
+
+### 이슈/메모 (재부팅 후 후속 세션) — 500/1000마리 스트레스 테스트 중 에디터 크래시
+
+**상황(유저 진술)**
+- 위 50/100/200 측정을 마친 뒤, 측정 중 **Windows "메모리 부족" 알림**이 떠서 PC를 1차 재부팅.
+- 재부팅 후 Unity 재실행, 각 타입 500/1000마리까지 구간을 늘려볼 계획으로 Melee 1000마리를
+  스폰(`Add 1000` 1회). 스폰 직후 적들이 정지 상태의 플레이어에게 몰려들어 **캡슐끼리 충돌이
+  대량 발생**하는 상태였음.
+- 몇 초 뒤 **화면이 한 번 깜빡였다가 Unity "강제 종료" 팝업**이 떠서, 유저가 급히 Unity를 종료하고
+  PC를 2차 재부팅. 이후 세션이 끊겨 이 대화(다음 세션)로 이어짐.
+- 데이터 손실 없음: 50/100/200 Before 표는 이 세션 이전에 이미 본 DevLog에 기록 완료. 스폰 방식
+  개편分까지 반영된 `BenchmarkSpawner.cs`(Add 500/1000 ContextMenu 포함)도 디스크에 온전.
+  크래시 시점(2차 재부팅 직전)에 Unity가 `Assets/_Recovery/0.unity`(BenchmarkScene 백업)를
+  남겼으나, 정상 저장본이 별도로 있어 다음 실행 시 복구 팝업은 Discard 예정.
+
+**원인 분석(측정 없이 정황 + 코드/프리팹 근거 기반, 확정 아님)**
+- "Unity가 오브젝트 1000개를 못 버틴다"가 아니라 **이 프리팹 × 이 측정 환경**이 겹친 결과. 실제
+  게임(룸당 10~30마리, 시간차 스폰, 정상 풀링)에서는 재현되지 않는 조건.
+- 적 프리팹 1개의 실측 비용: `Enemy_Basic.prefab`은 루트 컴포넌트 8개 + **자식에 개별 월드스페이스
+  Canvas(HealthBarCanvas) + Fill/Background**. 1000마리면 dynamic Rigidbody 1000 + CapsuleCollider
+  1000 + **월드스페이스 캔버스 1000개**(드로우콜/캔버스 리빌드 1000배) + 상태머신/상태객체 ×1000.
+- 충돌 기여분: 근접 공격 판정 자체는 물리 충돌이 아님(`MeleeWeapon.cs`가 `OverlapSphere` 계열
+  쿼리로 `IDamageable` 탐색 → 컨택트 페어 미생성). 다만 **1000개 dynamic 캡슐이 정지한 플레이어
+  주위로 뭉치면서 서로 밀어내는 물리 컨택트 페어가 국소 밀집도의 제곱 가까이 폭증** → 수만 쌍
+  동시 활성 → PhysX 컨택트 매니폴드 버퍼(네이티브 메모리) + 솔버 비용 급증. 유저가 본 "충돌
+  대량 발생"이 이 부분.
+- 동시 작용한 다른 요인: (1) `SpawnWave`가 버튼 1클릭에 **1000× Instantiate를 한 프레임 동기
+  실행** → 거대 히치. (2) 풀 capacity/maxSize ~200이라 **1000 중 800은 풀 오버플로우 =
+  Instantiate/Destroy 처링**(메모리 파편화 + GC 압박). (3) **Profiler 레코딩 중**이라 1000개
+  오브젝트의 계층 샘플 + GC 스파이크를 프레임마다 버퍼에 축적 — 스트레스 테스트가 에디터를
+  OOM시키는 흔한 주범. (4) 에디터 Play Mode 자체 오버헤드 + **직전에 이미 RAM 여유가 거의 없던
+  상태**(1차 메모리 부족 경고).
+- "화면 깜빡임 → 강제 종료" 신호는 RAM OOM과는 다른 축: 렌더 스레드가 1000 메시 + 1000 캔버스에
+  눌려 응답 시간을 초과하거나 VRAM이 부족하면 **Windows 그래픽 드라이버 TDR(타임아웃 복구)
+  리셋** → 디바이스 로스트 → Unity 크래시. RAM 압박 + GPU 압박이 함께 터진 캐스케이드로 추정.
+
+**결론 / 조치**
+- 500/1000 구간은 **측정하지 않고 스킵**(유저 결정). 게임 범위(룸당 수십 마리) 밖이고, 에디터 +
+  Profiler 환경이 그 규모를 담지 못함. ≤200 구간이 유효 데이터이며, 가장 무거운 BurstRanged
+  200마리도 예산의 44%라 최적화 비긴급이라는 위 "다음 작업" 결론 유지.
+- 향후 고카운트 측정이 꼭 필요해지면: 에디터 아닌 **Development Build**, Profiler는 counters-only,
+  스폰을 여러 프레임에 분산, 풀 maxSize 상향(처링 제거), 필요 시 적 레이어 self-collision 해제.
+
+### 다음 작업 후보 — 포트폴리오 기술 요소 제안 (Claude 제안, 미결정 · 검토/논의 후 진행 예정)
+
+**맥락**: 전체 플레이 루프 마감(씬 전환 페이드 + 3층 주파 검증)만 하면 §6 항목 6이 닫히는데,
+그 뒤 남은 계획 항목(Stage 3 최적화/AI Tick, 엘리트 적 1종, 사운드·이펙트)이 포트폴리오
+관점에서 기술 신호가 약하다는 유저 판단. `ProjectPlan.md` §9·§10·§12 논지("AI 보조 개발 +
+비판적 리뷰 + 기술적으로 방어 가능한 설계")를 실증할 **검증 가능한 엔지니어링 산출물**이
+부족함. 아래는 Claude가 제안한 후보. **다음 작업일에 유저가 검토 → 추가 논의 → 가능한 것만
+`ProjectPlan.md`에 추가 후 착수.** 지금은 결정된 것 없음.
+
+**추천 상위 3**
+1. **자동화 테스트 스위트(EditMode + PlayMode) + CI** — UTF. EditMode: 순수 로직(`Health`
+   데미지, 넉백 거리 공식, RNG 결정성, 층 그래프 연결성, JSON 밸런스 파싱+폴백). PlayMode:
+   적 FSM 전이, 룸 클리어 판정, 풀 재사용 상태 누수 없음. GitHub Actions(GameCI)로 push마다
+   테스트+빌드. → §12 "How did you validate AI-generated code?"의 직접적 답. 범위 작음/점진적
+   (CI 라이선스 설정만 fiddly). 과설계 위험 거의 없음. **1순위**.
+2. **적 경로탐색(NavMesh 또는 그리드 A*)** — 현재 적은 직선 `MovePosition` + wobble +
+   `WallClamp`뿐이라 장애물·모서리를 못 돔(§6 항목 5 "방 안 장애물" 이연의 실제 이유).
+   룸별 `NavMeshSurface` 베이크 → `NavMesh.CalculatePath` 결과를 기존 `EnemyChaseState`가 소비,
+   또는 룸 그리드 커스텀 A*. → A*/NavMesh 내부, steering↔pathing 분리, "NavMesh vs 커스텀 왜".
+   범위 중간(커스텀 A*는 중대형). FSM 구조에 `Chase`만 교체로 들어감.
+3. **결정론적 시드 기반 절차적 층 생성** — 이미 있는 `IFloorLayoutProvider` 뒤에 시드 RNG
+   서비스 + 절차적 룸 그래프 생성기(연결성 보장, 방 타입 배치 규칙). 같은 시드=같은 런.
+   → RNG 아키텍처(per-system 스트림), 결정론적 시뮬레이션, 절차적 생성 알고리즘, "인터페이스
+   설계가 갚인 사례"(애초에 이 교체를 의도해 만든 추상화). 범위 중간(결정성 감사가 subtle).
+   메모리상 유저가 원래 계획한 방향.
+
+**그 외 후보 (작거나 보조적)**
+4. **세이브/로드 — 버전드 직렬화 + "런 이어하기"** (§3·Phase 3 "Save structure" 미구현):
+   런 상태 직렬화, 스키마 버전+마이그레이션, 원자적 쓰기(temp+rename), 손상 폴백, 타이틀
+   "이어하기". → `[SerializeReference]` 다형 아이템 리스트, `BinaryFormatter` 회피 이유,
+   save-anywhere vs checkpoint. 범위 중간.
+5. **커스텀 에디터 툴링** — 층 그래프 비주얼 에디터, 또는 SO 검증 패스(`AssetPostprocessor`/
+   `EditorWindow`가 `EnemyData`·패턴 애셋의 널 참조·범위 밖 값을 런타임 전에 검출). →
+   `EditorWindow`/`PropertyDrawer`/`SerializedProperty`. 범위 작음~중간, 노력 대비 신호 큼.
+6. **입력 버퍼링 + 프레임레이트 독립성** — 대시/공격 입력 Update 샘플→FixedUpdate 소비(일부
+   됨) + 이르게 누른 입력 큐잉 + coyote-time류 관용. → 게임필 엔지니어링, Update/FixedUpdate
+   분리 근거(§12). 범위 작음, 기존 코드 점진.
+7. **프로파일러 계측을 "시스템"으로** — `ProfilerRecorder`/`ProfilerMarker`를 AI tick·스폰·
+   경로탐색에 상시, 디버그 오버레이에 프레임 예산 트래커. 이연된 AI Tick 타임슬라이싱을 마커로
+   이득 증명하며 제대로. → `ProfilerRecorder` API, AI LOD/타임슬라이싱, 증거 기반 GC 헌팅.
+   단, 병목이 없어 아트 전까진 다소 학술적.
+
+**과설계 위험 — 넣는다면 신중히**
+- **Addressables**(§6.4/Phase 5): §12가 명시적으로 묻는 주제라 토킹 포인트는 진짜지만 애셋이
+  적어 실익은 인위적. 넣으면 "적+보스+VFX만" 범위로 축소해 정직하게.
+- **이벤트 버스 정식화**: 지금도 `static event` 몇 군데 있음. 소규모에서 과하면 마이너스 —
+  "여긴 C# 이벤트, 저긴 SO 채널, 이유는…"이라는 판단 스토리 자체가 값어치(§10).
+
+**Claude 판단**: 1(테스트+CI)은 위험 없이 논지와 정확히 맞아 거의 무조건. 2(경로탐색)가 기능
+공백+기술 깊이 둘 다 채움. 3(절차적 생성)은 "설계가 갚인" 서사가 강함. 상세 논의는
+2026-09-08 대화 참고.
+
+---
+
 ## 2026-09-04 (3)
 
 ### 진행 내용

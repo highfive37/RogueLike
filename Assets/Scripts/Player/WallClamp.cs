@@ -23,6 +23,20 @@ public static class WallClamp
 {
     private const float ProbeSkin = 0.08f;
 
+    // Player capsule points along local Y. Shared with PlayerDodgeRoll's post-dash overlap check
+    // so both use the exact same world-space capsule the physics solver sees.
+    public static void GetCapsuleGeometry(CapsuleCollider capsule, out Vector3 point0, out Vector3 point1, out float radius)
+    {
+        Transform t = capsule.transform;
+        Vector3 lossy = t.lossyScale;
+        radius = capsule.radius * Mathf.Max(Mathf.Abs(lossy.x), Mathf.Abs(lossy.z));
+        float halfSpine = Mathf.Max(0f, capsule.height * 0.5f * Mathf.Abs(lossy.y) - radius);
+        Vector3 center = t.TransformPoint(capsule.center);
+        Vector3 spine = t.up * halfSpine;
+        point0 = center + spine;
+        point1 = center - spine;
+    }
+
     public static Vector3 ClampDirection(CapsuleCollider capsule, Vector3 direction, float moveThisStep)
     {
         if (capsule == null || direction.sqrMagnitude < 0.0001f)
@@ -32,18 +46,12 @@ public static class WallClamp
 
         Vector3 dir = direction.normalized;
 
-        Transform t = capsule.transform;
-        Vector3 lossy = t.lossyScale;
-        // Player capsule points along local Y.
-        float radius = capsule.radius * Mathf.Max(Mathf.Abs(lossy.x), Mathf.Abs(lossy.z));
-        float halfSpine = Mathf.Max(0f, capsule.height * 0.5f * Mathf.Abs(lossy.y) - radius);
-        Vector3 center = t.TransformPoint(capsule.center);
-        Vector3 spine = t.up * halfSpine;
+        GetCapsuleGeometry(capsule, out Vector3 point0, out Vector3 point1, out float radius);
 
         float backoff = radius + ProbeSkin;
         Vector3 offset = -dir * backoff;
 
-        if (Physics.CapsuleCast(center + spine + offset, center - spine + offset, radius * 0.95f, dir,
+        if (Physics.CapsuleCast(point0 + offset, point1 + offset, radius * 0.95f, dir,
                                 out RaycastHit hit, moveThisStep + backoff + ProbeSkin, ~0, QueryTriggerInteraction.Ignore)
             && hit.rigidbody == null
             && Vector3.Dot(dir, hit.normal) < 0f)

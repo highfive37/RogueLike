@@ -22,6 +22,10 @@ public class EnemyStateMachine : MonoBehaviour
     public IAttackPattern[] AttackPatterns => _attackPatterns;
     public float MaxAttackRange => _maxAttackRange;
 
+    // Per-instance so pool-reused enemies chasing/retreating together don't all wobble in
+    // lockstep - see EnemyMovementFlavor.
+    public float WobblePhaseSeed { get; private set; }
+
     public IEnemyState IdleState { get; private set; }
     public IEnemyState PatrolState { get; private set; }
     public IEnemyState ChaseState { get; private set; }
@@ -33,6 +37,7 @@ public class EnemyStateMachine : MonoBehaviour
     {
         Body = GetComponent<Rigidbody>();
         _healthComponent = GetComponent<HealthComponent>();
+        WobblePhaseSeed = EnemyMovementFlavor.RandomPhaseSeed();
 
         IdleState = new EnemyIdleState(this);
         PatrolState = new EnemyPatrolState(this);
@@ -48,6 +53,19 @@ public class EnemyStateMachine : MonoBehaviour
     public void SetProjectilePool(GameObjectPool pool)
     {
         projectilePool = pool;
+    }
+
+    // Called by EnemySpawner right after GameObjectPool.Get() returns, with the exact world
+    // position it just spawned this instance at. Deliberately NOT captured from transform.position
+    // in OnEnable(): GameObjectPool.Get() activates the pooled instance (firing OnEnable) BEFORE
+    // it repositions the transform, so reading transform.position there would give this
+    // instance's leftover position from wherever it was last deactivated (its previous death
+    // spot, in a different room's coordinate space) instead of this spawn's actual position -
+    // which EnemyPatrolState then wanders around, walking toward a stale, possibly-offscreen
+    // point and getting stuck against whatever wall happens to be in that direction.
+    public void SetSpawnPosition(Vector3 position)
+    {
+        SpawnPosition = position;
     }
 
     private void BuildAttackPatterns()
@@ -84,13 +102,14 @@ public class EnemyStateMachine : MonoBehaviour
     private void OnEnable()
     {
         _healthComponent.Health.Died += HandleDied;
-        SpawnPosition = transform.position;
+        HealthComponent.AnyDamageTaken += HandleDamageTaken;
         ChangeState(IdleState);
     }
 
     private void OnDisable()
     {
         _healthComponent.Health.Died -= HandleDied;
+        HealthComponent.AnyDamageTaken -= HandleDamageTaken;
     }
 
     private void Update()
@@ -110,10 +129,40 @@ public class EnemyStateMachine : MonoBehaviour
         _currentState?.Enter();
     }
 
+    // Placeholder baseline for how far a full-knockback (zero KnockbackResistance) hit shoves
+    // this enemy - stands in for a not-yet-built player "knockback power" stat. Once that stat
+    // exists, replace this constant with the attacker-side value carried through
+    // TakeDamage/AnyDamageTaken instead.
+    private const float BaseKnockbackDistance = 1.5f;
+
     public void Stun(float duration)
     {
-        ((EnemyStunnedState)StunnedState).SetDuration(duration);
+        Stun(duration, Vector3.zero, 0f);
+    }
+
+    public void Stun(float duration, Vector3 knockbackDirection, float knockbackDistance)
+    {
+        var stunned = (EnemyStunnedState)StunnedState;
+        stunned.SetDuration(duration);
+        stunned.SetKnockback(knockbackDirection, knockbackDistance);
         ChangeState(StunnedState);
+    }
+
+    // AnyDamageTaken is static and fires for every HealthComponent in the scene (player
+    // included), so this must filter to its own instance before reacting.
+    private void HandleDamageTaken(HealthComponent sender, float amount, Transform source)
+    {
+        if (sender != _healthComponent || _currentState == DeadState)
+        {
+            return;
+        }
+
+        Vector3 direction = source != null ? transform.position - source.position : -transform.forward;
+        direction.y = 0f;
+        direction = direction.sqrMagnitude > 0.0001f ? direction.normalized : -transform.forward;
+
+        float knockbackDistance = BaseKnockbackDistance * (1f - Mathf.Clamp01(data.KnockbackResistance));
+        Stun(data.StunDuration, direction, knockbackDistance);
     }
 
     public bool CanSeePlayer(float range)

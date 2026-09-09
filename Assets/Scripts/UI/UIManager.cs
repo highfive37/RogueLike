@@ -11,6 +11,7 @@ public class UIManager : MonoBehaviour
     [SerializeField] private ActiveItemEquipUI equipSelectionUI;
     [SerializeField] private FloorCompleteUI floorCompleteUI;
     [SerializeField] private SystemNotificationUI systemNotificationUI;
+    [SerializeField] private GameOverUI gameOverUI;
     [SerializeField] private StageManager stageManager;
     [SerializeField] private Text stageText;
 
@@ -55,6 +56,11 @@ public class UIManager : MonoBehaviour
     public void ReleaseFloorCompletePause()
     {
         floorCompleteUI.ReleasePause();
+    }
+
+    public void ShowGameOver(FloorCompleteUI.FloorCompleteStats stats)
+    {
+        gameOverUI.Show(stats);
     }
 
     private void HandleStageChanged(int roomId)

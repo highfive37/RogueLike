@@ -20,4 +20,4 @@ MonoBehaviour:
   leashRange: 9
   attackPatterns:
   - {fileID: 11400000, guid: 4e545610843d4884accb3fb2ab09a2bf, type: 2}
-  stunDuration: 2
+  stunDuration: 0.15

@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 4552132700088204591}
   - component: {fileID: 3131216152629569580}
   - component: {fileID: 6946762621552953834}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: Boss_Basic
   m_TagString: Enemy
   m_Icon: {fileID: 0}
@@ -140,10 +140,10 @@ Rigidbody:
     m_Bits: 0
   m_ImplicitCom: 1
   m_ImplicitTensor: 1
-  m_UseGravity: 1
+  m_UseGravity: 0
   m_IsKinematic: 0
   m_Interpolate: 0
-  m_Constraints: 0
+  m_Constraints: 84
   m_CollisionDetection: 0
 --- !u!114 &3131216152629569580
 MonoBehaviour:

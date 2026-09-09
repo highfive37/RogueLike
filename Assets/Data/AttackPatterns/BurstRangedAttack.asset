@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5f87335225193234891be68383e73065, type: 3}
+  m_Name: BurstRangedAttack
+  m_EditorClassIdentifier: Assembly-CSharp::BurstRangedAttackPatternData
+  patternName: BurstRanged
+  range: 6
+  cooldown: 2.2
+  damage: 4
+  windUpDuration: 0.4
+  projectileSpawnDistance: 1
+  burstCount: 3
+  burstInterval: 0.12

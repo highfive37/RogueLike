@@ -40,6 +40,21 @@ hover 흰색 워시(`HoverHighlight`, 곱연산 틴트로 불가능한 것을 �
 수정(`CharacterSelectUI` — arm-after-release 코루틴), 상세는 `AI_Decision_Log.md` 2026-09-04 (6).
 일시정지 UI `ConfirmButton`을 `btn_close_*` 이미지 버튼으로 교체 + 3버튼(Restart/Title/Close)을
 오른쪽 영역 하단 정렬로 재배치(RectTransform 튜닝, 코드 무수정).
+2026-09-08 적 AI 보강 2차 + 사망 흐름 + 벤치마크 — (a) 히트 스태거/넉백(`EnemyStunnedState`,
+`EnemyData.StunDuration` 재활용 + 단일 `KnockbackResistance`, `IAttackPattern.Interrupt()`),
+(b) 원거리 3패턴을 공유 `RangedKitingBehavior`로 통일, (c) 이동 wobble 공유 헬퍼
+`EnemyMovementFlavor`(+`EnemyData` wobble 2필드) + 신규 변형 `ErraticMelee`/`BurstRanged`
+(`BurstRangedAttackPattern` 신규), (d) 보스 Rigidbody 오설정(useGravity/constraints) + 발사체
+자해 수정, (e) 플레이어 사망 → `GameOverUI`(`FloorCompleteUI` 대응 구조) + `RoomFlowManager.
+HandlePlayerDied`(스크립트 캡슐 틱오버 연출), (f) 대시 중 `Physics.IgnoreLayerCollision`으로
+적 관통 + 종료 시 오버랩 보정 꼬리(`PlayerDodgeRoll` 재구성, `WallClamp.GetCapsuleGeometry`
+추출), (g) 격리 스트레스 씬 `BenchmarkScene` + `BenchmarkSpawner`로 §6.5 Before 표(4종 ×
+50/100/200) 완성, (h) 근접 적 공전 수정 — 사거리 안에서는 이동을 공격 패턴 런지에만 위임,
+그 사이엔 정지·회전만(`EnemyChaseState`/`EnemyAttackState`, idle sway는 원거리 쿨다운에만) +
+런지 오버슈트 클램프(`MeleeAttackPattern`, 플레이어 관통 방지 — 피격 넉백 시스템은 아직 없음,
+차후),
+(i) `GameOverUI` 페이드를 dim/content/buttons 단일 타임라인으로 병합 — §2·§3·§5 갱신, 상세는
+`DevLog.md`/`AI_Decision_Log.md` 2026-09-08.
 
 ---
 
@@ -214,24 +229,27 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 - 레이어: `Ground` — 그레네이드 착탄 지점 레이캐스트가 적 콜라이더를 잘못
   맞히던 버그를 고치기 위해 도입, `Ground` 오브젝트를 이 레이어로 지정하고
   관련 레이캐스트를 이 레이어로 제한
+- 레이어: `Enemy` (2026-09-08 추가) — 대시 중 `Physics.IgnoreLayerCollision(Player, Enemy)`로
+  적 관통을 켜고 끄기 위해 도입. `PlayerDodgeRoll`의 오버랩 체크(`Physics.CheckCapsule`)도
+  이 레이어 마스크를 씀
 
 ### 클래스 책임 요약 (영역별 대표 클래스 — 전체 목록 아님)
 | 영역 | 대표 클래스 | 책임 |
 |---|---|---|
-| 이동/조준 | `PlayerMovement`(`CurrentMoveSpeed` = base+패시브, 이동속도 단일 소스), `PlayerAim`, `PlayerDodgeRoll`(구르기 = `CurrentMoveSpeed`×`dashSpeedMultiplier` 속도로 `dashDuration` 버스트, `linearVelocity` 구동, `CancelDodgeRoll()`로 전환/Floor Exit 시 취소), `WallClamp`(공용) | Rigidbody 기반 이동/회전/구르기, New Input System 액션 소비. 이동 명령 전 `WallClamp`로 벽 방향 성분 제거(관통 방지). 대시 수치는 `PlayerBaseStats.json` |
+| 이동/조준 | `PlayerMovement`(`CurrentMoveSpeed` = base+패시브, 이동속도 단일 소스), `PlayerAim`, `PlayerDodgeRoll`(구르기 = `CurrentMoveSpeed`×`dashSpeedMultiplier` 속도로 `dashDuration` 버스트, `linearVelocity` 구동, `CancelDodgeRoll()`로 전환/Floor Exit 시 취소, 대시 중 `Physics.IgnoreLayerCollision`으로 `Enemy` 관통 + 종료 시 적과 겹치면 저속 미끄러짐 보정 꼬리 — 2026-09-08), `WallClamp`(공용, `GetCapsuleGeometry()` 추출) | Rigidbody 기반 이동/회전/구르기, New Input System 액션 소비. 이동 명령 전 `WallClamp`로 벽 방향 성분 제거(관통 방지). 대시 수치는 `PlayerBaseStats.json` |
 | 전투(플레이어) | `PlayerCombat`+`IWeapon`(`MeleeWeapon`/`RangedWeapon`), `ActiveItemController`+`IActiveItem`(`EnhancedShotActiveItem`/`GrenadeActiveItem`/`FlamethrowerActiveItem`) | 기본 공격과 장착 액티브 아이템을 각각 다형성 구조로 분리 |
 | 캐릭터 선택 | `TitleScreenController`+`CharacterSelectUI`(Title 씬), `GameFlow.PendingArchetype`, `CharacterSelectController`(Prototype 씬, 소비만) | 2026-09-04 (3): 선택은 Title 씬에서 → SO 참조를 정적으로 씬 넘겨 전달 → Prototype 씬 Player가 `Start()`에서 무기 장착 + 입력 활성화(`fallbackArchetype`는 에디터 직접 실행용) |
 | 액티브 아이템 보유/장착 | `PlayerActiveItemInventory`, `OwnedActiveItem`, `ActiveItemEquipUI` | ESC 메뉴에서 소지 아이템 목록 확인 + 장착 전환 |
 | 패시브 스탯 | `PlayerPassiveStats`, `PlayerStatsPanelUI` | 공격력/이동속도/사거리/공격속도 4종 전부 "base + 고정값 보너스" 덧셈 모델로 통일(2026-08-31, §4 참고), ESC 메뉴에 Pip 바(10칸)로 표시 |
 | 밸런스 수치 | `GameBalance`, `Assets/StreamingAssets/Balance/*.json` | 플레이어 기본 스탯/패시브 아이템 효과를 JSON에서 로드, 파일 없거나 파싱 실패 시 내장 기본값으로 폴백 |
-| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`RetreatAndShootPattern`) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화 |
-| 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거 |
+| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead; 피격 시 `HealthComponent.AnyDamageTaken` 구독으로 `StunDuration`만큼 Stunned + `KnockbackResistance` 기반 넉백 — 2026-09-08), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`, `Interrupt()` 있음), 공유 헬퍼 `RangedKitingBehavior`(원거리 3패턴 공통 후퇴/윈드업), `EnemyMovementFlavor`(직선 이동에 수직 sine wobble) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화. 원거리는 예외 없이 "가까우면 후퇴 → 벌어지면 윈드업 → 발사". 사거리(`MaxAttackRange`) 안에서는 Chase가 전진을 멈추고 이동은 공격 패턴 런지만 담당 — 공격 사이엔 정지·회전만(2026-09-08, 근접 적 공전 수정) |
+| 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss/ErraticMelee/BurstRanged — 뒤 2종 2026-09-08 추가) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거. 격리 측정용 `BenchmarkSpawner`는 이 경로를 우회(§3 Stage 3) |
 | 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, 지오메트리 생성, 문 배선), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커), `RoomTransitionController`(문 통과 시 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)) |
 | 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거). 드롭 좌표는 `Instantiate` 전에 `NudgeClearOfDoors()`로 근처 문 트리거 밖으로 밀어냄(문 앞 드랍템을 문 안 밟고 줍게, 슬라이드 안 보이게). 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시(`HideImmediate()`로 층 전환 시 즉시 정리) |
 | 데미지 | `IDamageable`, `Health`(순수 C#), `HealthComponent` | 데미지 판정 + 수치·가해자 로그, 체력 상태, 사망 이벤트 |
-| 방 클리어 후 흐름 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3). `FloorCompleted`(Floor Exit 진입) 시 결과 화면 표시 + 진행 중 구르기 취소(`CancelDodgeRoll`) + 픽업 알림 즉시 숨김(`HideImmediate`) — 둘 다 `timeScale=0` 일시정지 전에. 비마지막 층은 `AutoAdvanceRequested` → 페이드 전환 지휘 |
+| 방 클리어 후 흐름 / 런 종료 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3). `FloorCompleted`(Floor Exit 진입) 시 결과 화면 표시 + 진행 중 구르기 취소(`CancelDodgeRoll`) + 픽업 알림 즉시 숨김(`HideImmediate`) — 둘 다 `timeScale=0` 일시정지 전에. 비마지막 층은 `AutoAdvanceRequested` → 페이드 전환 지휘. 플레이어 사망(`Health.Died`)도 여기서 처리(2026-09-08): `HandlePlayerDied` → 입력 off + `PauseState.RequestPause` + 캡슐 틱오버 코루틴 + `UIManager.ShowGameOver`, 스탯은 승/패 공용 `BuildCurrentStats()` |
 | 풀링 | `GameObjectPool`, `PooledObject` | Projectile/Enemy(근접·원거리)/Boss/Grenade 공용 재사용 풀. 같은 프레임 중복 반환(`_hasReturned`/`_isReleased` 가드, 2026-08-31)으로 `InvalidOperationException` 방지 |
-| UI | `UIManager`(파사드), `HealthBarUI`, `ActiveItemCooldownUI`(쿨다운 아이콘 + 장착 아이템 이름 텍스트 — 2026-09-02 (3)), `ActiveItemEquipUI`, `PlayerStatsPanelUI`, `CharacterSelectUI`, `FloorCompleteUI`(구 ClearOverlayUI — 마지막 층이면 Retry 버튼, 아니면 3→0 카운트다운 후 자동 층 전환), `FloorTransitionUI`(층 전환 검은 페이드), `MinimapUI`(현재 방 중심 로컬 스크롤 뷰포트, `RectMask2D` — 2026-09-02 (3)에 전체-뷰 방식에서 개편), `PickupNotificationUI`(`HideImmediate()` 추가), `BillboardUI`, `DebugOverlayController`(F1 FPS·데미지 오버레이 + F2 적 즉사 토글 → `DebugDamage.EnemyOneShot`, FPS 텍스트 왼쪽 "1-SHOT" 인디케이터) | `UIManager`가 선택/오버레이 화면을 감싸 `ShowXxx(...)` 메서드로 노출. 상속 없는 단일 클래스. `BillboardUI`가 실제 카메라 추적 회전(`LateUpdate`)을 전담해 데미지 팝업/HP바/미니 알림이 항상 카메라를 향함(2026-08-31 — 이전엔 무회전 근사에 의존) |
+| UI | `UIManager`(파사드), `HealthBarUI`, `ActiveItemCooldownUI`(쿨다운 아이콘 + 장착 아이템 이름 텍스트 — 2026-09-02 (3)), `ActiveItemEquipUI`, `PlayerStatsPanelUI`, `CharacterSelectUI`, `FloorCompleteUI`(구 ClearOverlayUI — 마지막 층이면 Retry 버튼, 아니면 3→0 카운트다운 후 자동 층 전환), `GameOverUI`(플레이어 사망 시 — `FloorCompleteUI`의 패배판, dim/content/buttons 3개 `CanvasGroup`을 같은 타임라인에서 동시 페이드, 버튼은 페이드 완료 후 클릭 가능 — 2026-09-08), `FloorTransitionUI`(층 전환 검은 페이드), `MinimapUI`(현재 방 중심 로컬 스크롤 뷰포트, `RectMask2D` — 2026-09-02 (3)에 전체-뷰 방식에서 개편), `PickupNotificationUI`(`HideImmediate()` 추가), `BillboardUI`, `DebugOverlayController`(F1 FPS·데미지 오버레이 + F2 적 즉사 토글 → `DebugDamage.EnemyOneShot`, FPS 텍스트 왼쪽 "1-SHOT" 인디케이터) | `UIManager`가 선택/오버레이 화면을 감싸 `ShowXxx(...)` 메서드로 노출. 상속 없는 단일 클래스. `BillboardUI`가 실제 카메라 추적 회전(`LateUpdate`)을 전담해 데미지 팝업/HP바/미니 알림이 항상 카메라를 향함(2026-08-31 — 이전엔 무회전 근사에 의존) |
 
 ---
 
@@ -309,8 +327,16 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
 
 ### Stage 3 — 최적화 (부분 착수, 재개 시점 미정)
 - ✅ Object Pooling — `Projectile`/`Enemy`/`Boss`/`Grenade` 4종 전부 적용
-- ⏳ 나머지: AI tick 분산(`EnemyAIManager`), `GetComponent` 캐싱 정리,
-  `BenchmarkSpawner`(20/50/100/200 시나리오), Profiler 기반 Before/After 측정 문서화
+- ✅ 벤치마크 인프라 + §6.5 Before 표 (2026-09-08): 격리 씬 `BenchmarkScene` +
+  `BenchmarkSpawner`(타입 선택 + additive Add 50/100 스폰, 고정 32×32 그리드에 순차 배치).
+  측정 방법론은 "유저 수동 Play/버튼/Stop → Stop 후 `ProfilerDriver` 프레임 버퍼에서
+  마지막 200프레임 리드백"(MCP 브리지가 프레임에 개입하면 신호가 묻힘 — `AI_Decision_Log.md`
+  2026-09-08 (6)). 4종(Melee/Ranged/ErraticMelee/BurstRanged) × 50/100/200 median CPU Time
+  기록, 최악이 BurstRanged 200마리 7.35ms(예산의 44%)로 정상 상태 병목 없음. 500/1000
+  구간은 에디터 크래시로 스킵, 최적화+After 패스는 Phase 6(아트 통합 후)로 의도적 이연
+  (`AI_Decision_Log.md` 2026-09-08 (5)).
+- ⏳ 나머지: AI tick 분산(`EnemyAIManager`), `GetComponent` 캐싱 정리 — 실측 병목 없어 비긴급,
+  Phase 6에서 실제 병목 위주로 접근
 - Stage 2.5(룸 시스템)가 실질적으로 안정화된 후 재개 여부 논의 예정
 
 Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화)는 이
@@ -417,9 +443,11 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 
 ## 5. 아직 결정하지 않은 항목
 
-- **Game Over 흐름 / 런 종료 이후 흐름**: Player 사망 처리도, Clear 오버레이
-  이후 재시작·타이틀 복귀도 미정 — 3층 완성 후 신설할 **UI Scene + 전체 플레이
-  루프** 작업에서 함께 설계하기로 함(2026-09-02, §3·§6 참고).
+- **Game Over 흐름 / 런 종료 이후 흐름**: 사망 감지 + 연출 + 결과 화면 표시는 구현·유저
+  Play Mode 확인 완료 (2026-09-08 — `RoomFlowManager.HandlePlayerDied` + `GameOverUI` + 캡슐
+  틱오버, `AI_Decision_Log.md` 2026-09-08 (3)). 아직 미정: `GameOverUI` 버튼(재시작 / 타이틀
+  복귀) 실제 배선, Clear 오버레이 이후 흐름 — 3층 완성 후 신설할 **UI Scene + 전체 플레이
+  루프**에서 함께 설계 (2026-09-02, §3·§6 참고).
 - **카메라 시스템에 Cinemachine 도입 여부**: 2026-09-01 실플레이에서 현재
   `QuarterViewCameraFollow`(단순 오프셋 추적)로 40×40 방도 구도가 적절함을
   확인 — 방 경계 재프레이밍/Cinemachine은 당장 불필요, 필요해지면 재논의.
@@ -442,7 +470,13 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 - **대시(구르기) 무적 판정 여부(2026-09-02 (3) 신규)**: 스페이스바 대시 이동
   중 실제로 무적 프레임이 있는지 아직 코드/실플레이 확인 전. (2026-09-04 대시 리워크로
   `EndDodgeRoll`에 무적 해제가 명시됐고 취소 경로도 정리됐으나, 인게임 무적 창 체감 확인은
-  여전히 이월.)
+  여전히 이월. 2026-09-08 리워크로 대시 중 `Enemy` 레이어 물리 관통 + 종료 시 오버랩 보정
+  꼬리가 추가됐고 코드상 무적 해제는 `CompleteDodgeRoll`로 이동 — 적 관통/보정 동작은 유저
+  Play Mode 확인 완료, 데미지 무적 창 체감만 아직 이월. `AI_Decision_Log.md` 2026-09-08 (4).)
+- **플레이어 피격 반응 / 넉백(2026-09-08 신규)**: 현재 플레이어가 맞으면 HP만 깎이고
+  아무 반응(넉백/경직/무적 프레임)이 없음 — 적 `KnockbackResistance` 기반 넉백은 적 전용.
+  근접 런지가 플레이어를 물리로 밀던 문제는 런지 클램프(`AI_Decision_Log.md` 2026-09-08 (8))로
+  가림. "제대로 된" 튜닝 가능한 피격 넉백/경직은 플레이어 넉백력 스탯과 함께 나중에.
 - **플레이스홀더 지오메트리 — 아트 통합(Phase 4) 시 일괄 처리할 충돌 이슈(2026-09-04)**:
   지금은 큐브/캡슐 프리미티브 기준이라 아트로 지형·적·캐릭터를 넣으면 콜라이더·히트박스·
   스폰 오프셋을 어차피 재조정해야 함 — 그때 아래를 묶어서:
@@ -469,11 +503,14 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 6. **전체 플레이 루프** — **골격 완료(2026-09-04 (3))**: `Title.unity` 신설, 타이틀→캐릭터
    선택(타이틀 씬으로 이동)→런→클리어 화면("다시하기"/"타이틀로") 루프 3방향 전환 검증.
    HUD "당장 넣어볼 UI"(크로스헤어/런 타이머/체력 바 리스킨/일시정지 메뉴 버튼/보스 HP 바)와
-   캐릭터 선택 일러스트 버튼 + Start 홀드 즉시선택 버그 수정도 완료(2026-09-04 (3)~(6)). 남은
-   부분: **Game Over 흐름**(Player 사망 처리/연출 — 지금은 임시로 `destroyOnDeath` off만),
-   씬 전환 페이드, 타이틀·일시정지 UI 레이아웃 미세조정(플레이스홀더 아트 기준), 실플레이 전투
-   주파 검증. 층간 전환(카운트다운+페이드+제자리 재빌드)은 2026-09-02 (3)에 이미 구현됨.
-7. **Stage 3 잔여 항목 재개**: `EnemyAIManager`, `GetComponent` 캐싱 정리,
-   `BenchmarkSpawner`, Profiler 기반 Before/After 측정.
+   캐릭터 선택 일러스트 버튼 + Start 홀드 즉시선택 버그 수정도 완료(2026-09-04 (3)~(6)).
+   **Game Over 흐름**: 사망 감지/연출/`GameOverUI` 표시 + 버튼(재시작/타이틀) 동작까지
+   구현·유저 확인 완료(2026-09-08, `GameOverUI` 페이드는 dim/content/buttons 단일 타임라인 동시).
+   남은 부분: 씬 전환 페이드, 실플레이 전투 주파 검증. 타이틀·일시정지 UI 레이아웃 미세조정은
+   **포트폴리오 마감 작업 이후로 이연**(유저 지정 2026-09-08). 층간 전환(카운트다운+페이드+제자리
+   재빌드)은 2026-09-02 (3)에 이미 구현됨.
+7. **Stage 3 잔여 항목** — 최적화(`EnemyAIManager` AI Tick 분산, `GetComponent` 캐싱) + §6.5
+   After 측정은 **Phase 6(아트 통합 이후)로 의도적 이연**(2026-09-08). Before 표 + 벤치 인프라는
+   완료(§3). 현 시점 실측 병목 없음이 근거(`AI_Decision_Log.md` 2026-09-08 (5)).
 8. **Phase 4/5/7** (아트 교체, Addressables, 포트폴리오 문서화)는 위 단계들이
    안정화된 이후 별도로 진행.

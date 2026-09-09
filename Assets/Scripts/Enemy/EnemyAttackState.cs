@@ -1,7 +1,10 @@
+using UnityEngine;
+
 public class EnemyAttackState : IEnemyState
 {
     private readonly EnemyStateMachine _machine;
     private IAttackPattern _activePattern;
+    private Vector3 _idleSwayCenter;
 
     public EnemyAttackState(EnemyStateMachine machine)
     {
@@ -11,6 +14,7 @@ public class EnemyAttackState : IEnemyState
     public void Enter()
     {
         _activePattern = null;
+        _idleSwayCenter = _machine.Body.position;
     }
 
     public void Tick(float deltaTime)
@@ -35,6 +39,7 @@ public class EnemyAttackState : IEnemyState
             }
 
             _activePattern = null;
+            _idleSwayCenter = _machine.Body.position;
         }
 
         IAttackPattern selected = SelectPattern(patterns);
@@ -70,11 +75,64 @@ public class EnemyAttackState : IEnemyState
 
     public void PhysicsTick(float fixedDeltaTime)
     {
-        _activePattern?.PhysicsTick(_machine, fixedDeltaTime);
+        if (_activePattern != null)
+        {
+            _activePattern.PhysicsTick(_machine, fixedDeltaTime);
+            return;
+        }
+
+        HoldOrSway();
+    }
+
+    // Distance within which a between-attacks enemy plants itself and only tracks the player
+    // with rotation. Melee patterns (range ~1.2) always sit inside this, so a melee enemy in
+    // its attack state never drifts around the player between lunges; ranged patterns (range
+    // ~6) sit outside it and keep the cosmetic sway below.
+    private const float HoldStillDistance = 2.5f;
+
+    // Between attacks (no pattern winding up / lunging). Close to the player - i.e. a melee
+    // enemy - plants and only rotates to face: a positional sway at contact range just fights
+    // the solver's depenetration against the player's capsule and reads as the enemy rubbing/
+    // orbiting. Farther out - a ranged enemy on cooldown - a small side-to-side sway anchored
+    // at _idleSwayCenter (reusing the per-enemy WobbleFrequency/WobbleAmplitude, so a stoic
+    // enemy can zero it) reads as "still alert" with nothing to collide against. Never touches
+    // range/cooldown/selection logic.
+    private void HoldOrSway()
+    {
+        if (_machine.Player == null)
+        {
+            return;
+        }
+
+        Vector3 toPlayer = _machine.Player.position - _machine.Body.position;
+        toPlayer.y = 0f;
+        if (toPlayer.sqrMagnitude < 0.0001f)
+        {
+            return;
+        }
+
+        _machine.Body.MoveRotation(Quaternion.LookRotation(toPlayer.normalized));
+
+        if (toPlayer.magnitude <= HoldStillDistance)
+        {
+            return;
+        }
+
+        Vector3 fromCenter = _machine.Player.position - _idleSwayCenter;
+        fromCenter.y = 0f;
+        if (fromCenter.sqrMagnitude < 0.0001f)
+        {
+            return;
+        }
+
+        Vector3 perpendicular = Vector3.Cross(Vector3.up, fromCenter.normalized);
+        float sway = Mathf.Sin(Time.time * _machine.Data.WobbleFrequency + _machine.WobblePhaseSeed) * _machine.Data.WobbleAmplitude;
+        _machine.Body.MovePosition(_idleSwayCenter + perpendicular * sway);
     }
 
     public void Exit()
     {
+        _activePattern?.Interrupt();
         _activePattern = null;
     }
 }

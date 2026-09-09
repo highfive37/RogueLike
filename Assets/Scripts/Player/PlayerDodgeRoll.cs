@@ -13,17 +13,29 @@ public class PlayerDodgeRoll : MonoBehaviour
     // number worth externalising).
     [SerializeField] private float cooldown = 1f;
 
+    // While dashing (and during the brief overlap-correction tail below), the player's layer
+    // ignores collision with Enemy - a dash should pass through enemies rather than physically
+    // bounce off them (only damage immunity, via SetInvulnerable, existed before). If the dash
+    // still ends inside an enemy's collider once collision is due to come back, snapping
+    // collision back on would have the solver shove the player out instantly - instead
+    // correctionSpeedMultiplier keeps sliding forward (same direction, slower) until clear.
+    private const float CorrectionSpeedMultiplier = 0.35f;
+    private const float MaxCorrectionDuration = 0.25f;
+
     private Rigidbody _rigidbody;
     private CapsuleCollider _capsule;
     private PlayerMovement _playerMovement;
     private HealthComponent _healthComponent;
     private InputAction _dodgeRollAction;
     private InputAction _moveAction;
+    private int _enemyLayer;
 
     private Vector3 _dodgeRollDirection;
     private float _dodgeRollElapsed;
     private float _cooldownRemaining;
+    private float _correctionElapsed;
     private bool _isDodgeRolling;
+    private bool _isCorrectingOverlap;
 
     // Read-only cooldown state for the HUD (DashCooldownUI), mirroring the shape
     // ActiveItemController exposes for ActiveItemCooldownUI: Progress is 1 right
@@ -37,6 +49,7 @@ public class PlayerDodgeRoll : MonoBehaviour
         _capsule = GetComponent<CapsuleCollider>();
         _playerMovement = GetComponent<PlayerMovement>();
         _healthComponent = GetComponent<HealthComponent>();
+        _enemyLayer = LayerMask.NameToLayer("Enemy");
 
         PlayerInputActions inputActions = GetComponent<PlayerInputActions>();
         _dodgeRollAction = inputActions.FindAction("DodgeRoll");
@@ -63,7 +76,7 @@ public class PlayerDodgeRoll : MonoBehaviour
 
     private void OnDodgeRollPerformed(InputAction.CallbackContext context)
     {
-        if (PauseState.IsPaused || _isDodgeRolling || _cooldownRemaining > 0f)
+        if (PauseState.IsPaused || _isDodgeRolling || _isCorrectingOverlap || _cooldownRemaining > 0f)
         {
             return;
         }
@@ -76,29 +89,47 @@ public class PlayerDodgeRoll : MonoBehaviour
         _dodgeRollElapsed = 0f;
         _playerMovement.enabled = false;
         _healthComponent.Health.SetInvulnerable(true);
+        SetEnemyCollisionIgnored(true);
     }
 
     // Abort an in-progress roll and restore normal control immediately - called by
     // RoomTransitionController (roll into a doorway) and RoomFlowManager (roll into the Floor
     // Exit) so a roll can't keep driving the Rigidbody across a camera transition, or freeze
     // mid-roll under the Floor Complete pause and resume on the next floor. No-op if not rolling.
+    // Skips the smooth overlap correction below - the player is about to be teleported or hidden
+    // anyway, so an instant collision restore is fine here.
     public void CancelDodgeRoll()
     {
-        if (!_isDodgeRolling)
+        if (!_isDodgeRolling && !_isCorrectingOverlap)
         {
             return;
         }
 
-        EndDodgeRoll();
+        _isDodgeRolling = false;
+        _isCorrectingOverlap = false;
+        _cooldownRemaining = cooldown;
+        _rigidbody.linearVelocity = Vector3.zero;
+        _playerMovement.enabled = true;
+        _healthComponent.Health.SetInvulnerable(false);
+        SetEnemyCollisionIgnored(false);
     }
 
     private void FixedUpdate()
     {
-        if (!_isDodgeRolling)
+        if (_isDodgeRolling)
         {
+            RunDash();
             return;
         }
 
+        if (_isCorrectingOverlap)
+        {
+            RunOverlapCorrection();
+        }
+    }
+
+    private void RunDash()
+    {
         // Velocity-driven, not MovePosition: a position command at dash speed out-runs the
         // physics solver's depenetration and walks the player through static walls. Setting
         // linearVelocity lets the solver resolve the move instead.
@@ -113,16 +144,70 @@ public class PlayerDodgeRoll : MonoBehaviour
         _dodgeRollElapsed += Time.fixedDeltaTime;
         if (_dodgeRollElapsed >= GameBalance.Player.dashDuration)
         {
-            EndDodgeRoll();
+            FinishDash();
         }
     }
 
-    private void EndDodgeRoll()
+    // Dash's timed portion just ended. If the arrival point overlaps an enemy (now that the
+    // dash could carry the player straight through one), keep collision ignored a little longer
+    // and glide forward instead of snapping collision back on and letting the solver pop the
+    // player out. Otherwise this is just the old immediate end-of-roll reset.
+    private void FinishDash()
     {
         _isDodgeRolling = false;
         _cooldownRemaining = cooldown;
+
+        if (IsOverlappingEnemy())
+        {
+            _isCorrectingOverlap = true;
+            _correctionElapsed = 0f;
+            return;
+        }
+
+        CompleteDodgeRoll();
+    }
+
+    private void RunOverlapCorrection()
+    {
+        _correctionElapsed += Time.fixedDeltaTime;
+
+        float correctionSpeed = _playerMovement.CurrentMoveSpeed * GameBalance.Player.dashSpeedMultiplier * CorrectionSpeedMultiplier;
+        Vector3 direction = WallClamp.ClampDirection(_capsule, _dodgeRollDirection, correctionSpeed * Time.fixedDeltaTime);
+        _rigidbody.linearVelocity = direction * correctionSpeed;
+
+        if (_correctionElapsed >= MaxCorrectionDuration || !IsOverlappingEnemy())
+        {
+            _isCorrectingOverlap = false;
+            CompleteDodgeRoll();
+        }
+    }
+
+    private void CompleteDodgeRoll()
+    {
         _rigidbody.linearVelocity = Vector3.zero;
         _playerMovement.enabled = true;
         _healthComponent.Health.SetInvulnerable(false);
+        SetEnemyCollisionIgnored(false);
+    }
+
+    private bool IsOverlappingEnemy()
+    {
+        if (_enemyLayer < 0)
+        {
+            return false;
+        }
+
+        WallClamp.GetCapsuleGeometry(_capsule, out Vector3 point0, out Vector3 point1, out float radius);
+        return Physics.CheckCapsule(point0, point1, radius, 1 << _enemyLayer, QueryTriggerInteraction.Ignore);
+    }
+
+    private void SetEnemyCollisionIgnored(bool ignore)
+    {
+        if (_enemyLayer < 0)
+        {
+            return;
+        }
+
+        Physics.IgnoreLayerCollision(gameObject.layer, _enemyLayer, ignore);
     }
 }

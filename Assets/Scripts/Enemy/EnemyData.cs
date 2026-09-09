@@ -9,6 +9,13 @@ public class EnemyData : ScriptableObject
     [SerializeField] private float patrolRadius = 3f;
     [SerializeField] private float idleDuration = 1.5f;
 
+    // Perpendicular sine-wave sway added on top of straight-line chase/patrol/retreat movement
+    // (see EnemyMovementFlavor) - a stoic heavy enemy can leave this at 0, an erratic one can
+    // push it high without touching any movement code.
+    [Header("Movement Flavor")]
+    [SerializeField] private float wobbleFrequency = 2f;
+    [SerializeField] private float wobbleAmplitude = 0.2f;
+
     [Header("Detection")]
     [SerializeField] private float detectionRange = 6f;
     [SerializeField] private float leashRange = 9f;
@@ -16,8 +23,17 @@ public class EnemyData : ScriptableObject
     [Header("Attack")]
     [SerializeField] private AttackPatternData[] attackPatterns;
 
+    // stunDuration doubles as the hit-stagger length applied on every incoming hit (see
+    // EnemyStateMachine.HandleDamageTaken) - a heavy/boss enemy can set this low so it barely
+    // flinches instead of being lockable.
     [Header("Status")]
-    [SerializeField] private float stunDuration = 2f;
+    [SerializeField] private float stunDuration = 0.15f;
+
+    // Fraction of the baseline knockback distance this enemy resists on hit, 0 = full knockback,
+    // 1 = immune. Currently the sole input to knockback distance - once a player-side "knockback
+    // power" stat exists, that will combine with this instead of the fixed baseline constant in
+    // EnemyStateMachine.
+    [SerializeField, Range(0f, 1f)] private float knockbackResistance = 0f;
 
     public float MoveSpeed => moveSpeed;
     public float PatrolSpeed => patrolSpeed;
@@ -25,6 +41,9 @@ public class EnemyData : ScriptableObject
     public float IdleDuration => idleDuration;
     public float DetectionRange => detectionRange;
     public float LeashRange => leashRange;
+    public float WobbleFrequency => wobbleFrequency;
+    public float WobbleAmplitude => wobbleAmplitude;
     public AttackPatternData[] AttackPatterns => attackPatterns;
     public float StunDuration => stunDuration;
+    public float KnockbackResistance => knockbackResistance;
 }

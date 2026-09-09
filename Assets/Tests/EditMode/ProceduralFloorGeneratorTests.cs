@@ -1,21 +1,31 @@
 using System.Collections.Generic;
 using System.Text;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace RogueLike.Tests
 {
     // The Isaac-style floor generator: deterministic, always a valid graph, one
-    // Start + one Boss dead-end, room count inside the requested range.
+    // Start + one Boss dead-end, room count in range, and combat rooms populated
+    // per the FloorRule.
     public class ProceduralFloorGeneratorTests
     {
-        private static readonly FloorGenParams P = new FloorGenParams(minRooms: 8, maxRooms: 12, itemRoomChance: 1f);
-
-        private static FloorLayout Gen(int seed, int floorNumber, FloorGenParams p)
+        private static FloorRule Rule(
+            int minRooms = 8, int maxRooms = 12, float itemChance = 1f,
+            int minEnemies = 2, int maxEnemies = 4, VariantWeights? weights = null)
         {
-            return new ProceduralFloorGenerator().Generate(floorNumber, isLastFloor: false, p, new RngStreams(seed));
+            return new FloorRule(minRooms, maxRooms, itemChance, minEnemies, maxEnemies,
+                weights ?? new VariantWeights(1, 1, 1, 1));
         }
 
-        // Order-independent string form of a floor's graph, for equality comparison.
+        private static readonly FloorRule P = Rule();
+
+        private static FloorLayout Gen(int seed, int floorNumber, FloorRule rule)
+        {
+            return new ProceduralFloorGenerator().Generate(floorNumber, isLastFloor: false, rule, new RngStreams(seed));
+        }
+
+        // Order-independent string form of a floor - graph AND enemy composition.
         private static string Signature(FloorLayout f)
         {
             var sb = new StringBuilder().Append("start=").Append(f.StartRoomId).Append(';');
@@ -29,13 +39,20 @@ namespace RogueLike.Tests
                     conns.Add(c.Direction + "->" + c.TargetRoomId);
                 }
                 conns.Sort();
-                sb.Append(string.Join(" ", conns)).Append("] ");
+                sb.Append(string.Join(" ", conns)).Append("]{");
+                foreach (StageEnemyEntry e in r.Enemies)
+                {
+                    sb.Append(e.Variant).Append('(')
+                      .Append(Mathf.RoundToInt(e.SpawnPosition.x)).Append(',')
+                      .Append(Mathf.RoundToInt(e.SpawnPosition.z)).Append(") ");
+                }
+                sb.Append("} ");
             }
             return sb.ToString();
         }
 
         [Test]
-        public void SameSeed_ProducesIdenticalLayout()
+        public void SameSeed_ProducesIdenticalLayoutAndEnemies()
         {
             Assert.That(Signature(Gen(4242, 1, P)), Is.EqualTo(Signature(Gen(4242, 1, P))));
         }
@@ -75,10 +92,10 @@ namespace RogueLike.Tests
         [Test]
         public void RoomCount_StaysWithinRequestedRange()
         {
-            var p = new FloorGenParams(9, 11, 1f);
+            FloorRule r = Rule(minRooms: 9, maxRooms: 11);
             for (int seed = 0; seed < 60; seed++)
             {
-                int n = Gen(seed, 1, p).Rooms.Count;
+                int n = Gen(seed, 1, r).Rooms.Count;
                 Assert.That(n, Is.InRange(9, 11), $"seed {seed} -> {n} rooms");
             }
         }
@@ -88,8 +105,7 @@ namespace RogueLike.Tests
         {
             for (int seed = 0; seed < 60; seed++)
             {
-                FloorLayout f = Gen(seed, 1, P);
-                foreach (RoomData r in f.Rooms)
+                foreach (RoomData r in Gen(seed, 1, P).Rooms)
                 {
                     if (r.Type == RoomType.Boss)
                     {
@@ -137,20 +153,19 @@ namespace RogueLike.Tests
         [Test]
         public void ItemRoomChanceZero_NeverPlacesAnItemRoom()
         {
-            var p = new FloorGenParams(8, 12, 0f);
+            FloorRule r = Rule(itemChance: 0f);
             for (int seed = 0; seed < 40; seed++)
             {
-                foreach (RoomData r in Gen(seed, 1, p).Rooms)
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
                 {
-                    Assert.That(r.Type, Is.Not.EqualTo(RoomType.Item), $"seed {seed}");
+                    Assert.That(room.Type, Is.Not.EqualTo(RoomType.Item), $"seed {seed}");
                 }
             }
         }
 
         [Test]
-        public void ItemRoomChanceOne_PlacesAnItemRoom_WhenShapeAllows()
+        public void ItemRoomChanceOne_PlacesAnItemRoom_ForMostSeeds()
         {
-            // With chance 1 and a decent room count, at least most seeds get an item room.
             int withItem = 0;
             const int seeds = 40;
             for (int seed = 0; seed < seeds; seed++)
@@ -161,6 +176,68 @@ namespace RogueLike.Tests
                 }
             }
             Assert.That(withItem, Is.GreaterThan(seeds / 2), $"only {withItem}/{seeds} seeds produced an item room");
+        }
+
+        // --- enemy composition ---
+
+        [Test]
+        public void CombatRooms_HaveEnemyCountInRange_OthersHaveNone()
+        {
+            FloorRule r = Rule(minEnemies: 3, maxEnemies: 6);
+            for (int seed = 0; seed < 40; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
+                {
+                    switch (room.Type)
+                    {
+                        case RoomType.Combat:
+                            Assert.That(room.Enemies.Count, Is.InRange(3, 6), $"seed {seed} room {room.RoomId}");
+                            break;
+                        case RoomType.Boss:
+                            Assert.That(room.Enemies.Count, Is.EqualTo(1), $"seed {seed}");
+                            Assert.That(room.Enemies[0].Variant, Is.EqualTo(EnemyVariantType.Boss));
+                            break;
+                        default:
+                            Assert.That(room.Enemies.Count, Is.EqualTo(0), $"seed {seed} {room.Type} room {room.RoomId}");
+                            break;
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void EnemyVariants_HonourWeights_WhenOnlyOneIsNonZero()
+        {
+            FloorRule r = Rule(minEnemies: 4, maxEnemies: 4, weights: new VariantWeights(0, 1, 0, 0)); // Ranged only
+            for (int seed = 0; seed < 30; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
+                {
+                    if (room.Type != RoomType.Combat) { continue; }
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        Assert.That(e.Variant, Is.EqualTo(EnemyVariantType.Ranged), $"seed {seed}");
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void EnemySpawnPositions_StayInsideRoomInterior()
+        {
+            for (int seed = 0; seed < 40; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, P).Rooms)
+                {
+                    if (room.Type != RoomType.Combat) { continue; }
+                    float limit = RoomBounds.InteriorHalfExtent(room.RoomSize, RoomBounds.WallThickness, 0.5f);
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        Assert.That(Mathf.Abs(e.SpawnPosition.x), Is.LessThanOrEqualTo(limit + 0.01f), $"seed {seed}");
+                        Assert.That(Mathf.Abs(e.SpawnPosition.z), Is.LessThanOrEqualTo(limit + 0.01f), $"seed {seed}");
+                    }
+                }
+            }
         }
     }
 }

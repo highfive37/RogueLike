@@ -5,6 +5,11 @@ using UnityEngine;
 // centred on its transform); RoomController does the world<->local conversion around these.
 public static class RoomBounds
 {
+    // Wall thickness of a procedurally-built room. Lives here (the pure-geometry
+    // helper) so RoomController's actual wall cubes and every interior-bounds
+    // calculation stay in sync off one constant.
+    public const float WallThickness = 1f;
+
     // Thin skin so a clamped body sits clear of the wall collider instead of touching it.
     public const float InteriorSkin = 0.1f;
 

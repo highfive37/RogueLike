@@ -16,7 +16,7 @@ using UnityEngine;
 public class RoomController : MonoBehaviour
 {
     private const float WallHeight = 3f;
-    private const float WallThickness = 1f;
+    private const float WallThickness = RoomBounds.WallThickness;
     private const float DoorWidth = 6f;
     private const float DoorHeight = 3f;
     private const float EntryPointInset = 4f;

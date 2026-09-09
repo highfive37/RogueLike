@@ -257,7 +257,34 @@
   3층+isLast / 전부 유효·비손상 / 같은 마스터시드 전 층 재현 / 다른 시드 다름 / 후반 층 방 수 증가)
   전부 통과. PlayMode **10개** 그대로. `RunCommand` ASCII 미리보기: 시드 20260909 → 7/11/12방,
   아이작형 스프롤, 보스 원거리 데드엔드, 같은 시드 재현 True. 콘솔 에러/폴백 경고 0.
-- 다음: Phase D — `ProceduralRules.json` 로더 + 절차적 적 구성(`RoomBounds` 안 지터 배치).
+**트랙 #2 Phase D — `ProceduralRules.json` 로더 + 절차적 적 구성**
+- **`ProceduralRules.json`** (`Assets/StreamingAssets/Balance/Stage/`) 신규 — 층별 난이도 규칙:
+  `roomCount{min,max}` / `itemRoomChance` / `enemiesPerCombatRoom{min,max}` / `variantWeights
+  {melee,ranged,erraticMelee,burstRanged}`. `_guide`/`_fieldGuide` 포함. `floors` 배열, 층 수
+  초과 시 마지막 규칙 반복.
+- **`ProceduralRules`** 로더 — `GameFloors`/`GameBalance`와 동일 패턴(정적, lazy, 세션 리셋,
+  `internal Parse` 시크릿, 파일 없음/깨짐 → 내장 기본값 + 경고). `RuleAt(rules, N)`(1-based, 배열
+  범위로 clamp)은 순수라 테스트 가능.
+- **`FloorRule`**(구 `FloorGenParams` 대체·확장) struct — 6필드. 생성자가 out-of-range 값 sanitize
+  (min>max, 음수 가중치, 확률>1). `VariantWeights`(struct) — 4가중치 + `Pick(IRng)` 가중 추첨
+  (전부 0이면 Melee).
+- **`ProceduralFloorGenerator`** 적 구성 추가:
+  - Combat 방: `enemyRng.Range(min, max+1)`마리, 각각 `VariantWeights.Pick`, 위치는 방 크기의
+    `RoomBounds.InteriorHalfExtent`의 45~75% 반경 링에 균등 각도 + 지터 배치(`enemies` 스트림).
+  - Boss 방: `EnemyVariantType.Boss` 1마리 `(0, 1.5, 6)`.
+  - Start/Item 방: 적 0.
+  - `layout`(attempt별) / `enemies`(층별) 스트림 분리 — 적 수 튜닝이 그래프를 안 흔들고 그 역도.
+  - `RoomBounds.WallThickness` 상수를 `RoomController`에서 `RoomBounds`로 이동(생성기·방 지오메트리·
+    클램프가 한 상수 참조). `RoomController.WallThickness = RoomBounds.WallThickness`.
+- `ProceduralFloorSource`가 `DefaultParamsFor` → `ProceduralRules.ForFloor(n)`.
+- **검증**: EditMode **75개**(기존 66 + 신규 9: `ProceduralRulesTests` 6 — 정상 파싱/floors 없음·
+  garbage → throw/out-of-range sanitize/`RuleAt` clamp/기본값 3층 상승 곡선. 생성기 적 테스트 3 —
+  Combat 방 적 수 범위·Boss 1마리·Start/Item 0 / 가중치 하나만 non-zero면 전부 그 변형 /
+  스폰 위치가 방 내부). PlayMode **10개** 그대로. `RunCommand` 미리보기(시드 20260909):
+  `ProceduralRules.json` 정상 로드(기본값 아님), Floor1/2/3 = 7/11/12방·13/42/56마리(난이도 상승),
+  변형 믹스가 후반에 Ranged/Burst 쪽으로 이동, 같은 시드 = 적까지 동일. 콘솔 에러/폴백 경고 0.
+- 다음: Phase E — 기본을 `Procedural`로 전환(`GameFlow.DefaultFloorSource` flip) + 프로퍼티 테스트
+  보강. **여기서 유저 실플레이** (매 run 다른 던전 / 같은 시드 = 같은 던전 / 난이도 상승 체감).
 
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →

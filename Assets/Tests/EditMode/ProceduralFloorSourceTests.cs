@@ -59,19 +59,33 @@ namespace RogueLike.Tests
         }
 
         [Test]
-        public void LaterFloors_TrendToMoreRooms()
+        public void LaterFloors_TrendToMoreRoomsAndMoreEnemies()
         {
             // Not strict per-seed (ranges overlap a little via the min-growth floor),
-            // but averaged over many seeds the curve must go up.
-            long f1 = 0, f3 = 0;
+            // but averaged over many seeds the ProceduralRules curve must go up.
+            long f1Rooms = 0, f3Rooms = 0, f1Enemies = 0, f3Enemies = 0;
             const int seeds = 30;
             for (int s = 0; s < seeds; s++)
             {
                 var src = new ProceduralFloorSource(s);
-                f1 += src.Floors[0].Rooms.Count;
-                f3 += src.Floors[2].Rooms.Count;
+                f1Rooms += src.Floors[0].Rooms.Count;
+                f3Rooms += src.Floors[2].Rooms.Count;
+                f1Enemies += CountEnemies(src.Floors[0]);
+                f3Enemies += CountEnemies(src.Floors[2]);
             }
-            Assert.That(f3 / (double)seeds, Is.GreaterThan(f1 / (double)seeds));
+
+            Assert.That(f3Rooms / (double)seeds, Is.GreaterThan(f1Rooms / (double)seeds));
+            Assert.That(f3Enemies / (double)seeds, Is.GreaterThan(f1Enemies / (double)seeds));
+        }
+
+        private static int CountEnemies(FloorLayout f)
+        {
+            int n = 0;
+            foreach (RoomData r in f.Rooms)
+            {
+                n += r.Enemies.Count;
+            }
+            return n;
         }
     }
 }

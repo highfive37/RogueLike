@@ -11,15 +11,18 @@ using UnityEngine;
 //      is what keeps floors sprawly instead of a solid blob).
 //   2. Room types from the finished shape: Start is the centre; the Boss room is
 //      the dead-end (one door) farthest from Start by room count; an Item room is
-//      another dead-end, placed with FloorGenParams.ItemRoomChance; everything
-//      else is Combat.
+//      another dead-end, placed with FloorRule.ItemRoomChance; everything else is
+//      Combat.
 //   3. Doors connect every pair of orthogonally-adjacent rooms (both directions).
+//   4. Combat rooms get FloorRule.MinEnemiesPerCombatRoom..Max enemies, variants
+//      drawn from FloorRule.VariantWeights, positioned on a jittered ring inside
+//      the room. The boss room gets one Boss.
 //
-// Fully deterministic from (masterSeed, floorNumber, attempt): a failed attempt
-// (too few rooms, no dead-end for the boss) retries with the next attempt's
-// stream, so the result is still reproducible. Rooms come out with NO enemies -
-// that is a later step. The output is run through FloorGraph.Validate as a
-// self-check before it is returned.
+// Fully deterministic from (masterSeed, floorNumber): layout draws come from a
+// per-attempt "layout" stream (a failed attempt - too few rooms, no dead-end -
+// retries), enemy draws from a separate "enemies" stream, so re-tuning enemy
+// counts never shifts the graph for a seed and vice versa. The output is run
+// through FloorGraph.Validate as a self-check before it is returned.
 public sealed class ProceduralFloorGenerator
 {
     private const int GridRadius = 8;          // 17x17 cells - ample for <= ~16 rooms
@@ -32,6 +35,13 @@ public sealed class ProceduralFloorGenerator
     private const float CombatRoomSize = 40f;
     private const float BossRoomSize = 40f;
 
+    private const float EnemyBodyRadius = 0.5f;   // matches the enemy prefab capsule
+    private const float EnemyStandHeight = 1f;
+    private const float BossStandHeight = 1.5f;
+    private const float RingInnerFrac = 0.45f;    // enemies land between 45% and 75%
+    private const float RingOuterFrac = 0.75f;    // of the room's interior half-extent
+    private const float AngleJitterRad = 0.25f;
+
     private static readonly (Vector2Int Offset, DoorDirection Dir)[] Dirs =
     {
         (new Vector2Int(0, 1), DoorDirection.North),
@@ -40,12 +50,13 @@ public sealed class ProceduralFloorGenerator
         (new Vector2Int(-1, 0), DoorDirection.West),
     };
 
-    public FloorLayout Generate(int floorNumber, bool isLastFloor, FloorGenParams p, RngStreams streams)
+    public FloorLayout Generate(int floorNumber, bool isLastFloor, FloorRule rule, RngStreams streams)
     {
         for (int attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            IRng rng = streams.Stream($"layout.f{floorNumber}.a{attempt}");
-            if (TryGenerate(floorNumber, isLastFloor, p, rng, out FloorLayout layout))
+            IRng layoutRng = streams.Stream($"layout.f{floorNumber}.a{attempt}");
+            IRng enemyRng = streams.Stream($"enemies.f{floorNumber}");
+            if (TryGenerate(floorNumber, isLastFloor, rule, layoutRng, enemyRng, out FloorLayout layout))
             {
                 return layout;
             }
@@ -53,18 +64,18 @@ public sealed class ProceduralFloorGenerator
 
         Debug.LogWarning(
             $"ProceduralFloorGenerator: floor {floorNumber} failed its constraints in {MaxAttempts} attempts " +
-            $"(rooms {p.MinRooms}-{p.MaxRooms}); using a trivial start-combat-boss fallback.");
+            $"(rooms {rule.MinRooms}-{rule.MaxRooms}); using a trivial start-combat-boss fallback.");
         return TrivialLine(floorNumber, isLastFloor);
     }
 
-    private bool TryGenerate(int floorNumber, bool isLastFloor, FloorGenParams p, IRng rng, out FloorLayout layout)
+    private bool TryGenerate(int floorNumber, bool isLastFloor, FloorRule rule, IRng rng, IRng enemyRng, out FloorLayout layout)
     {
         layout = null;
 
         var start = new Vector2Int(0, 0);
         var placed = new HashSet<Vector2Int> { start };
 
-        int target = rng.Range(p.MinRooms, p.MaxRooms + 1);
+        int target = rng.Range(rule.MinRooms, rule.MaxRooms + 1);
 
         // Repeated flood passes over a deterministically-ordered frontier until we
         // hit the target or a whole pass adds nothing.
@@ -114,7 +125,7 @@ public sealed class ProceduralFloorGenerator
             }
         }
 
-        if (placed.Count < p.MinRooms)
+        if (placed.Count < rule.MinRooms)
         {
             return false;
         }
@@ -155,7 +166,7 @@ public sealed class ProceduralFloorGenerator
                 itemCandidates.Add(d);
             }
         }
-        bool hasItem = itemCandidates.Count > 0 && rng.Chance(p.ItemRoomChance);
+        bool hasItem = itemCandidates.Count > 0 && rng.Chance(rule.ItemRoomChance);
         Vector2Int item = hasItem ? itemCandidates[rng.Range(0, itemCandidates.Count)] : default;
 
         // Stable ids in BFS order from start: start is always floorNumber*1000 + 1.
@@ -196,7 +207,12 @@ public sealed class ProceduralFloorGenerator
                 }
             }
 
-            rooms.Add(new RoomData(id, type, cell, size, Array.Empty<StageEnemyEntry>(), connections));
+            IReadOnlyList<StageEnemyEntry> enemies =
+                type == RoomType.Combat ? BuildCombatEnemies(rule, size, enemyRng) :
+                type == RoomType.Boss ? BossEnemy() :
+                Array.Empty<StageEnemyEntry>();
+
+            rooms.Add(new RoomData(id, type, cell, size, enemies, connections));
         }
 
         try
@@ -213,6 +229,33 @@ public sealed class ProceduralFloorGenerator
 
         layout = new FloorLayout(floorNumber, isLastFloor, isCorrupted: false, startId, rooms);
         return true;
+    }
+
+    // Enemies for one combat room: a seed-picked count, each a weighted-random
+    // variant, spread on a jittered ring. EnemySpawner also clamps every position
+    // into the room at spawn time, so the ring math only has to be reasonable.
+    private static List<StageEnemyEntry> BuildCombatEnemies(FloorRule rule, float roomSize, IRng enemyRng)
+    {
+        int count = enemyRng.Range(rule.MinEnemiesPerCombatRoom, rule.MaxEnemiesPerCombatRoom + 1);
+        var list = new List<StageEnemyEntry>(count);
+
+        float half = RoomBounds.InteriorHalfExtent(roomSize, RoomBounds.WallThickness, EnemyBodyRadius);
+        for (int i = 0; i < count; i++)
+        {
+            EnemyVariantType variant = rule.VariantWeights.Pick(enemyRng);
+
+            float radius = half * enemyRng.Range(RingInnerFrac, RingOuterFrac);
+            float angle = (Mathf.PI * 2f * i / Mathf.Max(1, count)) + enemyRng.Range(-AngleJitterRad, AngleJitterRad);
+            var pos = new Vector3(Mathf.Cos(angle) * radius, EnemyStandHeight, Mathf.Sin(angle) * radius);
+
+            list.Add(new StageEnemyEntry(variant, pos));
+        }
+        return list;
+    }
+
+    private static StageEnemyEntry[] BossEnemy()
+    {
+        return new[] { new StageEnemyEntry(EnemyVariantType.Boss, new Vector3(0f, BossStandHeight, 6f)) };
     }
 
     private static bool InBounds(Vector2Int c)
@@ -287,7 +330,8 @@ public sealed class ProceduralFloorGenerator
     }
 
     // Guaranteed-valid degenerate floor for the (practically unreachable) case
-    // where every attempt failed its constraints.
+    // where every attempt failed its constraints. No enemies - it's a safety net,
+    // not a real floor.
     private static FloorLayout TrivialLine(int floorNumber, bool isLastFloor)
     {
         int baseId = floorNumber * 1000;

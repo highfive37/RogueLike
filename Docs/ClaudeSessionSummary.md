@@ -557,7 +557,10 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
    구조·1회 전환은 자동 검증 통과, **연속 전환 페이드 완주 + 전투 1주파 실플레이 검증만 이월**
    (자동화 Play Mode 코루틴 한계). 타이틀·일시정지 UI 레이아웃 미세조정은 **포트폴리오 마감
    작업 이후로 이연**(유저 지정 2026-09-08). 층간 전환(카운트다운+페이드+제자리 재빌드)은
-   2026-09-02 (3)에 이미 구현됨. 이 실플레이 검증 통과 시 #6 종료 → 남은 트랙은 Phase 4/5/7.
+   2026-09-02 (3)에 이미 구현됨. 타이틀·일시정지 UI 레이아웃 미세조정은 **포트폴리오 마감
+   작업 이후로 이연**(유저 지정 2026-09-08). **#6 종료(2026-09-09 유저 1주파 완료 처리)** —
+   신규 적 타입(ErraticMelee/BurstRanged)이 2·3층에 실제로 섞여 나오는지 육안 확인은 이후 다른
+   작업 시 함께 보는 것으로 이월.
 7. **Stage 3 잔여 항목** — 최적화(`EnemyAIManager` AI Tick 분산, `GetComponent` 캐싱) + §6.5
    After 측정은 **Phase 6(아트 통합 이후)로 의도적 이연**(2026-09-08). Before 표 + 벤치 인프라는
    완료(§3). 현 시점 실측 병목 없음이 근거(`AI_Decision_Log.md` 2026-09-08 (5)).
@@ -571,9 +574,12 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 `DevLog.md` 2026-09-08 "다음 작업 후보" 리스트를 장르 선언(3D 아이작/건전)과 현재
 진행도를 반영해 순서 확정. 상세 근거는 `DevLog.md` 2026-09-09.
 
-0. **§6 #6 마감** — 씬 페이드 + 3층 1주파 실플레이 검증 (진행 중, 포트폴리오 항목 아님).
-1. **자동화 테스트 스위트(EditMode+PlayMode) + CI** — 과설계 위험 0, §12 "AI 코드 검증"
-   직접 답, 뒤 작업의 안전망. 규모 2~3 세션(GameCI 라이선스 설정만 fiddly).
+0. ~~**§6 #6 마감**~~ — 완료(2026-09-09, 유저 1주파). 신규 적 타입 2·3층 배치 육안 확인만 이월.
+1. ~~**자동화 테스트 스위트(EditMode+PlayMode) + CI**~~ — 완료(2026-09-09). `RogueLike.asmdef`(단일,
+   A1) + `Assets/Tests/{EditMode,PlayMode}` + `.github/workflows/ci.yml`(GameCI, Unity 6000.3.22f1).
+   **CI에서 49개(EditMode 39 + PlayMode 10) 전부 초록.** 방법 B 활성화(UNITY_EMAIL/PASSWORD
+   시크릿만, Unity 6 엔타이틀먼트 라이선싱이라 `.ulf` 없음). `KnockbackMath`/`RoomBounds` 순수
+   추출 + `GameFloors.ValidateGraph`(BFS 연결성 + dangling 검증) 신규. README + 배지.
 2. **결정론적 시드 절차적 층 생성** — 장르 정체성 간극(고정 3층 → 절차적). `IFloorLayoutProvider`
    심의 회수 + per-system 시드 RNG 아키텍처. 규모 3~4 세션. 층 수는 3 고정, 레이아웃만 절차적,
    JSON provider는 고정 시드 디버그 폴백으로 유지.

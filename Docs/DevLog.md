@@ -182,6 +182,26 @@
 - 2차: 디스크·라이선스·**테스트 전부 통과 (CI에서 49/49: EditMode 39 + PlayMode 10)**. 마지막
   결과 게시 스텝만 실패 — `GITHUB_TOKEN`이 `checks: write` 없음(신규 저장소 기본 읽기전용).
   워크플로에 `permissions: {contents: read, checks: write}` 추가로 해결.
+- 3차: **완전 초록 🟢**. `README.md` 신규 + CI 배지. **포트폴리오 트랙 #1(테스트+CI) 완료**.
+- §6 #6(전체 플레이 루프)도 유저 1주파로 **완료 처리**(2026-09-09) — 신규 적 타입 2·3층 육안
+  확인만 이후 다른 작업 시 이월.
+
+**다음 작업 계획 — 포트폴리오 트랙 #2: 결정론적 시드 절차적 층 생성 (설계 계획, 미착수)**
+- 심 위치: `GameFloors.Floors`(FloorLayout 리스트 생산지)에 `IFloorSource` 추상 → `JsonFloorSource`
+  (현행 래핑) / `ProceduralFloorSource`(신규). `StageManager` 소비 코드 거의 불변(FloorLayout 형태 동일).
+  `IFloorLayoutProvider` 심은 애초에 이 교체용(isaac-room-system 메모리).
+- 생성 알고리즘: **아이작식 큐 성장** 채택 방향(중앙 시작 → 큐에서 랜덤 방 꺼내 인접에 확률+
+  "이웃 1개" 제약으로 추가 → 목표 N → 후처리로 보스=시작 BFS 최원거리 데드엔드, 아이템=다른
+  데드엔드). 대안: 스패닝트리+추가엣지(A로 수렴), 템플릿 조립(과함, 기각).
+- 유저 결정 대기 서브 항목: (1) 시드 출처 — 랜덤+오버라이드 추천 (2) 절차화 범위 — 그래프+타입
+  +적 구성까지 추천, 스폰 위치는 `RoomBounds` 안 지터 (3) JSON provider — 디버그 대안 모드로 유지
+  (4) 결정성 범위 — per-system 스트림(layout/enemies/drops), 전투 미세 랜덤 제외 (5) 난이도 스케일
+  — 층 시드 = master+N.
+- 작업 단계: A) RNG 아키텍처(`RngStreams` + `RunConfig`를 GameFlow로 전달) B) `IFloorSource` 심
+  추출(동작 불변, 49 테스트 유지) C) `ProceduralFloorGenerator` D) 절차적 적 구성 E) 프로퍼티
+  테스트(같은 시드→동일 그래프 / 항상 연결+Start+Boss / 방 수 범위 / 보스방=데드엔드) + 기본을
+  절차적으로 전환 F) 시드 노출(일시정지/게임오버). 규모 ~3~4 세션. 상세는 대화 2026-09-09.
+- 아트 리소스 적용(무료 CC0 3D 1세트)을 이 즈음 병행 — 생성기/카메라를 회색 캡슐 아닌 실제 크기로.
 
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →

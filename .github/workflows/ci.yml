@@ -17,6 +17,18 @@ jobs:
     name: EditMode + PlayMode tests
     runs-on: ubuntu-latest
     steps:
+      # The GitHub-hosted runner only has ~14 GB free; the Unity editor Docker
+      # image (linux-il2cpp) unpacks to more than that on top of the project.
+      # Drop the big preinstalled toolchains we don't use to make room.
+      - name: Free disk space
+        run: |
+          echo "Before:"; df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/local/share/chromium \
+            /usr/local/lib/node_modules
+          sudo docker image prune --all --force || true
+          echo "After:"; df -h /
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -35,8 +47,9 @@ jobs:
       - name: Run tests
         uses: game-ci/unity-test-runner@v4
         env:
-          # Unity Personal license (all three required for GameCI v4). Set these in
-          # repo Settings -> Secrets and variables -> Actions.
+          # Unity Personal license. Method B: email + password only (GameCI v4 can
+          # activate a Personal seat from credentials). If that fails, add
+          # UNITY_LICENSE with the contents of a manually-activated .ulf.
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}

@@ -172,9 +172,13 @@
   3개. 그래서 임시 `activation.yml`은 만들었다가 삭제, `ci.yml` env에 3개 시크릿 참조.
 - `.gitignore`에 `/artifacts/`, `TestResults*.xml`, `[Tt]est[Rr]esults/`, `/CodeCoverage/`,
   `*.alf`/`*.ulf` 추가.
-- **다음(유저)**: (1) 커밋+푸시 → (2) `C:\ProgramData\Unity\Unity_lic.ulf` 내용 + Unity 계정
-  이메일/비번을 저장소 Settings → Secrets에 `UNITY_LICENSE`/`UNITY_EMAIL`/`UNITY_PASSWORD`로 등록
-  → (3) 푸시 시 `ci.yml` 자동 실행, 초록불 확인. 이후 내가 README 배지 추가.
+- **다음(유저)**: (1) 커밋+푸시 → (2) Unity 계정 이메일/비번을 `UNITY_EMAIL`/`UNITY_PASSWORD`
+  시크릿으로 등록(방법 B — GameCI v4 Personal 활성화가 자격증명만으로 됨; 실패 시 수동 활성화
+  `.ulf`를 `UNITY_LICENSE`로) → (3) 재실행 후 초록불 확인. 이후 내가 README 배지 추가.
+- 1차 실패(2026-09-09): Docker 이미지는 정상 pull됐으나 러너 디스크 부족(`no space left on
+  device`, il2cpp 이미지가 ~14GB 러너를 초과). Unity 6/신 라이선싱이라 `.ulf` 파일이 로컬에
+  없음(`UnityEntitlementLicense.xml` 방식) → 방법 B 우선. `ci.yml`에 안 쓰는 사전설치물
+  (android SDK/dotnet/ghc/CodeQL 등) 제거 스텝 추가.
 
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →

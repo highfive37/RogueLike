@@ -177,8 +177,11 @@
   `.ulf`를 `UNITY_LICENSE`로) → (3) 재실행 후 초록불 확인. 이후 내가 README 배지 추가.
 - 1차 실패(2026-09-09): Docker 이미지는 정상 pull됐으나 러너 디스크 부족(`no space left on
   device`, il2cpp 이미지가 ~14GB 러너를 초과). Unity 6/신 라이선싱이라 `.ulf` 파일이 로컬에
-  없음(`UnityEntitlementLicense.xml` 방식) → 방법 B 우선. `ci.yml`에 안 쓰는 사전설치물
-  (android SDK/dotnet/ghc/CodeQL 등) 제거 스텝 추가.
+  없음(`UnityEntitlementLicense.xml` 방식) → 방법 B(계정 이메일/비번만) 우선. `ci.yml`에 안 쓰는
+  사전설치물(android SDK/dotnet/ghc/CodeQL 등) 제거 스텝 추가.
+- 2차: 디스크·라이선스·**테스트 전부 통과 (CI에서 49/49: EditMode 39 + PlayMode 10)**. 마지막
+  결과 게시 스텝만 실패 — `GITHUB_TOKEN`이 `checks: write` 없음(신규 저장소 기본 읽기전용).
+  워크플로에 `permissions: {contents: read, checks: write}` 추가로 해결.
 
 **테스트 스위트 Phase 3 — PlayMode 테스트**
 - `Assets/Tests/PlayMode/` 신규. `TestHelpers.cs`(`TestObjects`) — 비활성 GO에 컴포넌트 add →

@@ -12,6 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# game-ci/unity-test-runner posts results as a GitHub Check Run; the default
+# GITHUB_TOKEN is read-only for `checks` on new repos, so grant it explicitly.
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   tests:
     name: EditMode + PlayMode tests

@@ -44,6 +44,43 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-10 — 타이틀 화면 시드 입력칸의 파싱 로직 위치
+
+### 배경 / 문제
+- 트랙 #2 Phase F: 타이틀 화면에 "같은 시드로 재생" 입력칸을 추가하면서, 사용자가 입력한
+  문자열을 시드로 파싱하는 로직을 어디에 둘지 결정해야 했음. `TitleScreenController`에 인라인으로
+  둘 수도, 별도 순수 함수로 뺄 수도, 아예 별도 컴포넌트로 캡슐화할 수도 있었음.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. `TitleScreenController`에 인라인 파싱 | 코드량 최소 | 이 프로젝트가 트랙 #1(테스트+CI)부터 일관되게 지켜온 패턴(`KnockbackMath`/`RoomBounds`/`GameBalance.ParsePlayerBaseStats`/`ProceduralRules` 전부 순수 파싱 로직을 분리해 EditMode 테스트로 잠금)과 어긋남 |
+| **B. `RunConfig.TryParseSeedOverride(text, out seed)` 정적 순수 함수로 분리** | 기존 컨벤션과 정확히 같은 모양, EditMode 테스트 3~4개로 바로 회귀 잠금 가능, 코드량 증가 미미 | 파일이 하나 더 늘어남(미미) |
+| C. 별도 `SeedInputController` 컴포넌트로 완전 분리(검증 UX까지 캡슐화) | 입력창 UX(에러 테두리 등)까지 확장 여지 | 지금 요구사항(빈 값=랜덤, 값 있으면 그 시드)엔 과함 — "필요해지기 전엔 확장 안 함" 원칙 위반 |
+
+### Claude 제안
+- B안 권장 — 이 프로젝트가 반복적으로 증명한 습관(순수 로직 추출 → internal/public 정적 함수 →
+  테스트)과 정확히 같은 모양이라 새로운 패턴을 도입하지 않음. C안은 지금 스펙에 없는 UX까지
+  가정하는 오버엔지니어링으로 판단.
+
+### 선택한 방향
+- B안 채택. `RunConfig.TryParseSeedOverride`가 빈 문자열/공백/5자리 초과/음수/파싱 실패를 걸러
+  `bool`을 반환, `TitleScreenController`는 결과만 보고 `GameFlow.StartRun(archetype, seedOverride)`에
+  넘김.
+
+### 선택 이유
+- 프로젝트 전체가 이미 이 형태(데이터 파싱을 얇은 정적 함수로 분리)로 일관돼 있어 새 개발자나
+  이후 세션이 코드를 읽을 때 예측 가능함. C안의 "입력 UX 캡슐화"는 실제로 그런 요구(에러 표시,
+  실시간 검증 피드백 등)가 생기면 그때 SeedInputController로 승격해도 늦지 않음 — 지금은 3줄짜리
+  로직에 클래스 하나를 새로 만들 이유가 없음.
+
+### 관련 파일
+- `Assets/Scripts/Core/RunConfig.cs` (`TryParseSeedOverride`)
+- `Assets/Scripts/UI/TitleScreenController.cs`
+- `Assets/Scripts/Core/GameFlow.cs` (`StartRun` 오버로드)
+
+---
+
 ## 2026-09-09 (4) — 방 바닥 Z-파이팅 해소 + 적/아군 발사체 상호작용 기본값
 
 ### 배경 / 문제

@@ -30,6 +30,110 @@
 
 ---
 
+## 2026-09-10
+
+### 진행 내용
+
+**트랙 #2 Phase F — 시드 표시(일시정지/게임오버/층클리어) + 타이틀 시드 입력칸(같은 시드 재생)**
+- **시드 5자리 제한으로 전환**: `RunConfig`에 `MaxSeedDigits=5`/`MaxSeedValue=99999` 신규,
+  `DisplaySeed`(`"D5"` 포맷, 253→"00253") 프로퍼티 추가. `NewRandom`의 범위를 기존 [1, int.MaxValue)
+  (~21억)에서 [0, 99999]로 축소 — 화면에 뜨는 시드를 타이틀의 5자리 입력칸에 그대로 되입력할 수
+  있어야 "같은 시드 재생"이 성립하므로, 자동 생성 시드도 입력 가능 범위로 맞춤(유저 확정 사항).
+  `DebugOverlayController`(F1)도 `DisplaySeed`로 통일해 표시 포맷 불일치 방지.
+- **버튼 재사용 발견**: 씬 조사 중 `GameOverUI`의 재시작/타이틀 버튼이 이미 자체 핸들러가 아니라
+  공유 `PauseMenuButtons` 컴포넌트(pause 화면과 동일 컴포넌트, `ButtonsGroup`에 부착)로 배선돼
+  있었음을 확인. `FloorCompleteUI`만 유일하게 자체 `HandleRetryClicked`/`HandleToTitleClicked`로
+  중복 배선돼 있던 상태 → "교체" 요청을 이 기존 패턴에 맞추는 것으로 해석해 `FloorCompleteUI`의
+  중복 핸들러 제거, `ClearOverlayPanel`에 `PauseMenuButtons` 신규 부착(RetryButton/ToTitleButton
+  배선). 마지막 층에서만 보이는 기존 `isLastFloor` 표시 조건은 그대로 유지(요청 범위는 배선
+  방식 통일이지 표시 조건 변경이 아니라고 판단).
+- **`PauseMenuButtons`에 선택적 `seedText` 필드 추가**: 이미 pause/GameOverUI/FloorCompleteUI
+  3곳 전부에 이 컴포넌트가 붙어있어(위 재배선 포함), 시드 표시 로직을 3개 화면 클래스에 각각
+  추가하는 대신 이 컴포넌트 한 곳에 통합 — Awake()에서 1회 설정(런 중 시드 불변, `DebugOverlayController`
+  SEED 표시와 동일 근거). 3개 화면 각각에 `SeedText`(좌상단 anchor, cyan, `SEED: 00253` 포맷)
+  신규 생성 후 각 컴포넌트 인스턴스에 배선.
+- **타이틀 시드 입력칸**: `RunConfig.TryParseSeedOverride(text, out seed)` 신규(빈값/공백/5자리
+  초과/음수/파싱실패 → false, 성공 시 값 그대로 — "253"과 "00253"은 동일 값이므로 별도 변환 불필요).
+  `GameFlow.StartRun(archetype, seedOverride=null)` 오버로드, override 있으면 `NewRandom` 대신
+  그 값으로 `RunConfig` 생성. `TitleScreenController`에 `seedInputField` 필드 추가, Start 클릭
+  시점에 파싱해 캐릭터 선택 콜백에 캡처. 씬: `GameObject/UI (Canvas)/Legacy/Input Field` 메뉴로
+  표준 InputField 생성 후 TitleGroup으로 재배치, `contentType=IntegerNumber`/`characterLimit=5`,
+  placeholder "시드 (선택, 최대 5자리)". 파싱 위치 설계(대안 비교)는 `AI_Decision_Log.md`
+  2026-09-10 참고.
+
+**유저 피드백 반영 1 — FloorCompleteUI 버튼 "교체"의 실제 의미 정정 + 좌상단 배치**
+- 1차 구현 때는 "일시정지 UI 버튼으로 교체"를 배선 재사용(공유 `PauseMenuButtons` 컴포넌트)으로
+  해석했으나, 유저 확인 결과 실제 의도는 **일시정지 UI 버튼과 동일한 이미지(스프라이트)** 사용이었음.
+  `RetryButton`/`ToTitleButton`의 `Image.sprite`를 일시정지·GameOverUI와 동일한
+  `btn_restart_normal/over/pressed.png`·`btn_return_title_normal/over/pressed.png`로 교체,
+  `Button.transition=SpriteSwap` + `spriteState` 배선. 아트에 라벨이 이미 그려져 있어(GameOverUI
+  버튼들과 동일하게 별도 Text 라벨 없음) 기존 "다시하기"/"타이틀로" Text 자식은 삭제.
+- 3개 화면 시드 텍스트를 전부 좌상단(anchor/pivot 0,1)에 배치.
+
+**유저 피드백 반영 2 — 버튼 시각 버그 2건 발견/수정 (유저 실플레이 제보)**
+- **어두움 + hover/pressed 안 보임**: 원인 하나로 둘 다 설명됨 — `RetryButton`/`ToTitleButton`의
+  `Image.color`가 이전 흰 배경 사각형 시절의 잔재 틴트(0.2, 0.2, 0.2, 1)로 남아있었음. `SpriteSwap`은
+  스프라이트만 바꾸고 `Image.color`는 안 건드리므로 normal/hover/pressed 전부 20% 밝기로 눌려
+  보였던 것 → `Color.white`로 리셋.
+- **크기**: 220×60(레거시 값 그대로 방치) → 일시정지 UI와 동일한 300×100 + 좌표(0,-106)/(0,-209)로
+  통일.
+
+**유저 피드백 반영 3 — 시드 "?" 표시 버그 근본 원인 + 수정 (유저 실플레이 제보)**
+- 원인: `PauseMenuButtons`가 `Awake()`에서 `GameFlow.CurrentRun`을 읽는데, 이 값은
+  `StageManager.Awake()`(다른 루트 GameObject)가 `EnsureRun()`을 호출해야 채워짐(타이틀 거치지
+  않고 씬 직접 진입 시). `PauseMenuButtons`가 붙은 `ClearOverlayPanel`/`ButtonsGroup`은 씬 로드
+  시점부터 항상 active라 그 `Awake()`도 씬 로드 시점에 함께 도는데, **Unity는 서로 다른 루트
+  GameObject 간 `Awake()` 상대 순서를 보장하지 않음** — `StageManager.Awake()`보다 먼저 돌면
+  `CurrentRun`이 null인 채로 "SEED: ?"가 1회성 설정이라 그대로 고정돼버림.
+- 수정: 시드 텍스트 설정 로직만 `Awake()` → `Start()`로 이동(버튼 리스너 등록은 순서 의존이 없어
+  `Awake()`에 그대로 둠). Unity는 "씬의 모든 `Awake()`가 어떤 `Start()`보다도 먼저 끝난다"는 건
+  보장하므로 확실한 수정.
+
+**기타**
+- `Assets/Prefabs/Player.prefab`의 `CharacterSelectController.fallbackArchetype`:
+  `MeleeArchetype` → `RangedArchetype` (타이틀 거치지 않고 에디터에서 인게임 씬 바로 실행 시
+  기본 캐릭터를 원거리로 변경, 유저 요청). 씬에 별도 오버라이드 없어 프리팹 수정만으로 적용.
+- **F5/F6 디버그 키 신규**: `RoomFlowManager.DebugTriggerGameOver()`/`DebugTriggerLastFloorComplete()`
+  추가 — F5는 실제 `HandlePlayerDied()`를, F6은 `isLastFloor=true`로 강제한 것 말고는
+  `HandleFloorCompleted()`와 동일 로직을 그대로 호출(목업 아님, 실제 코드 경로 재사용이라 화면이
+  실제 플레이 결과와 100% 동일 + 드리프트 없음). `DebugOverlayActions.inputactions`에 액션 2개
+  추가, 기존 F1/F2와 동일한 always-enabled 액션맵 패턴(`DebugOverlayController`가 구독).
+  `PauseState.IsPaused`면 무시해 중복 트리거 방지. 죽거나 마지막 층까지 가지 않고도 게임오버/
+  층클리어 UI를 바로 확인 가능 — 위 두 버그 수정 검증에 바로 사용됨.
+
+### 테스트 결과
+- [x] 전체 재컴파일(테스트 어셈블리 포함) 콘솔 에러/경고 0 — 이후 각 수정 단계(버튼 비주얼,
+      Awake→Start, F5/F6)마다 재확인.
+- [x] `RunCommand` 배선 검증: 3개 화면의 `PauseMenuButtons.seedText`/`restartRunButton`/
+      `returnToTitleButton` 전부 non-null, `FloorCompleteUI.retryButton`/`toTitleButton`(표시
+      토글용) 유지, 버튼 sprite/size/color 값 전부 일시정지 UI와 일치 확인.
+- [x] `RunConfig` 동작 검증(`RunCommand`): `DisplaySeed` 253→"00253", `TryParseSeedOverride("253")`
+      =`TryParseSeedOverride("00253")`=253, 빈 문자열/6자리(999999) 거부, `NewRandom()` 결과가
+      항상 `MaxSeedValue` 이하.
+- [x] 타이틀 씬 재로드 후 `seedInputField` 배선 유지, `contentType`/`characterLimit` 값 확인.
+- [x] **유저 실플레이 확인 (F5/F6 디버그 키 활용)**: 일시정지/게임오버/층클리어 3화면 좌상단
+      시드 정상 표시(더 이상 "?" 아님), FloorCompleteUI 재시작/타이틀 버튼이 일시정지 UI와 동일한
+      크기·이미지·hover/pressed 표시로 정상 동작 — 전부 확인 완료.
+- [ ] **여전히 미확인**: 타이틀 화면 시드 입력칸에 값을 실제로 입력 → 그 시드로 던전이 재현되는지,
+      빈 칸으로 시작 시 기존처럼 랜덤 시드인지 — 이번 세션에서 별도 언급/확인 없었음.
+
+### 이슈/메모
+- 시드 공간을 21억 → 10만으로 줄인 것은 유저 명시 요청이지만, 절차적 생성의 실질 다양성에
+  영향 없음(레이아웃 다양성은 그래프 성장 알고리즘의 확률적 분기에서 나오지, 시드 공간 크기
+  자체에서 나오지 않음 — 10만 종도 사실상 무한히 다른 던전을 만듦).
+- **Awake() 순서 레이스 주의**: 이번 세션에서 실제로 걸린 버그 클래스라 일반화해서 남김 — 서로
+  다른 루트 GameObject의 `Awake()`가 서로의 상태를 읽는 코드는 Unity가 그 순서를 보장하지 않아
+  레이스가 생길 수 있음. 다른 오브젝트의 `Awake()`가 채운 상태를 읽어야 하면 `Start()`에서
+  읽을 것(씬 전체 Awake가 모든 Start보다 먼저 끝나는 건 보장됨). `PauseMenuButtons`/`GameFlow`
+  외에도 이런 패턴이 또 있을 수 있어 새 static/싱글톤 상태를 만들 때마다 염두에 둘 것.
+
+### 다음 작업
+- 타이틀 시드 입력 → 던전 재현 실플레이 확인 (위 미확인 항목)
+- 위 항목 통과 시 트랙 #2(절차적 생성) 전체 종료 → §6 다음 순번인 적 경로탐색(A*) + 방 안
+  장애물로 이동
+
+---
+
 ## 2026-09-09
 
 ### 진행 내용

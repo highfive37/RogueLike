@@ -171,6 +171,30 @@ public class RoomFlowManager : MonoBehaviour
         playerTransform.RotateAround(pivot, axis, DeathFallAngle - rotated);
     }
 
+    // Debug-only (F5/F6 via DebugOverlayController): pops the exact real result screen on
+    // demand, so it can be visually checked without actually dying or reaching the last floor.
+    // Routes through the same handlers the real events use rather than duplicating their
+    // pause/stats/UI-call logic, so the debug preview can never drift from the real thing.
+    public void DebugTriggerGameOver()
+    {
+        HandlePlayerDied();
+    }
+
+    public void DebugTriggerLastFloorComplete()
+    {
+        if (_playerDodgeRoll != null)
+        {
+            _playerDodgeRoll.CancelDodgeRoll();
+        }
+
+        if (_pickupNotificationUI != null)
+        {
+            _pickupNotificationUI.HideImmediate();
+        }
+
+        uiManager.ShowFloorComplete(BuildCurrentStats(), isLastFloor: true);
+    }
+
     // Shared by HandleFloorCompleted (win) and HandlePlayerDied (loss) - same run stats, just
     // shown on different result screens.
     private FloorCompleteUI.FloorCompleteStats BuildCurrentStats()

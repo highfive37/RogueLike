@@ -22,6 +22,7 @@ public class DebugOverlayController : MonoBehaviour
 
     [SerializeField] private InputActionAsset debugActions;
     [SerializeField] private Text fpsText;
+    [SerializeField] private RoomFlowManager roomFlowManager;
 
     // Read by other systems (e.g. FlamethrowerActiveItem's range visualizer) that only want
     // to draw debug-only geometry while this overlay is toggled on.
@@ -29,6 +30,8 @@ public class DebugOverlayController : MonoBehaviour
 
     private InputAction _toggleAction;
     private InputAction _enemyOneShotAction;
+    private InputAction _showGameOverAction;
+    private InputAction _showFloorCompleteAction;
     private Text _oneShotText;
     private Text _seedText;
     private bool _visible;
@@ -39,6 +42,8 @@ public class DebugOverlayController : MonoBehaviour
     {
         _toggleAction = debugActions.FindActionMap("Debug").FindAction("ToggleOverlay");
         _enemyOneShotAction = debugActions.FindActionMap("Debug").FindAction("ToggleEnemyOneShot");
+        _showGameOverAction = debugActions.FindActionMap("Debug").FindAction("DebugShowGameOver");
+        _showFloorCompleteAction = debugActions.FindActionMap("Debug").FindAction("DebugShowFloorComplete");
         IsDebugVisible = false;
         fpsText.gameObject.SetActive(false);
 
@@ -54,6 +59,8 @@ public class DebugOverlayController : MonoBehaviour
         debugActions.Enable();
         _toggleAction.performed += OnTogglePerformed;
         _enemyOneShotAction.performed += OnEnemyOneShotTogglePerformed;
+        _showGameOverAction.performed += OnShowGameOverPerformed;
+        _showFloorCompleteAction.performed += OnShowFloorCompletePerformed;
         HealthComponent.AnyDamageTaken += HandleAnyDamageTaken;
     }
 
@@ -61,6 +68,8 @@ public class DebugOverlayController : MonoBehaviour
     {
         _toggleAction.performed -= OnTogglePerformed;
         _enemyOneShotAction.performed -= OnEnemyOneShotTogglePerformed;
+        _showGameOverAction.performed -= OnShowGameOverPerformed;
+        _showFloorCompleteAction.performed -= OnShowFloorCompletePerformed;
         debugActions.Disable();
         HealthComponent.AnyDamageTaken -= HandleAnyDamageTaken;
     }
@@ -102,7 +111,7 @@ public class DebugOverlayController : MonoBehaviour
         // The run seed doesn't change mid-run, so just refresh it whenever the
         // overlay opens. "?" if entering the gameplay scene without a run config
         // (shouldn't happen - GameFlow.EnsureRun covers it).
-        _seedText.text = GameFlow.CurrentRun != null ? $"SEED: {GameFlow.CurrentRun.Seed}" : "SEED: ?";
+        _seedText.text = GameFlow.CurrentRun != null ? $"SEED: {GameFlow.CurrentRun.DisplaySeed}" : "SEED: ?";
         _seedText.gameObject.SetActive(_visible);
 
         _fpsFrames = 0;
@@ -115,6 +124,28 @@ public class DebugOverlayController : MonoBehaviour
         DebugDamage.EnemyOneShot = !DebugDamage.EnemyOneShot;
         _oneShotText.gameObject.SetActive(DebugDamage.EnemyOneShot);
         Debug.Log($"[DebugDamage] enemy one-shot = {DebugDamage.EnemyOneShot}");
+    }
+
+    // F5/F6 - also independent of the F1 overlay: pop the real GameOver/last-floor-clear screens
+    // on demand for a quick visual check, without playing through a death or a full run. Routes
+    // through RoomFlowManager's real handlers (see DebugTriggerGameOver/DebugTriggerLastFloorComplete),
+    // so what's shown is never a mock - it's the exact same screen a real run would produce.
+    // Guarded by PauseState.IsPaused so mashing the key (or pressing it while some other screen
+    // already owns the pause) can't stack duplicate triggers.
+    private void OnShowGameOverPerformed(InputAction.CallbackContext context)
+    {
+        if (roomFlowManager != null && !PauseState.IsPaused)
+        {
+            roomFlowManager.DebugTriggerGameOver();
+        }
+    }
+
+    private void OnShowFloorCompletePerformed(InputAction.CallbackContext context)
+    {
+        if (roomFlowManager != null && !PauseState.IsPaused)
+        {
+            roomFlowManager.DebugTriggerLastFloorComplete();
+        }
     }
 
     // Runtime-built (same approach as the damage numbers below) so it needs no scene wiring:

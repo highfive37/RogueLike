@@ -38,11 +38,14 @@ public static class GameFlow
     private const FloorSourceMode DefaultFloorSource = FloorSourceMode.Procedural;
 
     // Title "Start" -> an archetype was chosen -> load into gameplay with a fresh
-    // random-seeded run.
-    public static void StartRun(CharacterArchetypeData archetype)
+    // random-seeded run, unless the title screen's seed field parsed to an override
+    // (replaying a specific seed).
+    public static void StartRun(CharacterArchetypeData archetype, int? seedOverride = null)
     {
         PendingArchetype = archetype;
-        CurrentRun = RunConfig.NewRandom(DefaultFloorSource);
+        CurrentRun = seedOverride.HasValue
+            ? new RunConfig(seedOverride.Value, DefaultFloorSource)
+            : RunConfig.NewRandom(DefaultFloorSource);
         LoadScene(GameplayScene);
     }
 

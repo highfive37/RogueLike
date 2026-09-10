@@ -276,7 +276,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 87315da1abba592499bbaa3fff02cf34, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CharacterSelectController
-  fallbackArchetype: {fileID: 11400000, guid: b0c8433fd65d438da75d1e3c595557e2, type: 2}
+  fallbackArchetype: {fileID: 11400000, guid: 058e06c1b93f4428829dee6f357ba8c3, type: 2}
 --- !u!114 &476657865539516239
 MonoBehaviour:
   m_ObjectHideFlags: 0

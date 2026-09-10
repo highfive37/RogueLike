@@ -9,11 +9,12 @@ using UnityEngine.UI;
 // Time.timeScale at all - input lock + panel cover only - so boss death didn't truly freeze
 // the game, just blocked further play).
 //
-// Two outcomes depending on StageManager.IsLastFloor at Show() time: the last floor keeps the
-// original Retry button (full scene reload - see HandleRetryClicked). Any earlier floor instead
-// shows a 3-2-1 countdown and fires AutoAdvanceRequested when it hits 0 - RoomFlowManager owns
-// what happens next (the fade transition + StageManager.AdvanceToNextFloor()), this class only
-// signals the moment.
+// Two outcomes depending on StageManager.IsLastFloor at Show() time: the last floor keeps
+// retryButton/toTitleButton visible (click handling lives on the shared PauseMenuButtons
+// component attached to this panel, same as GameOverUI - not this class). Any earlier floor
+// instead shows a 3-2-1 countdown and fires AutoAdvanceRequested when it hits 0 -
+// RoomFlowManager owns what happens next (the fade transition + StageManager.AdvanceToNextFloor()),
+// this class only signals the moment.
 //
 // Visibility is a CanvasGroup toggle, NOT GameObject.SetActive, and this component's own
 // GameObject stays active for the whole scene. That matters: this class self-hides in Awake(),
@@ -56,11 +57,6 @@ public class FloorCompleteUI : MonoBehaviour
     private void Awake()
     {
         ApplyVisible(false);
-        retryButton.onClick.AddListener(HandleRetryClicked);
-        if (toTitleButton != null)
-        {
-            toTitleButton.onClick.AddListener(HandleToTitleClicked);
-        }
     }
 
     public void Show(FloorCompleteStats stats, bool isLastFloor)
@@ -145,18 +141,5 @@ public class FloorCompleteUI : MonoBehaviour
         canvasGroup.alpha = visible ? 1f : 0f;
         canvasGroup.interactable = visible;
         canvasGroup.blocksRaycasts = visible;
-    }
-
-    // Both buttons route through GameFlow, which calls PauseState.ForceResume() before loading -
-    // Time.timeScale is engine-global and a scene load does not reset it, so leaving this
-    // screen's pause in place would start the next scene frozen.
-    private void HandleRetryClicked()
-    {
-        GameFlow.RetryRun();
-    }
-
-    private void HandleToTitleClicked()
-    {
-        GameFlow.ReturnToTitle();
     }
 }

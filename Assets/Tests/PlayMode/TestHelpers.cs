@@ -74,10 +74,23 @@ namespace RogueLike.Tests
 
         public RoomController BuildRoom(Vector3 center, float roomSize)
         {
+            return BuildRoom(center, RoomFootprint.Square(roomSize));
+        }
+
+        public RoomController BuildRoom(Vector3 center, RoomFootprint footprint)
+        {
             var go = new GameObject("TEST_Room");
             go.transform.position = center;
             var room = go.AddComponent<RoomController>(); // pulls in RoomManager via RequireComponent
-            var data = new RoomData(1, RoomType.Combat, Vector2Int.zero, roomSize,
+            // BuildGeometry (Phase 2's tile-based room shell) needs a RoomTileSet -
+            // AddComponent alone doesn't wire the one Room_Base.prefab carries, so load
+            // the real asset directly (tests only run in-editor, matching this project's CI).
+#if UNITY_EDITOR
+            var tileSet = UnityEditor.AssetDatabase.LoadAssetAtPath<RoomTileSet>(
+                "Assets/Prefabs/RoomTiles/RoomTileSet_ModularSpace.asset");
+            SetPrivateField(room, "tileSet", tileSet);
+#endif
+            var data = new RoomData(1, RoomType.Combat, Vector2Int.zero, footprint,
                 Array.Empty<StageEnemyEntry>(), Array.Empty<RoomDoorConnection>());
             room.Initialize(data, null, null);
             return Track(room);

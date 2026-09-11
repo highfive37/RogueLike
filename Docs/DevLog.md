@@ -30,6 +30,365 @@
 
 ---
 
+## 2026-09-11
+
+### 진행 내용
+
+**유저 실플레이 피드백 반영 — 가로직사각형 방 크기 축소 + 문 오프셋 + 미니맵 모양 반영**
+- 유저가 3층 보스까지 실플레이 확인 후 요청. `WideRectDepth`(세로 폭) 28 → 24 → 20 → 16으로
+  단계별 축소(매번 재빌드 검증) — 16이 사실상 하한(코너 2개(4씩)+문폭(8)=16, 이보다 작으면 그
+  축엔 문 있는 방을 못 만듦). 현재 가로직사각형 = 44×16.
+- **직사각형/ㄱ자 방의 문을 중앙이 아닌 좌우(또는 상하) 한쪽으로 오프셋**: `RoomController.BuildSide`에
+  `offsetDoor` 파라미터 추가. 처음엔 가로직사각형의 South/North에만 적용했다가, 유저 요청으로
+  ㄱ자 방의 4변 전부(노치로 짧아진 변 포함)로 확장 — `offsetNorthSouthDoor = HasNotch || Width≠Depth`,
+  `offsetEastWestDoor = HasNotch`(가로직사각형은 East/West가 그대로 중앙 유지, ㄱ자만 전 방향
+  오프셋). 정사각형은 계속 중앙 고정. 어느 쪽에 붙을지는 `(RoomId*31 + direction) & 1`로 결정 —
+  새 RNG 스트림 없이 이미 시드로 결정된 RoomId를 그대로 써서 "같은 시드 = 같은 던전" 원칙 유지,
+  방마다 달라짐. 노치로 짧아진 변에서도 `runStart/runEnd` 기준으로 동일 공식이 그대로 성립함을
+  `RunCommand`로 4변(노치 짧아진 North/East + 전체 South/West) 전부 손계산과 대조해 확인.
+- **(별도 문의) 문이 한쪽 변에 2개(예: 북쪽만 2개) 있는 경우**: 유저가 물어봐서 규모를 설명함 —
+  이건 오프셋과 달리 `ProceduralFloorGenerator`의 격자 그래프 모델 자체를 바꿔야 하는 대공사(방
+  하나가 같은 방향에 서로 다른 이웃 2개를 가지려면 "방=칸 1개" 가정을 깨야 함). 구현은 보류,
+  유저 판단 대기 중.
+- **미니맵 방 모양 반영**: `MinimapUI`가 지금까지 모든 방을 24×24 고정 정사각형 아이콘으로
+  표시하던 것을 `RoomController.Footprint` 기반으로 교체. 정사각형/가로직사각형은 아이콘 1개를
+  Width:Depth 비율로 리사이즈(긴 변은 기존과 동일한 24, 짧은 변만 축소 — 인접 셀과 안 겹침).
+  ㄱ자는 `RoomController.BuildNotchWalls`/`BuildNotchCorners`와 같은 방식으로 노치를 뺀 2개의
+  겹치지 않는 직사각형으로 분해해 아이콘 조각 2개로 표시. `_iconsByRoomId`를 `Image`→`Image[]`로
+  바꿔 여러 조각의 색/표시 상태를 한번에 갱신.
+
+**Stage 2.5 후속 — §6 #3 착수 전 "방/장애물" 세부 계획 확정 + Phase 1(방 껍데기 타일화) 구현**
+- 유저 요청으로 "방/장애물 배치"와 "A* 경로탐색"을 분리(§6 #3), 그중 "방/장애물 배치"를 다시
+  "방 구성"과 "장애물 배치"로 나눠 이번 세션은 방 구성만 진행. 장애물(`cyberpunk_game_kit`)과
+  A* 경로탐색은 완전히 별도 작업으로 보류.
+- **설계 논의(Plan Mode)**: `RoomController.BuildGeometry`의 primitive(Plane/Cube) 방 껍데기를
+  `Assets/Art/Props/modular_space`(Kenney Modular Space Kit, CC0) 타일로 교체하는 안(A안: 런타임
+  절차적 타일 배치)과, 전투방 한정 가로직사각형/ㄱ자(L자) 모양 추가 안(대안2: 사각형 1~2개
+  합집합 모델, 바운딩박스+선택적 노치로 구체화)을 각각 2~3개 대안과 비교해 유저 승인받음.
+  계획 파일: `squishy-spinning-shore.md`(로컬 플랜 캐시). **이번 세션은 Phase 1(A안, 정사각형
+  방 껍데기 타일화)까지만 구현** — Phase 2(모양 다양화)는 다음 세션.
+- **타일 실측**(`RunCommand`로 임시 인스턴스화 → `Renderer.bounds` 측정): `template-floor`는
+  피벗이 중심(4×0×4), `template-corner`는 X/Z 모두 중심(4×4.25×4, 곡면 쿼터 코너 — 직선 2변이
+  아니라 라운드 벽이었음, `SceneView_CaptureMultiAngleSceneView`로 확인). `template-wall`(4×4.25×1)/
+  `template-wall-half`(2×4.05×1)는 두께축(로컬 Z)이 피벗 기준 -1~0으로 치우쳐 있어(중앙 정렬
+  아님) 배치 시 `outwardNormal * -0.5` 보정 필요 — 안 하면 벽 두께가 방 경계선에 안 맞고 밀림.
+- **DoorWidth 6→8 확정**: 어제 계산한 대로 3개 방 크기(16/20/40) 전부 코너+벽(4)+반벽(2) 조합으로
+  깔끔히 떨어짐(16: 문이 벽 구간 전체, 20: 반벽 1개씩, 40: 벽 3개씩). `WallHeight` 상수는 완전히
+  제거 — 이제 벽 높이가 코드 값이 아니라 타일 메시 자체(4.25)로 결정됨.
+- **신규 에셋**: `RoomTileSet`(신규 ScriptableObject, `Assets/Scripts/Room/RoomTileSet.cs`) —
+  코너/벽/반벽/바닥 프리팹을 직렬화 필드로 참조(Resources.Load 문자열 경로 대신 — unity63-architecture
+  스킬의 authored-definition 기준). `Assets/Prefabs/RoomTiles/`에 4개 타일 프리팹 생성, 각각
+  `BoxCollider` 추가(Kenney FBX는 콜라이더 없음) — 바닥은 얇은 콜라이더(Ground 레이어는 인스턴스
+  단위로 코드에서 부여), 벽/반벽은 실측 바운드 그대로, 코너는 곡면 벽을 두 개의 겹치는 박스(북쪽 변
+  + 서쪽 변)로 근사(`RoomBounds`의 클램프가 실질 충돌 안전망이라 정밀 피팅은 불필요 판단).
+  `RoomTileSet_ModularSpace.asset`으로 4개 프리팹 묶어 `Room_Base.prefab`에 배선.
+- **`RoomController.BuildGeometry`/`BuildSide` 전면 재작성**: 체커 바닥 텍스처/머티리얼 코드
+  전부 제거, 바닥은 코너 4칸을 제외한 나머지 그리드 셀에 `template-floor` 타일링, 코너는
+  `PlaceCorner`(4곳, 회전 0/90/180/270 — 기본 방향이 북+서쪽 벽이라 NE/SE/SW는 90도씩 회전),
+  벽은 `PlaceWallRun`(문 없는 변은 통짜 타일링, 문 있는 변은 문 폭 8 좌우로 벽/반벽 채움 후 기존
+  문 트리거/블로커/마커/EntryPoint 로직 재사용 — 이 부분은 안 건드림).
+
+**Phase 2(전투방 모양 다양화 — 가로직사각형/ㄱ자) 같은 세션에 이어서 구현**
+- **`RoomFootprint`**(신규 값 타입, `Assets/Scripts/Room/RoomFootprint.cs`): 바운딩박스(Width,
+  Depth) + 선택적 모서리 노치(`RoomCorner? NotchCorner`, NotchWidth, NotchDepth)로 방 모양을
+  표현. `Square`/`Rectangle`/`LShape` 팩토리. `RoomData.RoomSize`(float)는 `Footprint.Width`를
+  반환하는 하위호환 프로퍼티로 유지, 실제 지오메트리 코드는 전부 `Footprint`를 읽도록 전환
+  (`RoomData`/`RoomController`/`ProceduralFloorGenerator`/`GameFloors`/`TestHelpers` 전부 수정).
+- **`RoomBounds.cs`에 footprint 오버로드 추가**(기존 스칼라 오버로드는 그대로 유지, 회귀 없음):
+  1단계 바운딩박스 클램프(Width/Depth 축별) → 2단계 결과가 노치 내부면 가장 가까운 노치 안쪽
+  면으로 밀어냄. `RunCommand`로 직접 검증(정사각형 케이스가 기존 스칼라 API와 완전히 동일한
+  값을 내는지, 노치 안쪽 점이 정확한 안쪽 면으로 밀려나는지) 후 `RoomBoundsTests.cs`에 영구
+  테스트로 반영.
+- **`RoomController` 지오메트리 함수 확장**(`BuildFloor`/`BuildCorners`/`BuildSide`가 전부
+  `RoomFootprint`를 받도록): 노치가 있으면 바운딩박스 코너 4개 중 노치 쪽 1개는 스킵하고, 노치의
+  두 바깥 경계에 새 볼록 코너 2개(`BuildNotchCorners` — 회전은 노치 코너와 동일한 값을 재사용,
+  Phase 1 회전 매핑과 같은 원리로 유도됨) + 안쪽 오목(reflex) 코너 1개(전용 타일 없음 —
+  `template-wall`/`-half` 두 run이 직각으로 맞물리는 것으로 처리, `BuildNotchWalls`)를 추가.
+  노치에 걸리는 2변은 벽 run 길이가 짧아지고(문이 있으면 그 짧아진 구간 안에서 중앙 정렬 —
+  `BuildSide`를 대칭 `half` 대신 비대칭 `runStart/runEnd` 받도록 일반화), 바닥 타일링도 노치
+  영역 전체 + 새 코너 2칸을 스킵하도록 확장.
+- **`RoomShapeWeights`/`RoomShapeKind`**(`Assets/Scripts/Stage/`, `VariantWeights`와 동일 패턴):
+  전투방 한정, `ProceduralFloorGenerator`가 층별 규칙에서 뽑음(정사각형 40/가로직사각형 44×28/
+  ㄱ자 40×40+16×16 노치, 전부 4의 배수·이전에 확정한 문폭 8과 맞물림). ㄱ자의 노치 방향(4곳 중
+  하나)도 별도 시드 스트림(`roomShape.f{n}`)에서 랜덤 — 그래프/적 스트림과 분리돼 있어 모양
+  가중치를 바꿔도 던전 구조나 적 배치는 안 흔들림. `FloorRule`에 `RoomShapeWeights` 필드 추가,
+  `ProceduralRules.json`에 `roomShapeWeights` 신규 필드(없으면 정사각형 100%), 층별 실제 값 기입
+  (1층 square:6/wideRect:2/lShape:2 → 3층 square:3/wideRect:3/lShape:4, 층이 갈수록 다양해짐).
+  전투방 적 원형 배치 수식(`BuildCombatEnemies`)은 `Mathf.Min(Width,Depth)`로 보수적으로 유지 —
+  노치를 완전히 피하는 배치는 이번 범위 밖(안전망은 `ClampToInterior`, 후속 과제로 명시).
+  JSON 수동 방 정의(`GameFloors.cs`)는 이번엔 정사각형만 유지(신규 필드 추가 안 함) — 아무도 JSON
+  경로로 비정사각형 방을 만들 계획이 없어 범위를 줄임(계획 문서와의 유일한 의도적 축소).
+- **발견/수정**: `Assets/Tests/PlayMode/TestHelpers.cs`의 `BuildRoom`이 `AddComponent<RoomController>()`로
+  맨 컴포넌트만 만들고 `tileSet`을 안 채워주고 있었음 — Phase 1 때부터 있던 잠재 회귀(자동화
+  PlayMode 테스트가 `tileSet` null로 `BuildGeometry`에서 NRE 났을 것, 이번 세션 전까지 실행을
+  안 해서 못 잡았음). `RoomTileSet_ModularSpace.asset`을 `AssetDatabase.LoadAssetAtPath`로 로드해
+  리플렉션으로 주입하도록 수정.
+
+### 테스트 결과
+- [x] 재컴파일 콘솔 에러 0(`AssetDatabase.Refresh()` 후 확인).
+- [x] **좌표/회전 정확성 검증(`RunCommand`, Edit Mode)**: 두 크기(16, 20)로 합성 `RoomData`를
+      만들어 실제 `Initialize()` 호출 후 자식 오브젝트 로컬 좌표를 전수 확인.
+      - 20(문 있음): 코너 4곳 (±8,±8) 회전 0/90/180/270 정확, 문 없는 3변은 각 3개 벽타일
+        (x −4/0/4, z=±9.5 — 두께축 −0.5 보정 반영됨), 문 있는 변은 반벽 2개(x=±5)+문(x=0,
+        z=10) — 계산과 정확히 일치.
+      - 16(문 있음, "문이 벽 구간 전체를 차지"하는 경계 케이스): 문 없는 3변은 각 2개 벽타일,
+        문 있는 변(East)은 벽타일 0개(코너 바로 옆이 곧장 문) — `PlaceWallRun`의 0-길이 처리
+        정상 확인.
+      - Edit Mode에서 합성 테스트를 돌리다 보니 `Destroy(marker.GetComponent<BoxCollider>())`가
+        "Destroy may not be called from edit mode" 경고를 냄 — 기존 코드(안 건드림)가 Edit Mode
+        전용 API 오용, 실제 게임은 항상 Play Mode에서 호출되므로 무해. 별도 후속 과제로 남김
+        (사소하지만 `DestroyImmediate` 분기 추가가 정석).
+    - [x] **실제 Play Mode 확인**: 씬 진입 → 절차적 생성으로 8개 방(Start 16, Combat 40×5, Item 20,
+      Boss 40) 전부 타일로 생성, 콘솔 에러/경고 0. Start room `SceneView_CaptureMultiAngleSceneView`로
+      캡처 — 4×4 타일 바닥, 라운드 코너 4곳 전부 정상, 벽 이음새 시각적으로 깨끗함.
+    - [ ] **미확인**: 플레이어가 문을 실제로 통과하는지, 벽 콜라이더가 물리적으로 막는지는 이번
+      세션에서 자동 검증 못함(Play Mode 캐릭터 이동은 실유저 조작 필요) — 다음 실플레이 때 확인 필요.
+    - [ ] **미확인**: `RoomBoundsTests`/`ProceduralInvariantsTests` 등 자동화 테스트 스위트는
+      이번 세션에서 실행 안 함(Editor가 이미 MCP로 연결돼 있어 배치모드 2중 실행을 피함) — 다만
+      `RoomBounds.cs`/`RoomData.cs`는 이번 Phase에서 손대지 않아 회귀 위험은 낮다고 판단.
+
+**Phase 2 검증**
+- [x] 재컴파일 콘솔 에러 0(두 차례 — 코드 변경 직후, `ProceduralRules.json` 수정 직후).
+- [x] **`RoomBounds` footprint 클램프 직접 검증(`RunCommand`)**: 정사각형 footprint 결과가 기존
+      스칼라 API와 완전히 동일(회귀 없음 확인), 노치 안쪽 깊은 점이 정확한 안쪽 면 좌표로 밀려남,
+      노치 바로 바깥 점은 안 건드림, 메인 인테리어/남쪽벽 바깥 점은 기존과 동일하게 동작 —
+      `RoomBoundsTests.cs`에 동일 케이스 영구 테스트로 반영.
+- [x] **좌표 전수 검증(`RunCommand`, Edit Mode)**: 가로직사각형(44×28, 문 2개)과 ㄱ자(40×40,
+      NE 노치 16×16, 문 2개 — 하나는 노치로 짧아진 North변, 하나는 안 짧아진 West변)를 합성
+      `RoomData`로 만들어 자식 오브젝트 좌표 전수 확인. 코너 4곳(+ㄱ자는 노치 코너 2곳) 위치·회전,
+      각 변 벽/반벽 개수·위치, 짧아진 변의 문 중심이 그 변의 실제 가용 구간 중앙에 오는지, 노치의
+      두 안쪽 벽(오목 코너에서 만남) 길이·위치·회전까지 손계산과 전부 정확히 일치.
+- [x] **오목 코너 시각 확인(`SceneView_CaptureMultiAngleSceneView`)**: 전용 코너 메시가 없어
+      벽 두 run이 직각으로 맞물리는 방식이 실제로 깨끗하게 보이는지 확인 — 약간의 이음선은
+      보이지만 구멍/겹침 없이 자연스러운 벽 모서리로 보임(Phase 1의 볼록 코너 콜라이더 근사와
+      비슷한 수준의 타협, 문제 없다고 판단).
+- [x] **실제 Play Mode 확인**: 씬 진입 → 절차적 생성 층에 실제로 ㄱ자 전투방(NW 노치)이 섞여
+      나오는 것 확인, 콘솔 에러/경고 0. 해당 방을 게임 내 실제 컨텍스트에서 캡처 — 모양·문·바닥
+      전부 정상.
+- [ ] **미확인**(Phase 1과 동일 항목, 여전히 미해결): 플레이어 실조작으로 노치 구간 통과/충돌
+      확인, `RoomBoundsTests`/`ProceduralInvariantsTests` 자동화 테스트 스위트 실제 실행.
+
+### 이슈/메모
+- `template-corner`가 직선 2변이 아니라 곡면(쿼터 라운드) 코너라는 건 실측 bounds만으로는 안
+  드러남 — `SceneView_CaptureMultiAngleSceneView`로 실제 메시를 봐야 알 수 있었음. 좌표만 믿고
+  진행했으면 콜라이더 형태를 잘못 잡을 뻔함.
+- 코너 콜라이더(북쪽변+서쪽변 박스 근사)는 곡면을 정확히 감싸지 않음 — `RoomBounds` 클램프가
+  실질 충돌 방지 역할을 하므로 기능상 문제는 없다고 판단했지만, 코너 근처에서 플레이어가 시각적
+  메시보다 살짝 안쪽/바깥쪽에서 막히는 느낌이 들 수 있음. 실플레이 확인 후 필요하면 콜라이더
+  조정.
+- Ground 레이어: 코너 타일 전체(바닥+벽 아치)에 Ground 레이어를 부여 — 벽 아치 부분도 Ground로
+  잡혀서 `GrenadeActiveItem`의 착지 레이캐스트가 코너 벽에서도 히트할 수 있음(사소한 부정확,
+  기능적 문제는 아님).
+
+**문 오프셋/미니맵 검증**
+- [x] 재컴파일 콘솔 에러 0.
+- [x] 문 오프셋: `RunCommand`로 같은 44×16 방을 RoomId만 다르게(1, 2) 두 번 빌드 — 손계산한
+      두 분기(문이 서쪽에 붙는 경우/동쪽에 붙는 경우) 좌표와 정확히 일치, 실제로 RoomId에 따라
+      반대쪽에 붙는 것 확인.
+- [x] 미니맵: 실제 `MinimapIcon`/`MinimapConnector` 프리팹을 배선한 `MinimapUI`를 임시 Canvas에
+      만들고 정사각형/가로직사각형(44×16)/ㄱ자(NE 노치) 3방을 `Initialize()`에 넣어 생성된 모든
+      아이콘 조각의 `anchoredPosition`/`sizeDelta`를 손계산과 대조 — 전부 정확히 일치(ㄱ자는
+      조각 2개의 위치·크기까지).
+- [ ] **미확인**: 미니맵을 실제 게임 화면에서 스크린샷으로 확인은 못함 — 현재 `Prototype.unity`에
+      `MinimapUI` 컴포넌트가 씬에 존재하지 않음(`StageManager.minimapUI` 필드가 비어있거나 아직
+      씬에 배치 안 된 상태로 보임, 이번 변경과 무관한 기존 상태). 실제 화면 확인은 미니맵이 씬에
+      배선된 뒤 필요. **(유저가 이후 직접 게임 실행해서 미니맵 정상 표시 확인함 — 이 항목 해결됨.)**
+
+**Phase 3 — 진짜 멀티셀 방(아이작 방식 큰 방) 도입**
+- 유저가 실플레이 중 "아이작처럼 한쪽 변에 문이 2개인 방도 있지 않냐"고 질문 → 조사 결과 오늘
+  Phase 1/2의 가로직사각형/ㄱ자는 겉모습만 다른 **단일 칸** 방이었고, 아이작의 진짜 큰 방은 격자
+  칸을 2개(가로직사각형) 또는 3개(2x2에서 모서리 1개 뺀 ㄱ자)씩 차지하는 **멀티셀** 방이라는 게
+  이번 대화에서 명확해짐. Plan Mode로 계획 재수립(`squishy-spinning-shore.md` 덮어씀, 기존
+  Phase 1/2 계획은 소진된 상태였음) 후 구현.
+- **설계 핵심 — "그래프 재작성"이 아니라 "생성 후 병합 패스"**: `ProceduralFloorGenerator`의
+  격자 성장(flood-fill)·데드엔드/보스/아이템 판정은 전혀 안 건드림. 그 로직이 끝나 단일-셀
+  그래프가 확정된 *뒤에*, Combat-Combat 인접 쌍(또는 2x2에서 모서리 1개가 "아예 안 깔린" 삼중)을
+  골라 하나의 `RoomData`로 합치는 후처리 패스(`MergeCombatCells`)를 추가. 기존에 이미 검증된
+  성장/보스판정 로직을 재사용하므로 "대공사"라고 걱정했던 것보다 실제로는 수술 범위가 작았음.
+- **데이터 모델**: `RoomData.GridPosition`을 `Vector2Int` → `Vector2`로 승격(병합된 방은 구성
+  칸들의 평균 위치, 예: (0,0)+(1,0) 병합 → (0.5,0)). `RoomDoorConnection`에 `SubCellIndex`(0/1,
+  기본값 0) 추가 — 병합된 방의 한 변이 원래 칸 2개 몫이면 물리적 문 슬롯이 2개일 수 있어서,
+  어느 연결이 어느 슬롯(서/남=0, 동/북=1)인지 표시.
+- **`RoomController` — 방향당 문 여러 개**: `_doors`를 `Dictionary<DoorDirection, DoorController>`
+  →`Dictionary<(DoorDirection, int SubCellIndex), DoorController>`로 변경. `BuildSide`는 연결
+  중 `SubCellIndex!=0`이 하나라도 있으면 그 변을 중점에서 반으로 쪼개 **오늘 만든 "문 0/1개 +
+  오프셋" 로직을 각 절반에 독립적으로 재적용**(새 알고리즘이 아니라 기존 로직의 반복 호출).
+  `ConnectDoor(direction, subCellIndex, target)`으로 시그니처 확장.
+- **진짜 걸림돌 발견 및 수정 — `RoomTransitionController`**: `door.TargetRoom.GetDoor(Opposite(문
+  방향))`로 도착 문을 찾던 로직이 "반대 방향엔 문이 항상 하나뿐"이라는, 병합으로 깨지는 가정에
+  의존하고 있었음. `DoorController`에 `OwnerRoom`(이 문이 붙어있는 방, `Setup()` 시점에 주입)을
+  추가하고, 도착 문 조회를 "방향 기반"에서 "`TargetRoom`이 원래 있던 방을 가리키는 문 찾기"로
+  교체 — 방향당 문 개수 제한과 완전히 무관해짐.
+- **병합 크기**: 가로직사각형 92×40(칸 2개 몫, 2×50 격자 간격에서 여유 뺀 값), ㄱ자 바운딩박스
+  92×92 + 노치 44×44(칸 1개 몫 — 92−44−타일격자코너8=40, 짧은 두 변이 정확히 일반 방 폭과
+  같아짐). 오늘 단일-셀 시절의 44×16/40×40+16×16은 전부 폐기(같은 개념의 진짜 버전으로 대체,
+  두 갈래로 유지 안 함).
+
+### Phase 3 검증
+- [x] 재컴파일 콘솔 에러 0.
+- [x] **실제 시드로 병합 발생 확인(`RunCommand`, `ProceduralFloorSource` 직접 호출)**: 2000시드
+      스캔 — 가로직사각형(가로/세로 방향 둘 다), ㄱ자(NE/SE 등 여러 노치) 실제로 나옴. 각 사례의
+      `GridPosition`(분수 좌표), `Footprint` 치수, `SubCellIndex`까지 전부 손계산과 정확히 일치.
+      모든 사례에서 `FloorGraph.Validate` 통과(연결 재매핑이 실제로 올바르게 동작함을 확인).
+- [x] **문 왕복 조회 핵심 시나리오 직접 검증**: "한쪽 변에 같은 방향 문 2개"는 지금 격자 성장
+      알고리즘(성기게 자라는 방식)에서는 48,867개 방을 스캔해도 자연 발생 안 함(구조적으로
+      드묾/거의 없음 — 버그 아니라 성장 알고리즘의 성질) → 실제로 그 상황을 만들 실플레이
+      시나리오가 없어서, 직접 합성으로 검증: 병합 방 하나에 North 문 2개(SubCellIndex 0/1, 서로
+      다른 타겟)를 만들고 `ConnectDoor`로 연결 → 각 문의 `localPosition`이 정확히 서/동 절반에
+      위치, `RoomTransitionController.FindDoorTo`와 동일한 로직("TargetRoom으로 문 찾기")을
+      재현해 두 타겟 각각에 대해 정확히 반대쪽이 아닌 올바른 문을 찾아내는 것 확인 — 핵심 리스크
+      해소.
+- [x] **미니맵**: 실제 병합 방(분수 GridPosition, 92×40 footprint)을 `MinimapUI`에 넣어 아이콘
+      위치/크기가 손계산과 정확히 일치 확인.
+- [x] **EditMode 자동화 테스트 스위트 실제 실행**(오늘 계속 미뤄온 부채 — `TestRunnerApi`를
+      `RunCommand`로 직접 구동해 인프로세스로 실행, 별도 Unity 프로세스 안 띄움): 1차 실행 89개 중
+      2개 실패 — 둘 다 실제 문제 발견:
+      1. `EverySeed_RoomCounts_MatchTheRulesInUse_NoTrivialFallback`: 병합이 방 개수를 줄이므로
+         "개수가 규칙 범위 안"이라는 옛 가정이 깨짐(의도된 동작). 테스트를 상한 체크 + "트리비얼
+         폴백이면 모든 방 적 0마리"라는 진짜 판별 기준으로 교체(`EverySeed_RoomCounts_
+         StayWithinMax_AndNoTrivialFallback`).
+      2. `RoomBoundsTests`의 가로직사각형 클램프 테스트: 오늘 오전 Phase 2 때 내가 직접 쓴 테스트의
+         손계산 실수(`WallThickness/2` 항을 빼먹음, 21.4 아닌 20.9가 맞음) — 실제 코드 버그
+         아니었음, 테스트만 수정.
+      재실행 결과 89/89 전부 통과.
+- [x] **실제 Play Mode**: 절차적 생성 스캔으로 확인한 병합 사례들이 실제 게임 실행에서도 동일하게
+      나옴, 콘솔 에러 0.
+
+### 이슈/메모 (Phase 3)
+- **Unity MCP RunCommand 캐시 버그로 큰 시간 소모**: `RoomDoorConnection`/`RoomData` 두 파일에
+  새 생성자 인자/타입을 추가했는데 `RunCommand`가 몇 차례의 `AssetDatabase.Refresh()`/
+  `RequestScriptReload()`/Play Mode 재진입/강제 동기 리임포트에도 계속 옛 시그니처로 컴파일 →
+  나중에 알고 보니 **진짜 원인은 별개의 실제 컴파일 에러**(`ProceduralInvariantsTests.cs`가
+  `HashSet<Vector2Int>`에 새 `Vector2` `GridPosition`을 넣으려다 실패)였고, 이 에러가 콘솔에
+  `Type: "Log"`로 찍혀서 그동안 `Types: ["Error"]`로만 걸러보던 확인 방식이 계속 놓치고 있었음.
+  Play Mode도 이 에러 때문에 진입하자마자 자동으로 빠져나오고 있었음(증상: `ManageEditor
+  GetState`가 매번 `IsPlaying:false`). **교훈**: 컴파일 이상 의심될 때는 `Types` 필터링 없이
+  전체(`Error`+`Warning`+`Log`)를 봐야 함 — 다음에도 같은 함정에 빠지지 않도록 메모리에 남김.
+- 병합 후보 탐색은 Combat-Combat 인접 쌍만 보고, 2x2-빠진-모서리는 "4번째 칸이 아예 안 깔림"만
+  인정(다른 방이 거기 있는 경우는 후보에서 제외) — 더 공격적으로 병합하려면 나중에 확장 가능.
+- `BuildCombatEnemies`의 원형 적 배치 수식은 여전히 footprint 비인지형(`Mathf.Min(Width,Depth)`
+  사용, Phase 2부터 있던 known limitation) — 92×40처럼 가로세로 비율이 더 커진 병합 방에서는
+  적들이 짧은 축(40) 기준 원에 몰릴 수 있음. 안전망(`ClampToInterior`)은 여전히 작동하므로
+  기능적 버그는 아니지만, 후속 과제로 남음.
+
+**가로직사각형 좁은 폭 축소 + 좁은 면 문 중앙 고정 (유저 요청)**
+- `MergedWideShort` 40→16(가로직사각형의 짧은 축 — 코너 2개(8)+문폭(8)의 최소치, 오늘 세션 초반에
+  이미 확인한 하한과 동일한 값).
+- **버그 발견 및 수정**: 문 오프셋 여부를 "North/South면 오프셋, East/West면 중앙"으로 방향에
+  고정해서 판단하고 있었는데, 이건 가로 병합(긴 축=Width)에서만 맞고 **세로 병합(긴 축=Depth)에서는
+  거꾸로였음** — 세로 병합 방의 진짜 좁은 면(North/South, 길이=Width)이 오프셋되고 진짜 긴 면
+  (East/West, 길이=Depth)이 중앙 고정되는 반대 상황이었음. `Width>Depth`로 실제 긴 축을 판별해서
+  그 축을 따라 도는 두 변만 오프셋하도록 수정 — 방향이 아니라 실제 치수로 판단. ㄱ자(4변 전부
+  오프셋)는 그대로 안 건드림.
+- `RunCommand`로 가로(92×16)/세로(16×92) 두 방향 다 긴 축 문은 오프셋, 짧은 축 문은 중앙에 오는 것
+  손계산과 대조해 확인. 세로 병합 케이스는 이번에 고친 버그가 실제로 고쳐졌다는 증거이기도 함
+  (수정 전이었으면 반대로 나왔을 것).
+- EditMode 테스트 스위트 재실행 89/89 통과, 실제 Play Mode 콘솔 에러 0 재확인.
+
+**방 크기 추가 축소 (유저 요청 — 이동 시간이 너무 길다)**
+- `MergedWideLong`(가로직사각형 긴 축) 92 → 56 (40% 축소, 여전히 4단위 배수).
+- `CombatRoomSize`(일반 정사각형 전투방) 40 → 28 (30% 축소, 4단위 배수라 계산이 딱 떨어짐).
+  Boss/Start/Item 방은 요청 범위 밖이라 안 건드림. ㄱ자 병합 바운딩박스(92)/노치(44)도 이번엔
+  언급 안 하셔서 그대로 둠.
+- `RunCommand`로 56×16/28×28 새 크기 방을 직접 빌드해 문 오프셋·중앙 배치 좌표 손계산과 대조,
+  EditMode 테스트 89/89 재확인, 실제 Play Mode 콘솔 에러 0.
+
+**ㄱ자 방 축소 + 직사각형 긴 변 문 위치 개선 (유저 요청)**
+- 호칭 정리: 유저 요청으로 이 방 모양을 앞으로 "ㄱ자"로 통일해서 부르기로 함(메모리에도 기록,
+  `feedback_giyeok_room_naming.md`) — 코드/DevLog의 `RoomCorner`/"L-shape" 식별자는 그대로 유지.
+- **ㄱ자 방 축소**: `LMergeBounding` 92→44, `LMergeNotch` 44→20 — "일반 전투방(28) 크기의 150%
+  정도"로 해석해 28×1.5=42를 타일격자(4의 배수)에 맞춰 44로 반올림. 노치는 바운딩박스 대비 이전과
+  비슷한 비율(약 45%)로 유지해 ㄱ자 형태가 뚜렷하게 보이도록 20으로 설정 — 짧은 두 변은
+  44−20−8=16(문폭 최소치, `MergedWideShort`와 동일 값).
+- **직사각형 긴 변 문 배치 방식 변경**: 기존엔 문이 한쪽 벽에 완전히 붙는(반대쪽 여유가 전부 쏠리는)
+  방식이라 "양 끝에 너무 가깝다"는 피드백 → `BuildSideSegment`의 `offsetDoor` 분기를 "변을 반으로
+  나눠 그중 한쪽 구역의 중앙에 문 배치"로 교체(문 기준 좌우 여유가 항상 남게 됨). 이 로직은
+  ㄱ자 방의 오프셋 문(오늘 세션에서 4변 전부로 확장해뒀던 것)과 공유되는 코드라 ㄱ자 방의 문
+  배치도 같이 개선됨(정사각형은 원래도 중앙 고정이라 무관).
+- `RunCommand`로 새 ㄱ자(44×44, 노치 20×20, 4변 문)와 가로직사각형(56×16, RoomId 다른 두 개로
+  양쪽 절반 다 검증) 좌표 전부 손계산과 대조 확인. EditMode 테스트 89/89, 실제 Play Mode 콘솔
+  에러 0.
+
+**ㄱ자 방 출현빈도 문의 → 병합 알고리즘 2단계 재구성 + 가로직사각형 긴 변 36으로 조정 (유저 요청)**
+- 유저가 "3층까지 돌았는데 ㄱ자 방이 한 번도 안 나왔다, 확률을 낮게 잡아둔 거냐"고 문의 →
+  `RunCommand`로 200시드×3층 전수 스캔한 결과 원인은 확률 자체가 아니라 **뽑는 순서**였음:
+  기존 `MergeCombatCells`가 칸을 하나씩 순회하면서 그 자리에서 바로 Square/WideRect/LShape를
+  뽑다 보니, 앞서 뽑힌 WideRect가 옆 칸을 먼저 잡아먹어 버려서 뒤에 오는 칸이 ㄱ자에 필요한
+  "2x2 중 3칸이 비어있는" 조건을 만족 못 하게 되는 경우가 흔했음(특히 좁은 층일수록 심함 —
+  1층 적중률이 특히 낮았던 이유).
+- **2단계로 재구성(유저가 "2번"으로 승인)**: Phase A에서 병합 전 전체 Combat 칸을 먼저 스캔해
+  ㄱ자로 묶을 수 있는 모든 (모서리, 변 A, 변 B) 후보를 확률과 무관하게 전부 나열하고, 결정론적
+  순서(y→x→Notch)로 정렬한 뒤 각 후보를 독립적으로 `weights.LShape` 확률로 굴림 — 나머지
+  Square/WideRect는 기존처럼 Phase B에서 (LShape 제외하고 재정규화한 가중치로) 남은 칸에 한
+  번씩 순회. 핵심 알고리즘(격자 성장/데드엔드/보스판정)은 그대로, 병합 후처리 패스 내부
+  순서만 바뀐 것.
+- **재측정(200시드×3층, 총 2907개 Combat 방)**: ㄱ자 전체 출현율 10.9%(316개). 층별로는
+  1층 1.5%, 2층 9.2%, 3층 17.2% — 1층은 여전히 낮지만(칸이 적어 후보 자체가 드묾) 이전보다
+  뚜렷하게 개선됐고, 3개 층 전부에서 ㄱ자가 한 번도 안 나온 시드는 200개 중 26개(13%)뿐이라
+  "3층까지 못 봤다"는 피드백이 나올 확률 자체가 대폭 줄었음. `FloorGraph.Validate`는 200시드×3층
+  전부 통과(불변식 위반 0건).
+- **가로직사각형 긴 변 37→36 확정**: 유저가 37을 제안했으나 타일격자(4의 배수) 제약 때문에 36으로
+  조정 요청, 승인받음. `MergedWideLong` 56 → 36.
+- **타일 정렬 버그 발견 및 수정**: 36 적용 검증 중 기존 "문 중앙 배치(변을 반으로 나눠 그중
+  한쪽 구역 중앙)" 공식이 `L/4`(quarter-point) 기반이라 `L`이 8의 배수일 때만 타일(4/2단위) 정렬이
+  맞고, 8의 배수가 아니면(36 폭 방의 한 변인 28 등) `leftLength`가 3처럼 2의 배수가 아닌 값이
+  나와 벽 타일링에서 1유닛 틈이 생기는 걸 발견 — 이전에 "검증 완료"라고 보고했던 44 바운딩
+  ㄱ자도 문/코너 좌표만 확인했지 전체 벽 타일 커버리지는 확인 안 해서 같은 결함이 잠재해 있었음
+  (유저에게 사실대로 알리고 재작업). `BuildSideSegment`의 `offsetDoor` 공식을
+  `Mathf.Round(rawNearSideLength / HalfTileSize) * HalfTileSize`로 반올림-스냅하는 방식으로
+  교체 — 특정 배수 조건을 요구하는 대신 4의 배수이기만 하면 어떤 방 치수에도 안전하게 작동하는
+  일반해로 수정.
+- `RunCommand`로 36폭 가로직사각형과 44 바운딩 ㄱ자 양쪽 다 North/South/East/West 4변의
+  Wall_/WallHalf_/Door_ 자식 오브젝트 좌표를 전부 덤프해 `leftLength+DoorWidth+rightLength`가
+  각 변 전체 길이와 정확히 일치하는지(틈 0) 재확인 — 이번엔 문/코너뿐 아니라 벽 타일 전체를 검증.
+- EditMode 테스트 스위트 재실행 89/89 통과, 실제 Play Mode 콘솔 에러 0 재확인(진입 로그만 확인됨).
+
+**[버그 수정] 병합 방 잠긴 문 옆으로 빠져나갈 수 있는 벽 틈 (유저 실플레이 신고)**
+- 유저 신고: ㄱ자/가로직사각형 방에서 적이 있어 문이 잠겨 있을 때, 문 자체가 아니라 문 근처에서
+  캐릭터로 "비비면"(벽을 따라 비스듬히 밀면) 방 밖으로 빠져나갈 수 있다.
+- **원인 조사**: `RunCommand`로 실제 절차적 생성 결과(병합된 WideRect/ㄱ자 방)를 그대로
+  인스턴스화하고 모든 문을 강제로 `Lock()`한 뒤, 벽/문 콜라이더의 실제 월드 AABB를
+  변(side)별로 정렬해 인접한 두 콜라이더 사이에 물리적으로 빈틈이 있는지 전수 대조하는 방식으로
+  확인(처음엔 `Collider.bounds`를 그대로 썼다가 Edit Mode에서는 PhysX 바운드가 지연 갱신돼
+  전부 프리팹 기본값(-2~2)으로 나오는 함정에 걸려, `BoxCollider.center/size`를 트랜스폼으로
+  직접 월드 변환하는 방식으로 교체).
+- **실제 원인**: `RoomController.BuildSide`가 병합 방의 한 변을 2개 서브셀로 나눠 각각
+  `BuildSideSegment`를 호출할 때, 서브셀 내부의 문 배치는 `offsetDoor`를 항상 `false`로 넘겨
+  "그 절반 구간 안에서 중앙 배치"(`leftLength = rightLength = remain / 2f`)로 처리하는데, 이
+  분기는 결과값을 타일 격자(`HalfTileSize=2`)에 맞춰 반올림하지 않았음(오늘 세션 앞서 고친
+  `offsetDoor==true` 분기의 반올림 로직은 여기엔 적용 안 돼 있었음). 서브셀 절반 구간의 남는
+  길이(`remain`)가 4의 배수가 아닌 경우(예: 36폭 가로직사각형의 서브셀 절반 run=14 → remain=6 →
+  half=3) `PlaceWallRun`의 4단위/2단위 그리디 타일링이 2단위까지만 채우고 남은 1유닛을 그냥
+  건너뛰어서, **문 옆에 벽 타일이 아예 존재하지 않는 1유닛 폭의 실제 구멍**이 생겼음(문 콜라이더
+  자체는 정확한 위치/크기로 잠겨 있었음 — 문이 아니라 문과 벽 사이의 이 틈으로 빠져나간 것).
+  이 분기(서브셀 분할)는 한쪽 변에 서브셀 0/1 중 하나에만 문이 있어도(즉 "한 변에 문 2개"가
+  아니라 흔한 한 변에 문 1개짜리 병합 방에서도) 무조건 타는 경로라 영향 범위가 넓었음 — 현재
+  `MergedWideLong=36`/`LMergeBounding=44` 둘 다 8의 배수가 아니라서(서브셀 절반의 remain이
+  4의 배수가 되려면 전체 변 길이가 8의 배수여야 함) 사실상 모든 병합 가로직사각형/ㄱ자 방에서
+  재현 가능한 상태였음.
+- **수정**: `BuildSideSegment`의 `else`(서브셀 중앙 배치) 분기도 `offsetDoor` 분기와 동일하게
+  `Mathf.Round((remain/2f)/HalfTileSize)*HalfTileSize`로 반올림 후 나머지를 빼는 방식으로 교체 —
+  어떤 변 길이에도 안전한 일반해(문 위치가 절반 구간 정중앙에서 최대 1유닛 미세하게 밀릴 수
+  있지만 육안으로는 구분 안 됨, 틈은 항상 0).
+- **검증**: 수정 전 재현(200시드 내 WideRect/ㄱ자 실표본 1개씩 직접 빌드 → 서브셀 분할 변에서
+  실제로 1유닛 GAP 로그 확인) → 수정 후 300시드에서 병합 Combat 방 401개(그중 서브셀 분할 변을
+  가진 방 176개) 전수 재검사, 벽/문 콜라이더 틈 0건. EditMode 테스트 89/89 재통과, 실제 Play
+  Mode 콘솔 에러 0.
+
+### 다음 작업
+- 플레이어 실조작으로 문 통과·벽 충돌·ㄱ자 노치 구간 이동·문 오프셋·**병합 방 진입/문 왕복** 확인
+  — 이번 세션에서 자동 검증(합성 시나리오)은 마쳤지만 실유저 조작 확인은 아직. 특히 이번에 고친
+  "잠긴 문 옆 틈" 버그는 유저가 실제로 재현했던 케이스이니 다음 실플레이에서 재확인 필요.
+- ㄱ자 출현빈도 개선(10.9%, 1층 1.5%/2층 9.2%/3층 17.2%)은 자동 스캔으로 확인됨 — 유저가 직접
+  실플레이로 체감 개선 여부 재확인할 차례.
+- Phase 1/2/3 모두 완료. 이후는 사용자가 분리해둔 별도 작업: `cyberpunk_game_kit` 장애물 배치,
+  A* 경로탐색(§6 #3).
+- 후속 과제(급하지 않음): 코너 콜라이더를 곡면에 더 가깝게 다듬을지, `Destroy()`→`DestroyImmediate()`
+  Edit Mode 분기 추가할지, 전투방 적 원형 배치 수식을 footprint(특히 노치·병합 방) 인지형으로
+  개선할지, 2x2 통짜 메가룸(칸 4개) 추가할지.
+
+---
+
 ## 2026-09-10
 
 ### 진행 내용
@@ -101,6 +460,44 @@
   `PauseState.IsPaused`면 무시해 중복 트리거 방지. 죽거나 마지막 층까지 가지 않고도 게임오버/
   층클리어 UI를 바로 확인 가능 — 위 두 버그 수정 검증에 바로 사용됨.
 
+**§6 #3(A* 경로탐색 + 방 장애물) 착수 전 — 장애물/방 에셋 논의 (순수 리서치, 코드·씬 변경 없음)**
+- 유저가 Kenney.nl/Quaternius에서 에셋을 받아 `Assets/Art/Props/`에 배치(`cyberpunk_game_kit`,
+  `modular_space` 폴더). 각 폴더 `License.txt`로 실제 팩 정체 확인:
+  - `cyberpunk_game_kit` = Quaternius **"Ultimate Platformer Pack"**(폴더명과 실제 팩 이름이 다름
+    — 플랫포머 게임용 팩).
+  - `modular_space` = Kenney **"Modular Space Kit"**.
+- **1차 평가**: 둘 다 스타일이 기존 캐릭터 일러스트(코스믹/골드톤 애니메이션풍, `Assets/Art/UI/Character/`)와
+  거리가 있고, 스코프도 과함(장애물 하나 필요한데 캐릭터·적·복도까지 포함된 풀 킷) — 부적합 판정.
+- 유저가 "우주 컨셉만 느슨하게 맞으면 된다"로 조건 완화 → 재검토: 2D 포트레이트(메뉴)와 3D
+  인게임(현재 회색 캡슐)이 다른 레이어라 정합성 요구를 낮춰도 무방하다고 판단. 다만
+  `modular_space`의 완제품 방/복도(`room-*`/`corridor-*`)는 `RoomController`의 가변 크기+방향별
+  문 시스템과 구조적으로 충돌해 배제, 박스형 소품만 장애물로 한정 권장.
+- 유저가 GPT에게 같은 질문 → "`Ultimate Platformer Pack`의 Fence/Support/Pipe/Computer/AC/TV를
+  장애물로 쓰고 `Platform_*`(뜬 발판류)는 피하라"는 취지의 답변(장르 적합성 8/10, A* 테스트용
+  9/10 등 자체 평가 포함). `Platforms` 폴더 실제 파일명(`Platform_1x1_Empty` 등) 확인 결과 GPT
+  설명과 일치 — Claude의 1차 판정(부적합)과 결과적 사용 범위(장애물 소품 한정)는 거의 수렴.
+- Kenney/Quaternius 던전·SF 모듈러 킷 추가 검색(Modular Dungeon Kit, Tiny/Mini Dungeon, Modular
+  Sci-Fi MEGAKIT, Space Station Kit) 중 `modular_space`가 이미 Kenney Modular Space Kit임을
+  재확인(위 오분류 정정 계기).
+- **`modular_space`의 `template-*` 타일 실측 + 육안 확인**(`RunCommand`로 임시 임포트 →
+  `Renderer.bounds` 측정 + `SceneView_CaptureMultiAngleSceneView` 캡처 → 확인 후 전부 삭제, 씬
+  저장 안 함):
+  - `template-wall` 4.0×4.25×1.0 / `template-wall-half` 2.0×4.05×1.0 / `template-wall-corner`
+    1.0×4.05×1.0 / `template-floor` 4.0×~0×4.0 / `template-corner`(바닥+벽 통짜 코너 블록)
+    4.0×4.25×4.0.
+  - 방 크기(16/20/40)가 전부 4의 배수 → 타일 그리드(4유닛)와 정확히 맞음. `WallThickness`(게임
+    상수 1) ≈ 타일 실측(1.0), 거의 일치.
+  - **미해결 디테일 2가지**: (1) `WallHeight`(게임 3) vs 타일 실측(~4.25) 불일치 — 조정 필요.
+    (2) `DoorWidth`(6) 기준 세그먼트 길이가 16짜리 방에서 5가 나와 4/2/1 타일 조합으로 안 떨어짐
+    — `DoorWidth`를 8로 바꾸거나 방 크기를 재조정해야 타일이 깔끔히 맞음.
+  - 비주얼: 흰/회색 + 주황 포인트 + 남색 트림, 밝고 깔끔한 플랫셰이딩 톤 — 캐릭터 아트와 크게
+    안 튐(지난번 Quaternius 플랫포머 팩보다 톤 궁합 좋음).
+- **결론**: 새 에셋을 더 찾을 필요 없이 지금 갖고 있는 두 팩으로 진행 가능해 보임 —
+  `modular_space`(Kenney Modular Space Kit)의 `template-*` 타일로 방 벽/바닥,
+  `cyberpunk_game_kit`(Quaternius Ultimate Platformer Pack)의 Fence/Support/Pipe/Computer/AC/TV/
+  Sign을 장애물 소품으로(`Platform_*`/`Character`/`Enemies` 폴더는 배제). 대안 비교 상세는
+  `AI_Decision_Log.md` 2026-09-10 (2) 참고.
+
 ### 테스트 결과
 - [x] 전체 재컴파일(테스트 어셈블리 포함) 콘솔 에러/경고 0 — 이후 각 수정 단계(버튼 비주얼,
       Awake→Start, F5/F6)마다 재확인.
@@ -128,9 +525,18 @@
   외에도 이런 패턴이 또 있을 수 있어 새 static/싱글톤 상태를 만들 때마다 염두에 둘 것.
 
 ### 다음 작업
-- 타이틀 시드 입력 → 던전 재현 실플레이 확인 (위 미확인 항목)
-- 위 항목 통과 시 트랙 #2(절차적 생성) 전체 종료 → §6 다음 순번인 적 경로탐색(A*) + 방 안
-  장애물로 이동
+- 타이틀 시드 입력 → 던전 재현 실플레이 확인 (위 미확인 항목, 이월)
+- **다음 세션에서 "뭐부터 할까" 물으면 이렇게 답할 것 — §6 #3(A* 경로탐색 + 방 장애물) 착수 전
+  장애물/방 에셋 논의가 위 "장애물/방 에셋 논의" 항목만큼 이미 끝나 있으므로, 에셋을 또 찾지
+  말고 바로 구현 단계로 들어갈 것**:
+  1. `RoomController.BuildGeometry`를 `modular_space`의 `template-wall`/`template-wall-half`/
+     `template-wall-corner`/`template-floor`/`template-corner` 타일 조합으로 교체(또는 병행) —
+     `WallHeight`(3→~4.25)와 `DoorWidth`(6→8 검토) 조정 필요, 위 실측치 참고.
+  2. `cyberpunk_game_kit`의 Fence/Support/Pipe/Computer/AC/TV/Sign 중 일부를 콜라이더 포함
+     장애물 프리팹으로 만들어 방에 배치(`Platform_*`/`Character`/`Enemies` 폴더는 쓰지 않음).
+  3. 장애물 배치 후 기존 직선 추격(`EnemyChaseState`)이 실제로 막히는 상황을 만든 뒤 A*
+     길찾기 구현 착수 — 이 순서로 가면 "장애물 때문에 직선 추격의 한계가 드러나서 길찾기를
+     도입했다"는 자연스러운 개발 서사가 됨.
 
 ---
 

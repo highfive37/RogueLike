@@ -13,6 +13,7 @@ public readonly struct FloorRule
     public readonly int MinEnemiesPerCombatRoom;
     public readonly int MaxEnemiesPerCombatRoom;
     public readonly VariantWeights VariantWeights;
+    public readonly RoomShapeWeights RoomShapeWeights;
 
     public FloorRule(
         int minRooms,
@@ -20,7 +21,8 @@ public readonly struct FloorRule
         float itemRoomChance,
         int minEnemiesPerCombatRoom,
         int maxEnemiesPerCombatRoom,
-        VariantWeights variantWeights)
+        VariantWeights variantWeights,
+        RoomShapeWeights roomShapeWeights)
     {
         // Sanitise so a hand-edited-but-parseable rules file can't crash the
         // generator (Range() throws when min >= max, negatives break weights).
@@ -30,5 +32,6 @@ public readonly struct FloorRule
         MinEnemiesPerCombatRoom = Mathf.Max(0, minEnemiesPerCombatRoom);
         MaxEnemiesPerCombatRoom = Mathf.Max(MinEnemiesPerCombatRoom, maxEnemiesPerCombatRoom);
         VariantWeights = variantWeights;
+        RoomShapeWeights = roomShapeWeights;
     }
 }

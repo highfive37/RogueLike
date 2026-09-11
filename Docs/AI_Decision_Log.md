@@ -81,6 +81,49 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-10 (2) — 장애물/방 표현용 무료 에셋 선정 (§6 #3 착수 전)
+
+### 배경 / 문제
+- §6 #3(A* 경로탐색 + 방 장애물) 착수 전, 유저가 Kenney.nl/Quaternius에서 무료 CC0 에셋을
+  하나씩 받아와(`cyberpunk_game_kit`, `modular_space`) 프로젝트에 적용 가능한지 판단을 요청.
+  두 팩 다 실제로는 폴더명과 다른 정체(Quaternius "Ultimate Platformer Pack", Kenney "Modular
+  Space Kit")였고, 장애물(작은 소품)뿐 아니라 방 전체를 표현할 수 있는지까지 요구가 확장됨.
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 두 팩 전부 기각, 새로 중립적/던전풍 에셋 재탐색 | 스타일 마찰 최소화 | 이미 받은 에셋 낭비, 재탐색·재다운로드 시간 |
+| B. "우주 컨셉만 느슨하게" 허용 + 박스형 소품만 장애물로 한정, 방 구조는 기존 코드 유지 | 스코프 작고 안전, 캐릭터 아트와 톤 크게 안 어긋남 | 방 자체는 여전히 플레이스홀더(체커 바닥+큐브 벽) |
+| **C. `modular_space`의 `template-*` 조합형 타일로 방 벽/바닥까지 실제 대체, `cyberpunk_game_kit`은 소품(Fence/Support/Pipe 등)만 장애물로** | 이미 보유한 에셋으로 해결, 방 크기(16/20/40)가 타일 그리드(4유닛)와 정확히 맞음, `WallThickness` 게임 상수와 타일 실측이 거의 일치 | `WallHeight`/`DoorWidth` 조정 필요, 콜라이더 수동 부여 필요 — 순수 텍스처 교체보다 손이 감 |
+
+### Claude 제안
+- C안 채택 권장. `RunCommand`로 `template-wall`/`template-wall-half`/`template-wall-corner`/
+  `template-floor`/`template-corner`를 실제 임포트해 `Renderer.bounds`로 실측하고
+  `SceneView_CaptureMultiAngleSceneView`로 육안 확인한 결과, 조합형 타일(고정 완제품 방이 아님)
+  이 맞았고 크기·색감 모두 기존 시스템/아트와 호환 가능해 보임. `cyberpunk_game_kit`은 외부
+  검토(유저가 GPT에 동일 질문 → Fence/Support/Pipe/Computer/AC/TV는 장애물로, `Platform_*`류는
+  피하라는 답변)와도 수렴 — `Platforms` 폴더 실제 파일명(`Platform_1x1_Empty` 등) 확인으로 그
+  근거(플랫포머용 팩이 맞음)도 검증됨.
+
+### 선택한 방향
+- C안. 다음 세션에서 §6 #3 착수 시 새 에셋을 더 찾지 않고 바로 `RoomController.BuildGeometry`를
+  `modular_space` 타일 조합으로, 장애물을 `cyberpunk_game_kit` 소품으로 구현.
+
+### 선택 이유
+- A안은 이미 받은 에셋을 버리는 낭비고, 실제로 열어보니(License.txt, 실측, 스크린샷) 둘 다
+  기술적으로 쓸 만했음 — "안 맞아 보인다"는 1차 인상만으로 기각한 건 성급했음(초기 Claude
+  판정을 유저가 직접 GPT 크로스체크로 검증해 바로잡은 사례). B안은 안전하지만 방 자체가 계속
+  플레이스홀더로 남아 "아트 리소스 적용" 단계의 목적(primitives 교체)을 달성 못 함. C안은
+  실측으로 뒷받침된 구체적 미해결 항목(WallHeight/DoorWidth)까지 남겨둬서 다음 세션이 바로
+  구현에 들어갈 수 있음.
+
+### 관련 파일
+- `Assets/Art/Props/cyberpunk_game_kit/` (Quaternius Ultimate Platformer Pack)
+- `Assets/Art/Props/modular_space/` (Kenney Modular Space Kit)
+- `Assets/Scripts/Room/RoomController.cs` (다음 세션에서 `BuildGeometry` 교체 대상)
+
+---
+
 ## 2026-09-09 (4) — 방 바닥 Z-파이팅 해소 + 적/아군 발사체 상호작용 기본값
 
 ### 배경 / 문제

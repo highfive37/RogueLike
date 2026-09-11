@@ -9,23 +9,29 @@ public class RoomData
 {
     public int RoomId { get; }
     public RoomType Type { get; }
-    public Vector2Int GridPosition { get; }
-    public float RoomSize { get; }
+    // Float, not Vector2Int: an unmerged room sits at an integer cell as always,
+    // but a multi-cell merged room (Phase 3, see Docs/DevLog.md 2026-09-11) sits
+    // at the average of its constituent cells, which lands between them.
+    public Vector2 GridPosition { get; }
+    public RoomFootprint Footprint { get; }
+    // Bounding-box width, kept for callers that only ever cared about the square
+    // case (logging, etc.) - geometry-critical code should read Footprint instead.
+    public float RoomSize => Footprint.Width;
     public IReadOnlyList<StageEnemyEntry> Enemies { get; }
     public IReadOnlyList<RoomDoorConnection> Connections { get; }
 
     public RoomData(
         int roomId,
         RoomType type,
-        Vector2Int gridPosition,
-        float roomSize,
+        Vector2 gridPosition,
+        RoomFootprint footprint,
         IReadOnlyList<StageEnemyEntry> enemies,
         IReadOnlyList<RoomDoorConnection> connections)
     {
         RoomId = roomId;
         Type = type;
         GridPosition = gridPosition;
-        RoomSize = roomSize;
+        Footprint = footprint;
         Enemies = enemies;
         Connections = connections;
     }

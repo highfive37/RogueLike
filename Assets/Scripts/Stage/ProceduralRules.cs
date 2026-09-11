@@ -83,23 +83,29 @@ public static class ProceduralRules
     private static FloorRule ToRule(FloorRuleDto d)
     {
         VariantWeightsDto w = d.variantWeights ?? new VariantWeightsDto();
+        RoomShapeWeights shapeWeights = d.roomShapeWeights == null
+            ? RoomShapeWeights.SquareOnly
+            : new RoomShapeWeights(d.roomShapeWeights.square, d.roomShapeWeights.wideRect, d.roomShapeWeights.lShape);
         return new FloorRule(
             d.roomCount.min, d.roomCount.max,
             d.itemRoomChance,
             d.enemiesPerCombatRoom.min, d.enemiesPerCombatRoom.max,
-            new VariantWeights(w.melee, w.ranged, w.erraticMelee, w.burstRanged));
+            new VariantWeights(w.melee, w.ranged, w.erraticMelee, w.burstRanged),
+            shapeWeights);
         // FloorRule's constructor sanitises out-of-range numbers.
     }
 
     // Mirrors the hand-authored curve (see FloorN.json): floor 1 small/mostly
-    // melee, floor 3 large with a heavier ranged/burst mix.
+    // melee, floor 3 large with a heavier ranged/burst mix. Square-only shapes -
+    // this is the safety-net fallback for a missing/broken rules file, so it
+    // deliberately doesn't depend on the (separately-tunable) room shape mix.
     internal static List<FloorRule> Defaults()
     {
         return new List<FloorRule>
         {
-            new FloorRule(6, 8, 1.0f, 2, 4, new VariantWeights(5, 3, 1, 1)),
-            new FloorRule(9, 11, 1.0f, 4, 6, new VariantWeights(4, 4, 3, 2)),
-            new FloorRule(12, 14, 0.5f, 5, 8, new VariantWeights(3, 5, 3, 4)),
+            new FloorRule(6, 8, 1.0f, 2, 4, new VariantWeights(5, 3, 1, 1), RoomShapeWeights.SquareOnly),
+            new FloorRule(9, 11, 1.0f, 4, 6, new VariantWeights(4, 4, 3, 2), RoomShapeWeights.SquareOnly),
+            new FloorRule(12, 14, 0.5f, 5, 8, new VariantWeights(3, 5, 3, 4), RoomShapeWeights.SquareOnly),
         };
     }
 
@@ -116,6 +122,7 @@ public static class ProceduralRules
         public float itemRoomChance;
         public IntRange enemiesPerCombatRoom;
         public VariantWeightsDto variantWeights;
+        public RoomShapeWeightsDto roomShapeWeights;
     }
 
     [Serializable]
@@ -132,5 +139,13 @@ public static class ProceduralRules
         public int ranged;
         public int erraticMelee;
         public int burstRanged;
+    }
+
+    [Serializable]
+    private class RoomShapeWeightsDto
+    {
+        public int square;
+        public int wideRect;
+        public int lShape;
     }
 }

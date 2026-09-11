@@ -1,0 +1,18 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b975b0d8ff74bd146969889b5b6fe96a, type: 3}
+  m_Name: RoomTileSet_ModularSpace
+  m_EditorClassIdentifier: RogueLike::RoomTileSet
+  floorTile: {fileID: 8860879967942104934, guid: 9f07d47316005bd44bd5a781d3340e7e, type: 3}
+  wallTile: {fileID: 7503272863143856785, guid: e46fd902460f6e64c9d4a0d3b696b1ce, type: 3}
+  wallHalfTile: {fileID: 744439252096627232, guid: 49b611df1e9249a45b2b8db8ef5e166a, type: 3}
+  cornerTile: {fileID: 3539037519447306902, guid: 1c33c739abca64141bf56e4fe6d1d642, type: 3}

@@ -54,10 +54,26 @@ public class RoomTransitionController : MonoBehaviour
             return;
         }
 
-        DoorController arrivalDoor = door.TargetRoom.GetDoor(Opposite(door.Direction));
+        // Found by which room it leads back to, not by direction - a multi-cell
+        // merged room (Phase 3, see Docs/DevLog.md 2026-09-11) can have more than
+        // one door facing the same compass direction, so "the opposite-direction
+        // door" is no longer necessarily unique. TargetRoom identity always is.
+        DoorController arrivalDoor = FindDoorTo(door.TargetRoom, door.OwnerRoom);
         Vector3 arrivalPoint = arrivalDoor != null ? arrivalDoor.EntryPoint.position : door.TargetRoom.transform.position;
 
         StartCoroutine(TransitionRoutine(door.TargetRoom, arrivalPoint));
+    }
+
+    private static DoorController FindDoorTo(RoomController room, RoomController target)
+    {
+        foreach (DoorController d in room.Doors)
+        {
+            if (d.TargetRoom == target)
+            {
+                return d;
+            }
+        }
+        return null;
     }
 
     private IEnumerator TransitionRoutine(RoomController targetRoom, Vector3 arrivalPoint)
@@ -113,17 +129,6 @@ public class RoomTransitionController : MonoBehaviour
         foreach (Renderer r in playerRenderers)
         {
             r.enabled = visible;
-        }
-    }
-
-    private static DoorDirection Opposite(DoorDirection direction)
-    {
-        switch (direction)
-        {
-            case DoorDirection.North: return DoorDirection.South;
-            case DoorDirection.South: return DoorDirection.North;
-            case DoorDirection.East: return DoorDirection.West;
-            default: return DoorDirection.East;
         }
     }
 }

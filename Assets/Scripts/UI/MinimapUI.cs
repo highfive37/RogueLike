@@ -30,6 +30,11 @@ public class MinimapUI : MonoBehaviour
     [SerializeField] private float cellSpacing = 40f;
     [SerializeField] private float connectorThickness = 4f;
 
+    // Matches MinimapIcon.prefab's authored RectTransform.sizeDelta - a square/
+    // rectangle room's longer side maps to exactly this (same footprint as the
+    // old fixed-size icon), the shorter side shrinks proportionally.
+    private const float IconBaseSize = 24f;
+
     [SerializeField] private Color discoveredColor = new Color(0.35f, 0.35f, 0.35f, 0.7f);
     [SerializeField] private Color currentColor = Color.yellow;
     [SerializeField] private Color clearedColor = new Color(0.25f, 0.8f, 0.35f, 1f);
@@ -39,7 +44,10 @@ public class MinimapUI : MonoBehaviour
     [SerializeField] private Color connectorColor = new Color(0.6f, 0.6f, 0.6f, 0.6f);
 
     private readonly Dictionary<int, RoomController> _roomsById = new Dictionary<int, RoomController>();
-    private readonly Dictionary<int, Image> _iconsByRoomId = new Dictionary<int, Image>();
+    // 1 image for a square/rectangle room, 2 for an L-shape (its two non-overlapping
+    // sub-rectangles - see BuildIcons) - all images of a room always share one color/
+    // visibility state, so every read/write below just loops the array.
+    private readonly Dictionary<int, Image[]> _iconsByRoomId = new Dictionary<int, Image[]>();
     private readonly Dictionary<int, RevealState> _revealByRoomId = new Dictionary<int, RevealState>();
     private readonly Dictionary<(int, int), Image> _connectorsByPair = new Dictionary<(int, int), Image>();
 
@@ -98,23 +106,63 @@ public class MinimapUI : MonoBehaviour
         _currentRoomId = -1;
     }
 
-    private Vector2 GridToLocal(Vector2Int gridPosition)
+    private Vector2 GridToLocal(Vector2 gridPosition)
     {
-        return new Vector2(gridPosition.x, gridPosition.y) * cellSpacing;
+        return gridPosition * cellSpacing;
     }
 
+    // One icon piece per room for a square/rectangle footprint (sized to its
+    // Width/Depth aspect ratio instead of always a uniform square); an L-shape
+    // footprint gets two pieces, decomposed into its two non-overlapping
+    // sub-rectangles the same way RoomController's own BuildNotchWalls/
+    // BuildNotchCorners think about the shape (see Docs/DevLog.md 2026-09-11) -
+    // a full-width strip on the non-notched side, plus the remaining column
+    // beside the notch.
     private void BuildIcons(IEnumerable<RoomController> rooms)
     {
         foreach (RoomController room in rooms)
         {
-            GameObject iconObj = Instantiate(iconPrefab, _content);
-            iconObj.name = $"RoomIcon_{room.RoomId}";
+            RoomFootprint fp = room.Footprint;
+            Vector2 basePos = GridToLocal(room.GridPosition);
+            float scale = IconBaseSize / Mathf.Max(fp.Width, fp.Depth);
 
-            RectTransform rt = (RectTransform)iconObj.transform;
-            rt.anchoredPosition = GridToLocal(room.GridPosition);
+            if (fp.HasNotch)
+            {
+                int signX = fp.NotchSignX;
+                int signZ = fp.NotchSignZ;
 
-            _iconsByRoomId[room.RoomId] = iconObj.GetComponent<Image>();
+                Vector2 offsetA = new Vector2(0f, -signZ * fp.NotchDepth / 2f);
+                Vector2 sizeA = new Vector2(fp.Width, fp.Depth - fp.NotchDepth);
+
+                Vector2 offsetB = new Vector2(-signX * fp.NotchWidth / 2f, signZ * (fp.Depth - fp.NotchDepth) / 2f);
+                Vector2 sizeB = new Vector2(fp.Width - fp.NotchWidth, fp.NotchDepth);
+
+                _iconsByRoomId[room.RoomId] = new[]
+                {
+                    SpawnIconPiece($"RoomIcon_{room.RoomId}_A", basePos, offsetA, sizeA, scale),
+                    SpawnIconPiece($"RoomIcon_{room.RoomId}_B", basePos, offsetB, sizeB, scale),
+                };
+            }
+            else
+            {
+                _iconsByRoomId[room.RoomId] = new[]
+                {
+                    SpawnIconPiece($"RoomIcon_{room.RoomId}", basePos, Vector2.zero, new Vector2(fp.Width, fp.Depth), scale),
+                };
+            }
         }
+    }
+
+    private Image SpawnIconPiece(string name, Vector2 basePos, Vector2 offsetWorldUnits, Vector2 sizeWorldUnits, float scale)
+    {
+        GameObject iconObj = Instantiate(iconPrefab, _content);
+        iconObj.name = name;
+
+        RectTransform rt = (RectTransform)iconObj.transform;
+        rt.anchoredPosition = basePos + offsetWorldUnits * scale;
+        rt.sizeDelta = sizeWorldUnits * scale;
+
+        return iconObj.GetComponent<Image>();
     }
 
     private void BuildConnectors(IEnumerable<RoomController> rooms)
@@ -210,41 +258,57 @@ public class MinimapUI : MonoBehaviour
 
     private void RefreshIcon(RoomController room)
     {
-        Image image = _iconsByRoomId[room.RoomId];
+        Image[] images = _iconsByRoomId[room.RoomId];
         RevealState reveal = _revealByRoomId[room.RoomId];
 
         if (reveal == RevealState.Hidden)
         {
-            image.gameObject.SetActive(false);
+            SetActive(images, false);
             return;
         }
 
-        image.gameObject.SetActive(true);
+        SetActive(images, true);
 
         if (reveal == RevealState.Discovered)
         {
-            image.color = discoveredColor;
+            SetColor(images, discoveredColor);
             return;
         }
 
         if (room.RoomId == _currentRoomId)
         {
-            image.color = currentColor;
+            SetColor(images, currentColor);
             return;
         }
 
         if (room.IsCleared)
         {
-            image.color = room.RoomType switch
+            SetColor(images, room.RoomType switch
             {
                 RoomType.Start => startClearedColor,
                 RoomType.Boss => bossClearedColor,
                 RoomType.Item => itemClearedColor,
                 _ => clearedColor,
-            };
+            });
             return;
         }
 
-        image.color = discoveredColor;
+        SetColor(images, discoveredColor);
+    }
+
+    private static void SetActive(Image[] images, bool active)
+    {
+        foreach (Image image in images)
+        {
+            image.gameObject.SetActive(active);
+        }
+    }
+
+    private static void SetColor(Image[] images, Color color)
+    {
+        foreach (Image image in images)
+        {
+            image.color = color;
+        }
     }
 }

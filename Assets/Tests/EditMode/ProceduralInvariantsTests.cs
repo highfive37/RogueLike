@@ -77,7 +77,7 @@ namespace RogueLike.Tests
                 foreach (FloorLayout f in new ProceduralFloorSource(seed).Floors)
                 {
                     var ids = new HashSet<int>();
-                    var cells = new HashSet<Vector2Int>();
+                    var cells = new HashSet<Vector2>();
                     foreach (RoomData r in f.Rooms)
                     {
                         Assert.That(ids.Add(r.RoomId), Is.True, $"seed {seed} floor {f.FloorNumber}: duplicate id {r.RoomId}");
@@ -88,20 +88,38 @@ namespace RogueLike.Tests
         }
 
         [Test]
-        public void EverySeed_RoomCounts_MatchTheRulesInUse_NoTrivialFallback()
+        public void EverySeed_RoomCounts_StayWithinMax_AndNoTrivialFallback()
         {
-            // The trivial fallback produces exactly 3 rooms, well below every rule's
-            // minimum - so "count within [min, max]" also proves the fallback never
-            // fired. Rule bounds come from the same source the generator used
-            // (ProceduralRules.json, or its built-in defaults if absent).
+            // Phase 3's multi-cell merge (see Docs/DevLog.md 2026-09-11) can
+            // legitimately shrink the final room count below rule.MinRooms - two
+            // or three grown grid cells become one room - so "count in
+            // [min,max]" no longer proves the trivial fallback didn't fire.
+            // Merging only ever reduces the grown cell count, so the upper bound
+            // still holds; for the lower bound, check the trivial fallback's real
+            // giveaway instead - every one of its rooms has zero enemies
+            // (Array.Empty in TrivialLine), while a real floor's combat/boss
+            // rooms always have at least one (every authored rule's
+            // MinEnemiesPerCombatRoom >= 1).
             for (int seed = 0; seed < Seeds; seed++)
             {
                 var floors = new ProceduralFloorSource(seed).Floors;
                 for (int i = 0; i < floors.Count; i++)
                 {
                     FloorRule rule = ProceduralRules.ForFloor(i + 1);
-                    Assert.That(floors[i].Rooms.Count, Is.InRange(rule.MinRooms, rule.MaxRooms),
-                        $"seed {seed} floor {i + 1}: {floors[i].Rooms.Count} rooms (rule {rule.MinRooms}-{rule.MaxRooms})");
+                    string where = $"seed {seed} floor {i + 1}";
+
+                    Assert.That(floors[i].Rooms.Count, Is.LessThanOrEqualTo(rule.MaxRooms), where);
+
+                    bool anyEnemies = false;
+                    foreach (RoomData r in floors[i].Rooms)
+                    {
+                        if (r.Enemies.Count > 0)
+                        {
+                            anyEnemies = true;
+                            break;
+                        }
+                    }
+                    Assert.That(anyEnemies, Is.True, where + ": no room has enemies - looks like the trivial fallback fired");
                 }
             }
         }
@@ -116,11 +134,17 @@ namespace RogueLike.Tests
                     foreach (RoomData r in f.Rooms)
                     {
                         if (r.Type != RoomType.Combat) { continue; }
-                        float limit = RoomBounds.InteriorHalfExtent(r.RoomSize, RoomBounds.WallThickness, 0.5f);
+                        // Per-axis (Phase 2: combat rooms can be wideRect/L-shape, not just
+                        // square). Doesn't assert notch exclusion - the ring-placement math
+                        // isn't notch-aware yet, RoomController.ClampToInterior is the real
+                        // safety net at spawn time (see BuildCombatEnemies, Docs/DevLog.md
+                        // 2026-09-11); the notch clamp itself is covered by RoomBoundsTests.
+                        float limitX = RoomBounds.InteriorHalfExtent(r.Footprint.Width, RoomBounds.WallThickness, 0.5f);
+                        float limitZ = RoomBounds.InteriorHalfExtent(r.Footprint.Depth, RoomBounds.WallThickness, 0.5f);
                         foreach (StageEnemyEntry e in r.Enemies)
                         {
-                            Assert.That(Mathf.Abs(e.SpawnPosition.x), Is.LessThanOrEqualTo(limit + 0.01f), $"seed {seed}");
-                            Assert.That(Mathf.Abs(e.SpawnPosition.z), Is.LessThanOrEqualTo(limit + 0.01f), $"seed {seed}");
+                            Assert.That(Mathf.Abs(e.SpawnPosition.x), Is.LessThanOrEqualTo(limitX + 0.01f), $"seed {seed}");
+                            Assert.That(Mathf.Abs(e.SpawnPosition.z), Is.LessThanOrEqualTo(limitZ + 0.01f), $"seed {seed}");
                         }
                     }
                 }

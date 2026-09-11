@@ -23,14 +23,20 @@ public class DoorController : MonoBehaviour
 
     public DoorDirection Direction { get; private set; }
     public Transform EntryPoint { get; private set; }
+    // The room this door was built on - set once at Setup() time so
+    // RoomTransitionController can identify "which room does this door belong
+    // to" without walking the transform hierarchy (Phase 3, see Docs/DevLog.md
+    // 2026-09-11 - needed once a room's side can carry more than one door).
+    public RoomController OwnerRoom { get; private set; }
     public RoomController TargetRoom { get; private set; }
     public bool IsConnected => TargetRoom != null;
     public bool IsLocked { get; private set; } = true;
 
     public event Action<DoorController> PassedThrough;
 
-    public void Setup(DoorDirection direction, Renderer markerRenderer, Collider blocker, Transform entryPoint)
+    public void Setup(RoomController ownerRoom, DoorDirection direction, Renderer markerRenderer, Collider blocker, Transform entryPoint)
     {
+        OwnerRoom = ownerRoom;
         Direction = direction;
         _markerRenderer = markerRenderer;
         _blocker = blocker;

@@ -175,7 +175,7 @@ public class StageManager : MonoBehaviour
             {
                 if (_roomsById.TryGetValue(connection.TargetRoomId, out RoomController target))
                 {
-                    room.ConnectDoor(connection.Direction, target);
+                    room.ConnectDoor(connection.Direction, connection.SubCellIndex, target);
                 }
                 else
                 {

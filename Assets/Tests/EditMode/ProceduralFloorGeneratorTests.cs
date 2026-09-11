@@ -12,10 +12,12 @@ namespace RogueLike.Tests
     {
         private static FloorRule Rule(
             int minRooms = 8, int maxRooms = 12, float itemChance = 1f,
-            int minEnemies = 2, int maxEnemies = 4, VariantWeights? weights = null)
+            int minEnemies = 2, int maxEnemies = 4, VariantWeights? weights = null,
+            RoomShapeWeights? shapeWeights = null)
         {
             return new FloorRule(minRooms, maxRooms, itemChance, minEnemies, maxEnemies,
-                weights ?? new VariantWeights(1, 1, 1, 1));
+                weights ?? new VariantWeights(1, 1, 1, 1),
+                shapeWeights ?? RoomShapeWeights.SquareOnly);
         }
 
         private static readonly FloorRule P = Rule();
@@ -230,11 +232,12 @@ namespace RogueLike.Tests
                 foreach (RoomData room in Gen(seed, 1, P).Rooms)
                 {
                     if (room.Type != RoomType.Combat) { continue; }
-                    float limit = RoomBounds.InteriorHalfExtent(room.RoomSize, RoomBounds.WallThickness, 0.5f);
+                    float limitX = RoomBounds.InteriorHalfExtent(room.Footprint.Width, RoomBounds.WallThickness, 0.5f);
+                    float limitZ = RoomBounds.InteriorHalfExtent(room.Footprint.Depth, RoomBounds.WallThickness, 0.5f);
                     foreach (StageEnemyEntry e in room.Enemies)
                     {
-                        Assert.That(Mathf.Abs(e.SpawnPosition.x), Is.LessThanOrEqualTo(limit + 0.01f), $"seed {seed}");
-                        Assert.That(Mathf.Abs(e.SpawnPosition.z), Is.LessThanOrEqualTo(limit + 0.01f), $"seed {seed}");
+                        Assert.That(Mathf.Abs(e.SpawnPosition.x), Is.LessThanOrEqualTo(limitX + 0.01f), $"seed {seed}");
+                        Assert.That(Mathf.Abs(e.SpawnPosition.z), Is.LessThanOrEqualTo(limitZ + 0.01f), $"seed {seed}");
                     }
                 }
             }

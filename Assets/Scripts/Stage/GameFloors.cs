@@ -202,6 +202,9 @@ public static class GameFloors
             throw new Exception($"room {dto.roomId}: unknown roomType '{dto.roomType}' (expected Start/Combat/Boss/Item).");
         }
 
+        // JSON-authored rooms are always square for now - Phase 2's wideRect/L-shape
+        // combat variety only comes from ProceduralFloorGenerator (see Docs/DevLog.md
+        // 2026-09-11); nothing hand-authors non-square rooms via this debug path yet.
         float size = dto.roomSize > 0f ? dto.roomSize : 40f;
 
         var enemies = new List<StageEnemyEntry>();
@@ -232,7 +235,7 @@ public static class GameFloors
             }
         }
 
-        return new RoomData(dto.roomId, type, dto.gridPosition, size, enemies, connections);
+        return new RoomData(dto.roomId, type, dto.gridPosition, RoomFootprint.Square(size), enemies, connections);
     }
 
     private static bool TryParseEnum<T>(string value, out T result) where T : struct
@@ -250,11 +253,11 @@ public static class GameFloors
         int combatId = baseId + 2;
         int bossId = baseId + 3;
 
-        var start = new RoomData(startId, RoomType.Start, new Vector2Int(0, 0), 16f,
+        var start = new RoomData(startId, RoomType.Start, new Vector2Int(0, 0), RoomFootprint.Square(16f),
             Array.Empty<StageEnemyEntry>(),
             new[] { new RoomDoorConnection(DoorDirection.East, combatId) });
 
-        var combat = new RoomData(combatId, RoomType.Combat, new Vector2Int(1, 0), 40f,
+        var combat = new RoomData(combatId, RoomType.Combat, new Vector2Int(1, 0), RoomFootprint.Square(40f),
             new[]
             {
                 new StageEnemyEntry(EnemyVariantType.Melee, new Vector3(6f, 1f, 0f)),
@@ -266,7 +269,7 @@ public static class GameFloors
                 new RoomDoorConnection(DoorDirection.East, bossId),
             });
 
-        var boss = new RoomData(bossId, RoomType.Boss, new Vector2Int(2, 0), 40f,
+        var boss = new RoomData(bossId, RoomType.Boss, new Vector2Int(2, 0), RoomFootprint.Square(40f),
             new[] { new StageEnemyEntry(EnemyVariantType.Boss, new Vector3(-10f, 1.5f, 10f)) },
             new[] { new RoomDoorConnection(DoorDirection.West, combatId) });
 

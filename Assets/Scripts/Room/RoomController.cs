@@ -25,12 +25,16 @@ public class RoomController : MonoBehaviour
 
     [SerializeField] private Material doorMarkerMaterial;
     [SerializeField] private RoomTileSet tileSet;
+    [SerializeField] private RoomObstacleSet obstacleSet;
 
     private RoomManager _roomManager;
     private RoomData _roomData;
     private EnemySpawner _enemySpawner;
     private ItemDropManager _itemDropManager;
     private bool _isActivated;
+    // Local-space AABB per placed obstacle, fed to RoomObstacleBounds by ClampToInterior -
+    // built once in BuildObstacles() rather than re-measured from colliders every call.
+    private readonly List<Bounds> _obstacleBounds = new List<Bounds>();
     // Keyed by (direction, sub-cell slot) rather than just direction - a
     // multi-cell merged room's side can carry up to 2 doors (Phase 3, see
     // Docs/DevLog.md 2026-09-11); an ordinary single-cell room only ever uses
@@ -76,6 +80,7 @@ public class RoomController : MonoBehaviour
         Footprint = data.Footprint;
 
         BuildGeometry(data);
+        BuildObstacles(data);
     }
 
     // World<->local wrappers around the pure RoomBounds math (which is unit-tested
@@ -88,6 +93,7 @@ public class RoomController : MonoBehaviour
     {
         Vector3 local = transform.InverseTransformPoint(worldPosition);
         local = RoomBounds.ClampLocal(local, Footprint, WallThickness, bodyRadius);
+        local = RoomObstacleBounds.ClampLocal(local, _obstacleBounds, bodyRadius);
         return transform.TransformPoint(local);
     }
 
@@ -175,6 +181,79 @@ public class RoomController : MonoBehaviour
         if (footprint.HasNotch)
         {
             BuildNotchWalls(footprint, halfWidth, halfDepth);
+        }
+    }
+
+    // Thin segment's real cross-section, matching how Block_Stone_Connector was built
+    // (Block_Stone rescaled to 1/4 on its thin axis only - see
+    // Docs/AI_Decision_Log.md 2026-09-12 "얇은 연결 세그먼트로 전환"). Used only to size
+    // the coarse enemy-containment Bounds below; the collider itself lives on the prefab.
+    private const float ConnectorThickness = 1f;
+
+    // One instance per ProceduralFloorGenerator-authored ObstaclePlacement (Combat rooms
+    // only, today). A Solo placement occupies exactly one floor tile, same as before. A
+    // Connector placement spans the gap between LocalCell and one of its 2 possible
+    // neighbours (RotationY encodes which - see ObstaclePlacement) with a thin segment,
+    // so a junction cell simply gets more than one Connector placement sharing the same
+    // LocalCell and the pieces overlap there, with no corner/T-piece mesh needed.
+    // VariantIndex is taken modulo the set's Solo prefab count so this never throws if
+    // the set is edited to have fewer variants than a saved seed's generation expected.
+    // No collider work is done here - every obstacle prefab is expected to already carry
+    // its own solid collider (see RoomObstacleSet).
+    private void BuildObstacles(RoomData data)
+    {
+        _obstacleBounds.Clear();
+
+        IReadOnlyList<ObstaclePlacement> placements = data.Obstacles;
+        if (placements.Count == 0 || obstacleSet == null)
+        {
+            return;
+        }
+
+        RoomFootprint footprint = data.Footprint;
+        float halfWidth = footprint.Width / 2f;
+        float halfDepth = footprint.Depth / 2f;
+
+        foreach (ObstaclePlacement placement in placements)
+        {
+            float anchorX = -halfWidth + TileSize / 2f + placement.LocalCell.x * TileSize;
+            float anchorZ = -halfDepth + TileSize / 2f + placement.LocalCell.y * TileSize;
+
+            if (placement.Shape == ObstacleShape.Connector)
+            {
+                if (obstacleSet.ConnectorPrefab == null)
+                {
+                    continue;
+                }
+
+                bool alongX = Mathf.Approximately(placement.RotationY, 90f);
+                float x = alongX ? anchorX + TileSize / 2f : anchorX;
+                float z = alongX ? anchorZ : anchorZ + TileSize / 2f;
+
+                GameObject instance = Instantiate(obstacleSet.ConnectorPrefab, transform);
+                instance.name = $"Connector_{placement.LocalCell.x}_{placement.LocalCell.y}";
+                instance.transform.localPosition = new Vector3(x, 0f, z);
+                instance.transform.localRotation = Quaternion.Euler(0f, placement.RotationY, 0f);
+
+                Vector3 size = alongX ? new Vector3(TileSize, 0f, ConnectorThickness) : new Vector3(ConnectorThickness, 0f, TileSize);
+                _obstacleBounds.Add(new Bounds(new Vector3(x, 0f, z), size));
+            }
+            else
+            {
+                if (obstacleSet.Prefabs == null || obstacleSet.Prefabs.Count == 0)
+                {
+                    continue;
+                }
+
+                GameObject prefab = obstacleSet.Prefabs[placement.VariantIndex % obstacleSet.Prefabs.Count];
+
+                GameObject instance = Instantiate(prefab, transform);
+                instance.name = $"Obstacle_{placement.LocalCell.x}_{placement.LocalCell.y}";
+                instance.transform.localPosition = new Vector3(anchorX, 0f, anchorZ);
+                instance.transform.localRotation = Quaternion.Euler(0f, placement.RotationY, 0f);
+
+                _obstacleBounds.Add(new Bounds(new Vector3(anchorX, 0f, anchorZ), new Vector3(TileSize, 0f, TileSize)));
+            }
         }
     }
 

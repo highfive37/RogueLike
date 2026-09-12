@@ -108,6 +108,72 @@ EditMode 89개 전부 초록, 유저 실플레이로 ㄱ자 출현·문 오프�
 에셋(`Assets/Art/Props/modular_space`, `cyberpunk_game_kit`) 커밋 완료 — `cyberpunk_game_kit`은
 다음 세션(장애물 배치)에서 사용 예정. §2·§3·§6 갱신, 상세는 `DevLog.md`/`AI_Decision_Log.md`
 2026-09-11.
+2026-09-12 **§6 #3 "방/장애물 배치"의 장애물 절반 완료(A*는 다음 세션 예정)** — 전투방 한정,
+절차 생성 단계(`ProceduralFloorGenerator.BuildObstacles`)에서 문/입구 주변 2칸을 제외한 내부
+타일 셀 중 시드로 섞어 고르되, 채택 직전마다 BFS로 "남은 빈 칸이 여전히 하나로 연결되는가"를
+검사해 방을 완전히 막는 배치는 자동으로 걸러냄(전용 명명 RNG 스트림이라 기존 시드의 방 그래프/
+적 배치는 무변경). 신규 `ObstaclePlacement`/`RoomObstacleSet`, `RoomData.Obstacles`(옵션 파라미터,
+기본 빈 리스트라 기존 생성 지점 전부 무변경). `RoomController.BuildObstacles`가 같은 4유닛
+타일 그리드 좌표로 프리팹을 배치하고, `ClampToInterior`(적 컨테인먼트 유일 지점)에
+`RoomObstacleBounds` 클램프를 추가해 적도 장애물 박스 밖으로 밀려나게 함(단, 지능적 우회는
+아직 없음 — A*의 몫). `cyberpunk_game_kit` 소품(AC/Fence/Computer/Support_Short) 4종을 실제
+메시 크기 그대로(첫 시도 때 FBX 루트에 이미 박힌 임포트 스케일을 놓쳐 오히려 축소되는 버그를
+겪고 수정) 콜라이더까지 부착해 프리팹화 — 콜라이더가 트리거 아님+Rigidbody 없음이라
+`WallClamp`(플레이어)와 `Projectile.OnTriggerEnter`(발사체)가 코드 변경 없이 벽과 동일하게
+차단. 가로직사각형 방은 짧은 변이 좁아 이번 규칙상 후보 칸이 없어 장애물 미배치(의도된 제한).
+EditMode 99개(신규 10개 포함) 전부 초록, `RunCommand` 기반 기능 검증(인스턴스화·콜라이더·클램프
+동작·물리 등록)까지 확인, 실제 Play Mode 육안 확인은 유저 몫으로 남김. §2·§3·§6 갱신, 상세는
+`DevLog.md`/`AI_Decision_Log.md` 2026-09-12.
+2026-09-12 (2) 같은 세션, 유저 요청으로 "1x1칸이 이어지는" 장애물(울타리 군집) 추가 — 신규
+`Assets/Art/Props/cube_world_kit` 도입(`Rock1/2` 바위, `Fence_Center/Corner/T/End` 모듈형
+울타리). `ObstaclePlacement`에 `ObstacleKind` 필드만 추가해 기존 데이터 모델·조립 루프·연결성
+검사를 그대로 재사용, 신규는 `FenceObstacleKit`(4개 명명 필드 SO) 하나. 모양을 일자로만 안
+만들려고 **랜덤워크로 군집 성장**(`BuildFenceCluster`/`GrowCluster` - 4연결/루프만 금지, 나머지는
+자유롭게 뻗어나가 직선·코너·T자가 자연스럽게 섞여 나옴) 방식 채택. 조각-회전 매핑은 SceneView로
+직접 측정한 각 조각의 기본 연결 방향(Center={서,동}, Corner={동,북}, T={서,동,북}, End={동})을
+90° 회전 순환(남→서→북→동→남)으로 역산해 구현. **실제 버그 발견·수정**: 루프 방지 조건이 항상
+참이 되는 논리 오류로 클러스터가 1칸을 절대 못 넘던 것을 EditMode 회귀 테스트가 잡아냄(수정 후
+강제 확률 100% 디버그에서 30/30 성공, End/Corner/Straight/T 모두 등장 확인). 테스트 도중 Unity가
+멈춘 것처럼 보인 해프닝은 실제로는 씬 저장 확인 팝업이 원인이었음(무한루프 아님). EditMode
+102개 전부 초록. §2·§3·§6 갱신, 상세는 `DevLog.md`/`AI_Decision_Log.md` 2026-09-12 (2)(3).
+2026-09-12 (3) 같은 세션, 유저 1층 실플레이 피드백("정사각형 방만 장애물 있고 썰렁하다, 아이작은
+안 그랬다")으로 **장애물 배치를 라이브 절차 생성에서 "패턴 라이브러리 선택" 방식으로 전면 전환**
+(아이작 실제 방식 재현 - 던전 그래프는 절차적, 방 내용물은 미리 만든 배치 중 시드로 선택).
+같은 세션 (2)에서 만든 랜덤워크 절차 생성(`BuildFenceCluster`/`GrowCluster` 등)을 전부 삭제하고
+신규 `ObstaclePatternLibrary`(JSON, ASCII 그리드로 정사각형 8종/ㄱ자 7종 패턴 작성)로 교체 —
+단 조각-회전 산출(`PieceFor`/`RotateDir`)은 그대로 재사용. 유저 확정으로 ㄱ자 방도 패턴화 대상에
+포함(가로직사각형은 여전히 장애물 없음) — ㄱ자는 NE 노치 기준 패턴 하나만 작성하고 런타임에
+실제 노치 방향(4가지)에 맞춰 좌표를 회전(`RotateCell`/`NotchRotationSteps`)해 재사용, 정사각형은
+노치가 없어 대신 매번 랜덤 회전을 적용해 패턴 8개로 체감 다양성 4배 확보. `FloorRule`의 장애물
+관련 필드 전부 제거. 패턴 검증 테스트가 실제 결함(`Cross` 패턴이 중앙 칸을 고립시키는 버그)을
+잡아내 수정. 60시드 실측 결과 빈 방 비율 정사각 12.6%·ㄱ자 13.3%("적지만 있다" 목표 부합).
+SceneView로 실제 생성된 방(ㄱ자 SE 노치 - 7칸 꺾인 벽, 정사각형 - T자 울타리) 육안 확인. EditMode
+108개 전부 초록. §2·§3·§6 갱신, 상세는 `DevLog.md`/`AI_Decision_Log.md` 2026-09-12 (3)(4).
+2026-09-12 (4) 같은 세션, 유저가 "이어진 장애물이 1층에서 여전히 안 보인다" 지적 → 원인은 버그가
+아니라 확률+층 구조(1층 전투방의 82%가 정사각형, ㄱ자는 병합 조건 희소성 때문에 1% 수준만 등장;
+정사각형도 절반만 울타리 패턴이라 60시드 중 16개(27%)는 1층 전체에 울타리가 하나도 없었음).
+울타리 포함 패턴 가중치를 2→3으로 올려 27%→17%로 개선(0%로는 안 만듦 - 약간의 변동성은 의도적
+유지). 추가로 유저 요청으로 **`cyberpunk_game_kit` 장애물 소품(AC/Fence/Computer/Support) 완전
+제거** — 실제 프리팹 삭제, `RoomObstacleSet`을 바위 2종만 남기고 `RoomObstacleSet_Solo`로 개명,
+`ObstacleVariantCount` 6→2. 원본 `cyberpunk_game_kit` 애셋 폴더 자체는 유지(다른 용도 재사용
+가능성). EditMode 108개 그대로 유지. 상세는 `DevLog.md` 2026-09-12 (4).
+2026-09-12 (5)~(7) 같은 세션 후속: 소품 다양성 복구 위해 울타리 조각 4종을 단일 소품 풀에도
+추가했다가, 유저가 씬의 실제 오브젝트를 지목하며 지적 → 유저의 원래 의도가 "방향별 자동 조각
+선택"이 아니라 **"같은 정육면체 블록을 여러 칸에 반복 배치"**였음이 드러남. `ObstacleKind`
+enum·`FenceObstacleKit`·`PieceFor`/`RotateDir` 등 방향 기반 조각 선택 시스템을 통째로 삭제하고,
+패턴에 표시된 칸엔 전부 동일한 프리팹(`cube_world_kit`의 `Block_Stone` 1종)을 반복 배치하는
+방식으로 단순화 — 코드 약 150줄 감소, 4연결 제한 같은 "메시가 없어서 생기던 제약"도 사라짐.
+기존 패턴 JSON(칸 배치)은 그대로 재사용. EditMode 108→104개(더는 의미 없는 검증 4개 제거).
+같은 방을 다시 렌더링해 블록 반복으로 정확히 나오는 것 확인. 상세는 `DevLog.md`/
+`AI_Decision_Log.md` 2026-09-12 (5)~(7).
+2026-09-13 유저가 실제 이어진 벽(ㅏ자)의 폭이 "너무 두껍다"고 피드백 → **칸마다 완전한 블록
+대신, 인접한 두 칸 중심을 정확히 잇는 얇은 세그먼트(`ObstacleShape.Connector`, 세계 좌표
+1×4×4)로 전환**. 코너/T자/십자 교차는 한 칸에서 여러 세그먼트가 겹치는 것만으로 저절로
+표현되어 전용 코너 메시가 필요 없어짐(신규 `Block_Stone_Connector` 1종만 추가, `Block_Stone`
+X축만 1/4 축소). 같은 세션에 유저가 요청한 "더 복잡한 패턴"(대각선 두 줄 등)도 반영해
+`FenceCrossHub`/`PlusHub`/`DiagonalDoubleScatter` 3종 추가(대각선 패턴은 좁은 정사각형 방 대신
+ㄱ자 방에 배치). EditMode 104개 전부 통과, SceneView로 사방 교차 Connector 육안 확인. 상세는
+`DevLog.md`/`AI_Decision_Log.md` 2026-09-13.
 
 ---
 
@@ -324,7 +390,7 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 | 밸런스 수치 | `GameBalance`, `Assets/StreamingAssets/Balance/*.json` | 플레이어 기본 스탯/패시브 아이템 효과를 JSON에서 로드, 파일 없거나 파싱 실패 시 내장 기본값으로 폴백 |
 | 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead; 피격 시 `HealthComponent.AnyDamageTaken` 구독으로 `StunDuration`만큼 Stunned + `KnockbackResistance` 기반 넉백 — 2026-09-08. **모든 적 이동은 단일 초크포인트 `MoveTo(worldPos)` 경유** → 스폰 시 주입된 `RoomController`의 `ClampToInterior`로 방 내부 AABB에 클램프 + `FixedUpdate`의 `EnforceRoomContainment`가 slack 밖으로 나간 적을 스폰 지점으로 스냅 — 2026-09-09 적 방 이탈/진행 불가 버그 수정, §4 참고), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`, `Interrupt()` 있음), 공유 헬퍼 `RangedKitingBehavior`(원거리 3패턴 공통 후퇴/윈드업), `EnemyMovementFlavor`(직선 이동에 수직 sine wobble) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화. 원거리는 예외 없이 "가까우면 후퇴 → 벌어지면 윈드업 → 발사". 사거리(`MaxAttackRange`) 안에서는 Chase가 전진을 멈추고 이동은 공격 패턴 런지만 담당 — 공격 사이엔 정지·회전만(2026-09-08, 근접 적 공전 수정). 벽 관통 방지는 물리(적 Rigidbody는 Discrete)가 아니라 `MoveTo` 클램프가 담당 |
 | 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss/ErraticMelee/BurstRanged — 뒤 2종 2026-09-08 추가) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거. 격리 측정용 `BenchmarkSpawner`는 이 경로를 우회(§3 Stage 3) |
-| 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, `modular_space` 타일 절차적 지오메트리 생성 — 2026-09-11, 문 배선), `RoomFootprint`(바운딩박스+선택적 노치로 정사각형/가로직사각형/ㄱ자 표현 — 2026-09-11), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커, `OwnerRoom` 보유 — 2026-09-11), `RoomTransitionController`(문 통과 시 `TargetRoom` 매칭으로 도착 문 특정 + 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)), 전투방 한정 격자 셀 2~3개를 실제로 병합하는 진짜 멀티셀 방(한 변에 문 여러 개 가능) 도입(2026-09-11) |
+| 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, `modular_space` 타일 절차적 지오메트리 생성 — 2026-09-11, `RoomObstacleSet` 기반 장애물 배치(Solo 블록 + Connector 얇은 세그먼트 — 2026-09-13), 문 배선), `RoomFootprint`(바운딩박스+선택적 노치로 정사각형/가로직사각형/ㄱ자 표현 — 2026-09-11), `ObstaclePlacement`(`ObstacleShape{Solo,Connector}` — 2026-09-13)/`RoomObstacleSet`(`prefabs`+`connectorPrefab`)/`RoomObstacleBounds`(전투방 장애물 데이터·프리팹 세트·`ClampToInterior` 확장 클램프 — 2026-09-12, Connector는 세그먼트 실폭 기준 바운드로 정교화 — 2026-09-13), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커, `OwnerRoom` 보유 — 2026-09-11), `RoomTransitionController`(문 통과 시 `TargetRoom` 매칭으로 도착 문 특정 + 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)), 전투방 한정 격자 셀 2~3개를 실제로 병합하는 진짜 멀티셀 방(한 변에 문 여러 개 가능) 도입(2026-09-11), 전투방 한정 시드 기반 장애물 배치 도입(2026-09-12), 이어진 장애물을 칸 중심을 잇는 얇은 세그먼트로 교체 + 패턴 복잡도 확장(2026-09-13) — 적 우회(A*)는 다음 세션 |
 | 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거). 드롭 좌표는 `Instantiate` 전에 `NudgeClearOfDoors()`로 근처 문 트리거 밖으로 밀어냄(문 앞 드랍템을 문 안 밟고 줍게, 슬라이드 안 보이게). 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시(`HideImmediate()`로 층 전환 시 즉시 정리) |
 | 데미지 | `IDamageable`, `Health`(순수 C#), `HealthComponent` | 데미지 판정 + 수치·가해자 로그, 체력 상태, 사망 이벤트 |
 | 방 클리어 후 흐름 / 런 종료 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3). `FloorCompleted`(Floor Exit 진입) 시 결과 화면 표시 + 진행 중 구르기 취소(`CancelDodgeRoll`) + 픽업 알림 즉시 숨김(`HideImmediate`) — 둘 다 `timeScale=0` 일시정지 전에. 비마지막 층은 `AutoAdvanceRequested` → 페이드 전환 지휘. 플레이어 사망(`Health.Died`)도 여기서 처리(2026-09-08): `HandlePlayerDied` → 입력 off + `PauseState.RequestPause` + 캡슐 틱오버 코루틴 + `UIManager.ShowGameOver`, 스탯은 승/패 공용 `BuildCurrentStats()` |
@@ -388,9 +454,14 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
 - ~~방 지오메트리 지형 애셋 교체 + 형태 다양화/멀티셀 병합~~ — 완료(2026-09-11, Phase 1~3).
   `modular_space` 타일 기반 방 껍데기, 전투방 한정 가로직사각형/ㄱ자 형태, 진짜 멀티셀 병합
   (칸 2~3개, 한 변 다중 문). 상세는 위 헤더 changelog + `DevLog.md`/`AI_Decision_Log.md` 2026-09-11.
-- 방 안 장애물(#2, `cyberpunk_game_kit` 소품 사용 예정) + 적 경로탐색(그리드 A*) — **다음 세션
-  예정**(2026-09-11 확정, §6 우선순위 3번 참고). 방 지오메트리가 프리미티브에서 타일 기반으로
-  바뀌었으니 장애물 배치도 같은 타일 그리드(4유닛) 좌표계에 맞춰 진행
+- ~~방 안 장애물(#2, `cyberpunk_game_kit` 소품 + `cube_world_kit` 바위/울타리 군집)~~ —
+  완료(2026-09-12). 전투방 한정 시드 기반 배치(문/입구 2칸 클리어런스 + BFS 연결성 검사),
+  단일 소품(바위/가구)뿐 아니라 랜덤워크로 자라는 연결형 울타리 군집(직선/코너/T자 자연 혼합)도
+  지원. 플레이어/발사체는 기존 벽과 동일 메커니즘으로 자동 차단, 적은 `ClampToInterior` 확장으로
+  통과만 막음(우회는 아직 없음). 상세는 위 헤더 changelog + `DevLog.md`/`AI_Decision_Log.md`
+  2026-09-12.
+- 적 경로탐색(그리드 A*) — **다음 세션 예정**. 장애물 데이터가 이미 `RoomData.Obstacles`에
+  타일 그리드(4유닛) 좌표로 있으니 A*의 "막힌 칸" 입력으로 그대로 재사용 가능.
 - ~~**3층 제작**~~ — 완료(2026-09-04). 아이작식 13방(id 301~313, 중앙 시작 / 최원거리
   단문 보스 / CombatF 뒤 아이템 데드엔드 / 본체 루프 2개 / 선택 전투 데드엔드), 전투 적 54 +
   보스 1. 구조 검증(중복 0/상호대응·인접/BFS 13-13) 통과. 실플레이 최종 확인은 이월.
@@ -553,7 +624,7 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
   확인 — 방 경계 재프레이밍/Cinemachine은 당장 불필요, 필요해지면 재논의.
 - **아이템 방(#3) 구체 설계**: 바닥 드롭 인프라는 있으니 "전투 없이 보장된
   픽업 배치"만 추가하면 될 것으로 예상되나 미착수.
-- **방 안 장애물(#2)**: 지형 애셋 교체 시점까지 보류.
+- ~~**방 안 장애물(#2)**~~: 완료(2026-09-12) — §6 #3b 참고.
 - **아이콘 스와치 → 실제 픽토그램 교체**: 우선순위 낮음으로 이월 중.
 - ~~**Enhanced Shot 스킬 사거리**~~: 해결됨(2026-09-01) — 기본 공격과 분리,
   `EnhancedShotActiveItemData.range`(기본 45유닛)로 스킬이 독립 소유.
@@ -643,8 +714,12 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
      타일 기반 지오메트리, 전투방 한정 가로직사각형/ㄱ자 형태, 격자 셀 2~3개를 실제로 병합하는
      멀티셀 방(한 변 다중 문 지원). 상세는 헤더 changelog 2026-09-11 + `DevLog.md`/
      `AI_Decision_Log.md` 2026-09-11.
-   - 3b. **방 안 장애물(`cyberpunk_game_kit` 소품) + 적 경로탐색(A*)** — **다음 세션 예정.**
-     장애물은 지금의 타일 그리드(4유닛) 좌표계 위에 배치, `EnemyChaseState` 이동을 A*로 교체.
+   - 3b. ~~**방 안 장애물(`cyberpunk_game_kit` 소품)**~~ — **완료(2026-09-12).** 전투방 한정
+     시드 기반 배치(타일 그리드 4유닛 좌표, 문/입구 클리어런스 + BFS 연결성 검사),
+     플레이어/발사체는 기존 벽 메커니즘 그대로 자동 차단, 적은 `ClampToInterior` 확장으로
+     통과만 막음. 상세는 헤더 changelog 2026-09-12 + `DevLog.md`/`AI_Decision_Log.md` 2026-09-12.
+   - 3c. **적 경로탐색(A*)** — **다음 세션 예정.** `EnemyChaseState` 이동을 그리드 A*로 교체
+     (막힌 칸 데이터는 `RoomData.Obstacles`에 이미 있음).
 4. **입력 버퍼링 + 프레임레이트 독립성** — 건전식 타이트 조작. 규모 1 세션. 게임필 우선 시 3과 순서 교체 가능.
 5. **커스텀 에디터 툴링 — SO 검증 패스** (+ 여유 시 층 그래프 비주얼라이저) — 노력 대비 신호 큼, 1 세션.
 6. **세이브/로드 — 버전드 직렬화 + 런 이어하기** — 아무것도 언블록 안 함, 가장 나중 또는 마감 시 스킵.

@@ -5,6 +5,9 @@ using UnityEngine;
 // from ProceduralRules.json (one entry per floor) with built-in fallbacks; the
 // seed picks concrete values inside these ranges. This is a discrete per-floor
 // table, not a curve - see AI_Decision_Log 2026-09-09 (3).
+// Combat-room obstacle layout is NOT part of this rule - it comes from
+// ObstaclePatternLibrary (a curated pattern per room shape, seed-picked), not a
+// per-floor numeric knob - see Docs/AI_Decision_Log.md 2026-09-12.
 public readonly struct FloorRule
 {
     public readonly int MinRooms;

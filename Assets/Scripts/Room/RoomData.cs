@@ -19,6 +19,10 @@ public class RoomData
     public float RoomSize => Footprint.Width;
     public IReadOnlyList<StageEnemyEntry> Enemies { get; }
     public IReadOnlyList<RoomDoorConnection> Connections { get; }
+    // Optional: only combat rooms from ProceduralFloorGenerator populate this today.
+    // Defaults to empty so every other caller (GameFloors' fallback floor, JSON-authored
+    // rooms) keeps compiling and behaving exactly as before without knowing obstacles exist.
+    public IReadOnlyList<ObstaclePlacement> Obstacles { get; }
 
     public RoomData(
         int roomId,
@@ -26,7 +30,8 @@ public class RoomData
         Vector2 gridPosition,
         RoomFootprint footprint,
         IReadOnlyList<StageEnemyEntry> enemies,
-        IReadOnlyList<RoomDoorConnection> connections)
+        IReadOnlyList<RoomDoorConnection> connections,
+        IReadOnlyList<ObstaclePlacement> obstacles = null)
     {
         RoomId = roomId;
         Type = type;
@@ -34,5 +39,6 @@ public class RoomData
         Footprint = footprint;
         Enemies = enemies;
         Connections = connections;
+        Obstacles = obstacles ?? System.Array.Empty<ObstaclePlacement>();
     }
 }

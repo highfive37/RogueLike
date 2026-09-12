@@ -59,3 +59,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RoomController
   doorMarkerMaterial: {fileID: 2100000, guid: 7f94f27f32f49e746b1262b147ca4341, type: 2}
   tileSet: {fileID: 11400000, guid: a7ed35405786e6a43882e5c735664ac8, type: 2}
+  obstacleSet: {fileID: 11400000, guid: 3da23cdd0f81e724cb7f3f9e2223138a, type: 2}

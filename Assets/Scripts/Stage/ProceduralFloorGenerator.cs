@@ -91,7 +91,9 @@ public sealed class ProceduralFloorGenerator
             IRng layoutRng = streams.Stream($"layout.f{floorNumber}.a{attempt}");
             IRng enemyRng = streams.Stream($"enemies.f{floorNumber}");
             IRng roomShapeRng = streams.Stream($"roomShape.f{floorNumber}");
-            if (TryGenerate(floorNumber, isLastFloor, rule, layoutRng, enemyRng, roomShapeRng, out FloorLayout layout))
+            IRng obstacleRng = streams.Stream($"obstacles.f{floorNumber}");
+            IRng patternRng = streams.Stream($"obstaclePatterns.f{floorNumber}");
+            if (TryGenerate(floorNumber, isLastFloor, rule, layoutRng, enemyRng, roomShapeRng, obstacleRng, patternRng, out FloorLayout layout))
             {
                 return layout;
             }
@@ -103,7 +105,7 @@ public sealed class ProceduralFloorGenerator
         return TrivialLine(floorNumber, isLastFloor);
     }
 
-    private bool TryGenerate(int floorNumber, bool isLastFloor, FloorRule rule, IRng rng, IRng enemyRng, IRng roomShapeRng, out FloorLayout layout)
+    private bool TryGenerate(int floorNumber, bool isLastFloor, FloorRule rule, IRng rng, IRng enemyRng, IRng roomShapeRng, IRng obstacleRng, IRng patternRng, out FloorLayout layout)
     {
         layout = null;
 
@@ -290,8 +292,10 @@ public sealed class ProceduralFloorGenerator
                     type == RoomType.Combat ? BuildCombatEnemies(rule, footprint, enemyRng) :
                     type == RoomType.Boss ? BossEnemy() :
                     Array.Empty<StageEnemyEntry>();
+                IReadOnlyList<ObstaclePlacement> obstacles =
+                    type == RoomType.Combat ? BuildCombatRoomObstacles(footprint, patternRng, obstacleRng) : Array.Empty<ObstaclePlacement>();
 
-                rooms.Add(new RoomData(id, type, cell, footprint, enemies, connections));
+                rooms.Add(new RoomData(id, type, cell, footprint, enemies, connections, obstacles));
             }
             else
             {
@@ -322,8 +326,9 @@ public sealed class ProceduralFloorGenerator
 
                 Vector2 gridPos = AverageCell(members);
                 IReadOnlyList<StageEnemyEntry> enemies = BuildCombatEnemies(rule, footprint, enemyRng);
+                IReadOnlyList<ObstaclePlacement> obstacles = BuildCombatRoomObstacles(footprint, patternRng, obstacleRng);
 
-                rooms.Add(new RoomData(id, RoomType.Combat, gridPos, footprint, enemies, connections));
+                rooms.Add(new RoomData(id, RoomType.Combat, gridPos, footprint, enemies, connections, obstacles));
             }
         }
 
@@ -545,6 +550,225 @@ public sealed class ProceduralFloorGenerator
     private static StageEnemyEntry[] BossEnemy()
     {
         return new[] { new StageEnemyEntry(EnemyVariantType.Boss, new Vector3(0f, BossStandHeight, 6f)) };
+    }
+
+    // Must match RoomController.TileSize - the floor's runtime tile grid.
+    private const float ObstacleTileSize = 4f;
+    // Must match RoomObstacleSet's authored prefab count. Solo obstacles went through two
+    // earlier lineups - cyberpunk_game_kit furniture (read as out of place) and then a mix
+    // of Rock1/Rock2 plus the 4 fence-connector meshes reused standalone (read as "cut off"
+    // rail segments when not actually connected to anything) - before settling on a single
+    // plain cube_world_kit block (Block_Stone), matching the simple repeated-obstacle look
+    // this project was going for. RoomController takes this modulo its own Prefabs.Count
+    // when instantiating, so a mismatch never throws, it just wraps.
+    private const int ObstacleVariantCount = 1;
+    // Cells kept clear from every exterior edge (in tile-grid units): covers
+    // RoomController.EntryPointInset (1 tile, where a door's entry point/backtracking
+    // player lands) plus one extra tile of buffer so no obstacle ever hugs a wall. Also
+    // the margin every authored ObstaclePatterns.json layout is validated against - see
+    // ObstaclePatternLibraryTests.
+    internal const int ObstacleEdgeClearanceCells = 2;
+
+    // Combat-room obstacle layout: pick a curated pattern (Isaac-style - a small
+    // human-vetted library, not a fresh per-seed procedural decision, see
+    // Docs/AI_Decision_Log.md 2026-09-12) for the room's shape and rotate it into place.
+    // A pattern's 'O' cells become Solo (one full-tile block per cell) and its '#' cells
+    // become Connector segments between every pair of orthogonally-adjacent '#' cells
+    // (see PlacementsFromPattern) - a thin segment spanning exactly the gap between the 2
+    // cell centres, so a connected run of cells reads as one continuous thin wall with no
+    // gap and no per-cell piece/rotation selection needed (see Docs/AI_Decision_Log.md
+    // 2026-09-12 "얇은 연결 세그먼트로 전환" - an earlier version placed a full-tile block
+    // at every '#' cell, which read as too thick once actually connected; an even earlier
+    // version picked a different mesh per cell based on its neighbours, solving a problem
+    // the user never had). WideRect never gets a pattern (kept obstacle-free, per user
+    // decision - its short axis is too narrow for any layout to respect the edge
+    // clearance below anyway).
+    internal static List<ObstaclePlacement> BuildCombatRoomObstacles(RoomFootprint footprint, IRng patternRng, IRng obstacleRng)
+    {
+        int cellsX = Mathf.RoundToInt(footprint.Width / ObstacleTileSize);
+
+        if (footprint.HasNotch)
+        {
+            ObstaclePatternData pattern = ObstaclePatternLibrary.PickLShapePattern(patternRng);
+            int steps = NotchRotationSteps[footprint.NotchCorner.Value];
+            return PlacementsFromPattern(pattern, cellsX, steps, obstacleRng);
+        }
+
+        if (Mathf.Approximately(footprint.Width, footprint.Depth))
+        {
+            ObstaclePatternData pattern = ObstaclePatternLibrary.PickSquarePattern(patternRng);
+            int steps = patternRng.Range(0, 4); // no notch to align to - random facing just adds visual variety
+            return PlacementsFromPattern(pattern, cellsX, steps, obstacleRng);
+        }
+
+        return new List<ObstaclePlacement>(); // WideRect
+    }
+
+    // How many +90 degree grid rotations turn a pattern authored for a NE notch into one
+    // valid for the given actual notch corner. Derived from rotating the notch's own
+    // (signX, signZ) diagonal the same way RotateCell rotates cells: NE(1,1) -> SE(1,-1)
+    // -> SW(-1,-1) -> NW(-1,1) -> NE, one step per +90 - see Docs/AI_Decision_Log.md.
+    private static readonly Dictionary<RoomCorner, int> NotchRotationSteps = new Dictionary<RoomCorner, int>
+    {
+        { RoomCorner.NE, 0 }, { RoomCorner.SE, 1 }, { RoomCorner.SW, 2 }, { RoomCorner.NW, 3 },
+    };
+
+    // Rotates a cell `steps` times by +90 degrees around an odd-sized gridSize x gridSize
+    // grid's exact centre (integer-exact: doubled coordinates keep every intermediate
+    // value even for an odd gridSize, so no rounding ever occurs).
+    private static Vector2Int RotateCell(Vector2Int cell, int gridSize, int steps)
+    {
+        int center2 = gridSize - 1;
+        Vector2Int result = cell;
+        for (int s = 0; s < ((steps % 4) + 4) % 4; s++)
+        {
+            int lx = 2 * result.x - center2;
+            int lz = 2 * result.y - center2;
+            int nlx = lz;
+            int nlz = -lx;
+            result = new Vector2Int((nlx + center2) / 2, (nlz + center2) / 2);
+        }
+        return result;
+    }
+
+    // Rotates every marked cell into the room's actual orientation. 'O' cells become one
+    // Solo placement each, with a random prefab variant + facing. '#' cells become one
+    // Connector placement per pair of cells that are still orthogonally adjacent after
+    // rotation (adjacency is checked in the pattern's own canonical grid, before
+    // rotation, since rotation is a rigid grid symmetry and can't change which cells are
+    // next to each other) - a junction cell naturally gets more than one Connector
+    // sharing its LocalCell, one per neighbour, with no special corner/T mesh needed.
+    private static List<ObstaclePlacement> PlacementsFromPattern(ObstaclePatternData pattern, int gridSize, int rotationSteps, IRng obstacleRng)
+    {
+        var placements = new List<ObstaclePlacement>(pattern.SoloCells.Count + pattern.FenceCells.Count);
+
+        foreach (Vector2Int cell in pattern.SoloCells)
+        {
+            placements.Add(SoloPlacementAt(RotateCell(cell, gridSize, rotationSteps), obstacleRng));
+        }
+
+        var fenceSet = new HashSet<Vector2Int>(pattern.FenceCells);
+        foreach (Vector2Int cell in pattern.FenceCells)
+        {
+            Vector2Int east = cell + new Vector2Int(1, 0);
+            if (fenceSet.Contains(east))
+            {
+                placements.Add(ConnectorPlacementBetween(cell, east, gridSize, rotationSteps));
+            }
+            Vector2Int north = cell + new Vector2Int(0, 1);
+            if (fenceSet.Contains(north))
+            {
+                placements.Add(ConnectorPlacementBetween(cell, north, gridSize, rotationSteps));
+            }
+        }
+
+        return placements;
+    }
+
+    private static ObstaclePlacement SoloPlacementAt(Vector2Int cell, IRng obstacleRng)
+    {
+        int variant = obstacleRng.Range(0, ObstacleVariantCount);
+        float rotationY = 90f * obstacleRng.Range(0, 4);
+        return new ObstaclePlacement(ObstacleShape.Solo, cell, variant, rotationY);
+    }
+
+    // cellA/cellB are canonical-grid neighbours (cellB is either cellA's east or north
+    // neighbour, pre-rotation). Rotates both, then re-derives which one is "lower" (the
+    // encoding ObstaclePlacement.LocalCell/RotationY expects for a Connector) from the
+    // ROTATED coordinates, since a rotation can flip which of the two ends up smaller.
+    private static ObstaclePlacement ConnectorPlacementBetween(Vector2Int cellA, Vector2Int cellB, int gridSize, int rotationSteps)
+    {
+        Vector2Int rA = RotateCell(cellA, gridSize, rotationSteps);
+        Vector2Int rB = RotateCell(cellB, gridSize, rotationSteps);
+        bool aIsLower = rA.x < rB.x || (rA.x == rB.x && rA.y < rB.y);
+        Vector2Int anchor = aIsLower ? rA : rB;
+        Vector2Int other = aIsLower ? rB : rA;
+        Vector2Int dir = other - anchor; // exactly (1,0) or (0,1) - rotation preserves orthogonal adjacency
+        float rotationY = dir.x == 1 ? 90f : 0f;
+        return new ObstaclePlacement(ObstacleShape.Connector, anchor, 0, rotationY);
+    }
+
+    // Every actual floor-tile cell of a room's footprint - same enumeration
+    // RoomController.BuildFloor uses (excludes the bounding-box corners and, for an
+    // L-shape, the notch void). internal so ObstaclePatternLibraryTests can validate
+    // authored patterns against the exact same rules production uses.
+    internal static IEnumerable<Vector2Int> FloorCells(RoomFootprint footprint, int cellsX, int cellsZ)
+    {
+        for (int ix = 0; ix < cellsX; ix++)
+        {
+            bool edgeX = ix == 0 || ix == cellsX - 1;
+            for (int iz = 0; iz < cellsZ; iz++)
+            {
+                bool edgeZ = iz == 0 || iz == cellsZ - 1;
+                if (edgeX && edgeZ)
+                {
+                    continue; // bounding-box corner - never floor
+                }
+                if (IsNotchCellForObstacles(footprint, ix, iz, cellsX, cellsZ))
+                {
+                    continue; // inside the notch void - never floor
+                }
+                yield return new Vector2Int(ix, iz);
+            }
+        }
+    }
+
+    // True if every free (non-blocked) floor cell can still reach every other one
+    // (BFS over 4-neighbours) - i.e. `blocked` hasn't cut the room into pockets. internal
+    // so ObstaclePatternLibraryTests can confirm a pattern never seals off part of the
+    // room, for all 4 rotations, without re-deriving this BFS a second time.
+    internal static bool LeavesRoomConnected(RoomFootprint footprint, int cellsX, int cellsZ, HashSet<Vector2Int> blocked)
+    {
+        var free = new List<Vector2Int>();
+        foreach (Vector2Int cell in FloorCells(footprint, cellsX, cellsZ))
+        {
+            if (!blocked.Contains(cell))
+            {
+                free.Add(cell);
+            }
+        }
+        if (free.Count == 0)
+        {
+            return true;
+        }
+
+        var freeSet = new HashSet<Vector2Int>(free);
+        var visited = new HashSet<Vector2Int> { free[0] };
+        var queue = new Queue<Vector2Int>();
+        queue.Enqueue(free[0]);
+        while (queue.Count > 0)
+        {
+            Vector2Int cur = queue.Dequeue();
+            foreach ((Vector2Int offset, DoorDirection _) in Dirs)
+            {
+                Vector2Int next = cur + offset;
+                if (freeSet.Contains(next) && visited.Add(next))
+                {
+                    queue.Enqueue(next);
+                }
+            }
+        }
+        return visited.Count == free.Count;
+    }
+
+    // Mirrors RoomController.BuildFloor's own notch-void test (see Docs/DevLog.md
+    // 2026-09-11) so an L-shape combat room never gets an obstacle candidate inside its
+    // missing corner - kept as a separate copy rather than shared code.
+    internal static bool IsNotchCellForObstacles(RoomFootprint footprint, int ix, int iz, int cellsX, int cellsZ)
+    {
+        if (!footprint.HasNotch)
+        {
+            return false;
+        }
+
+        int notchCellsX = Mathf.RoundToInt(footprint.NotchWidth / ObstacleTileSize);
+        int notchCellsZ = Mathf.RoundToInt(footprint.NotchDepth / ObstacleTileSize);
+        int signX = footprint.NotchSignX;
+        int signZ = footprint.NotchSignZ;
+
+        bool inNotchX = signX > 0 ? ix >= cellsX - notchCellsX : ix < notchCellsX;
+        bool inNotchZ = signZ > 0 ? iz >= cellsZ - notchCellsZ : iz < notchCellsZ;
+        return inNotchX && inNotchZ;
     }
 
     private static bool InBounds(Vector2Int c)

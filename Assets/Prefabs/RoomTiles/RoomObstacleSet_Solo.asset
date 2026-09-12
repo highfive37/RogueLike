@@ -1,0 +1,17 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eac8bd80af565834cbff52e5fea865fb, type: 3}
+  m_Name: RoomObstacleSet_Solo
+  m_EditorClassIdentifier: RogueLike::RoomObstacleSet
+  prefabs:
+  - {fileID: 5826271136833065063, guid: 238ce9324b5a60a4998c4e6c3b81a434, type: 3}
+  connectorPrefab: {fileID: 6012252148471312423, guid: 01aad09e1d6ad5445a0e8c31c600aee0, type: 3}

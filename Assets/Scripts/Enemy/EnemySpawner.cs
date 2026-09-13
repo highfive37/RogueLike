@@ -25,6 +25,12 @@ public class EnemySpawner : MonoBehaviour
     [SerializeField] private ItemDropManager activeItemDropManager;
 
     private Dictionary<EnemyVariantType, GameObjectPool> _poolsByVariant;
+    private Transform _playerTransform;
+    private float _playerRadius = 0.5f;
+
+    // Extra buffer beyond "just touching" so a cleared spawn point doesn't still read as
+    // visually flush against the player.
+    private const float PlayerClearanceMargin = 0.3f;
 
     // Fired once per spawned enemy that has a HealthComponent, with its variant. Pure spawn
     // telemetry - this class stays generic and does no per-variant branching. Consumers decide
@@ -61,6 +67,7 @@ public class EnemySpawner : MonoBehaviour
             // room before anything reads this position.
             float bodyRadius = instance.TryGetComponent(out CapsuleCollider capsule) ? capsule.radius : 0.5f;
             Vector3 clamped = roomController.ClampToInterior(worldPosition, bodyRadius);
+            clamped = ClearOfPlayer(clamped, bodyRadius, roomController);
             if (clamped != worldPosition)
             {
                 instance.transform.position = clamped;
@@ -106,5 +113,45 @@ public class EnemySpawner : MonoBehaviour
         }
 
         health.Health.Died += OnDied;
+    }
+
+    // An authored spawn point only ever accounts for room geometry (see the wall clamp
+    // above) - it has no idea where the player actually is standing when the room activates.
+    // In a small/melee room that can land an enemy overlapping the player on frame one: both
+    // are non-kinematic Rigidbodies, so the physics solver shoves them apart on contact and
+    // can leave a residual velocity that idle player movement never clears (2026-09-13 bug).
+    // Push the spawn point itself clear of the player first so that overlap never happens.
+    private Vector3 ClearOfPlayer(Vector3 position, float bodyRadius, RoomController roomController)
+    {
+        if (_playerTransform == null)
+        {
+            GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
+            if (playerObject == null)
+            {
+                return position;
+            }
+
+            _playerTransform = playerObject.transform;
+            if (playerObject.TryGetComponent(out CapsuleCollider playerCapsule))
+            {
+                _playerRadius = playerCapsule.radius;
+            }
+        }
+
+        Vector3 toSpawn = position - _playerTransform.position;
+        toSpawn.y = 0f;
+        float minDistance = bodyRadius + _playerRadius + PlayerClearanceMargin;
+        float distance = toSpawn.magnitude;
+        if (distance >= minDistance)
+        {
+            return position;
+        }
+
+        // Spawn point coincides with the player almost exactly - no meaningful direction to
+        // push along, so pick an arbitrary one rather than leave the overlap in place.
+        Vector3 pushDirection = distance > 0.0001f ? toSpawn / distance : Vector3.forward;
+        Vector3 pushed = _playerTransform.position + pushDirection * minDistance;
+        pushed.y = position.y;
+        return roomController.ClampToInterior(pushed, bodyRadius);
     }
 }

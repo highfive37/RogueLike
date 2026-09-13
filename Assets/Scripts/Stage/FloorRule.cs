@@ -17,6 +17,12 @@ public readonly struct FloorRule
     public readonly int MaxEnemiesPerCombatRoom;
     public readonly VariantWeights VariantWeights;
     public readonly RoomShapeWeights RoomShapeWeights;
+    // Guaranteed count of RelentlessMelee placed across the whole floor (one per room, never
+    // doubled up), on top of - not instead of - each room's normal VariantWeights-rolled
+    // enemies. Not part of VariantWeights: that's a per-slot probability, this is an exact
+    // per-floor count - see ProceduralFloorGenerator.ApplyRelentlessEnemies.
+    public readonly int MinRelentlessEnemies;
+    public readonly int MaxRelentlessEnemies;
 
     public FloorRule(
         int minRooms,
@@ -25,7 +31,9 @@ public readonly struct FloorRule
         int minEnemiesPerCombatRoom,
         int maxEnemiesPerCombatRoom,
         VariantWeights variantWeights,
-        RoomShapeWeights roomShapeWeights)
+        RoomShapeWeights roomShapeWeights,
+        int minRelentlessEnemies = 0,
+        int maxRelentlessEnemies = 0)
     {
         // Sanitise so a hand-edited-but-parseable rules file can't crash the
         // generator (Range() throws when min >= max, negatives break weights).
@@ -36,5 +44,7 @@ public readonly struct FloorRule
         MaxEnemiesPerCombatRoom = Mathf.Max(MinEnemiesPerCombatRoom, maxEnemiesPerCombatRoom);
         VariantWeights = variantWeights;
         RoomShapeWeights = roomShapeWeights;
+        MinRelentlessEnemies = Mathf.Max(0, minRelentlessEnemies);
+        MaxRelentlessEnemies = Mathf.Max(MinRelentlessEnemies, maxRelentlessEnemies);
     }
 }

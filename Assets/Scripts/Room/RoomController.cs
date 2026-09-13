@@ -35,6 +35,9 @@ public class RoomController : MonoBehaviour
     // Local-space AABB per placed obstacle, fed to RoomObstacleBounds by ClampToInterior -
     // built once in BuildObstacles() rather than re-measured from colliders every call.
     private readonly List<Bounds> _obstacleBounds = new List<Bounds>();
+    // Built once in Initialize() alongside the obstacle geometry - EnemyChaseState calls
+    // FindPath() below through this when a straight line to the player is blocked.
+    private RoomPathfindingGrid _pathfindingGrid;
     // Keyed by (direction, sub-cell slot) rather than just direction - a
     // multi-cell merged room's side can carry up to 2 doors (Phase 3, see
     // Docs/DevLog.md 2026-09-11); an ordinary single-cell room only ever uses
@@ -81,6 +84,7 @@ public class RoomController : MonoBehaviour
 
         BuildGeometry(data);
         BuildObstacles(data);
+        _pathfindingGrid = new RoomPathfindingGrid(data.Footprint, data.Obstacles, TileSize);
     }
 
     // World<->local wrappers around the pure RoomBounds math (which is unit-tested
@@ -95,6 +99,96 @@ public class RoomController : MonoBehaviour
         local = RoomBounds.ClampLocal(local, Footprint, WallThickness, bodyRadius);
         local = RoomObstacleBounds.ClampLocal(local, _obstacleBounds, bodyRadius);
         return transform.TransformPoint(local);
+    }
+
+    // Room-local grid pathfinding for enemy chase (RoomPathfindingGrid is pure/scene-free -
+    // this is the only place that converts to/from its cell coordinates). Returns null if no
+    // path exists (or none was built, e.g. Initialize hasn't run) so callers can fall back to
+    // a straight line rather than the enemy doing nothing.
+    public IReadOnlyList<Vector3> FindPath(Vector3 fromWorld, Vector3 toWorld)
+    {
+        if (_pathfindingGrid == null)
+        {
+            return null;
+        }
+
+        Vector2Int fromCell = WorldToCell(fromWorld);
+        Vector2Int toCell = WorldToCell(toWorld);
+
+        // A hub cell with a Connector blocking every direction out of it (e.g. a "+"-shaped
+        // fence occupying one cell's footprint) stays walkable itself - only its edges are
+        // blocked - so two occupants standing on opposite sides of that fence, both close
+        // enough to the shared cell's centre, round to the exact same cell here. Left alone,
+        // TryFindPath's own start==goal shortcut would then report them as "already there"
+        // and hand back a single waypoint sitting right on top of the fence that's actually
+        // between them. Re-resolve each side to whichever real neighbour its continuous
+        // position is actually offset toward whenever that specific direction is genuinely
+        // blocked - an ordinary (non-hub) cell has no blocked edges to redirect through, so
+        // this is a no-op there.
+        if (fromCell == toCell)
+        {
+            Vector2Int adjustedFrom = ResolveEffectiveCell(fromWorld, fromCell);
+            Vector2Int adjustedTo = ResolveEffectiveCell(toWorld, toCell);
+            if (adjustedFrom != adjustedTo)
+            {
+                fromCell = adjustedFrom;
+                toCell = adjustedTo;
+            }
+        }
+
+        var cellPath = new List<Vector2Int>();
+        if (!_pathfindingGrid.TryFindPath(fromCell, toCell, cellPath))
+        {
+            return null;
+        }
+
+        var worldPath = new List<Vector3>(cellPath.Count);
+        foreach (Vector2Int cell in cellPath)
+        {
+            worldPath.Add(transform.TransformPoint(CellToLocal(cell)));
+        }
+
+        return worldPath;
+    }
+
+    // Picks whichever single neighbour of `cell` the continuous position at `worldPosition`
+    // is offset furthest toward (comparing local-space distance from the cell's own centre
+    // on each axis), but only when that specific edge is actually blocked and the neighbour
+    // is itself walkable - otherwise there's nothing to disambiguate and the original cell
+    // is correct as-is.
+    private Vector2Int ResolveEffectiveCell(Vector3 worldPosition, Vector2Int cell)
+    {
+        Vector3 local = transform.InverseTransformPoint(worldPosition);
+        Vector3 cellCenter = CellToLocal(cell);
+        float dx = local.x - cellCenter.x;
+        float dz = local.z - cellCenter.z;
+
+        Vector2Int neighbour = Mathf.Abs(dx) >= Mathf.Abs(dz)
+            ? cell + new Vector2Int(dx >= 0f ? 1 : -1, 0)
+            : cell + new Vector2Int(0, dz >= 0f ? 1 : -1);
+
+        return _pathfindingGrid.IsEdgeBlocked(cell, neighbour) && _pathfindingGrid.IsWalkable(neighbour)
+            ? neighbour
+            : cell;
+    }
+
+    private Vector2Int WorldToCell(Vector3 worldPosition)
+    {
+        Vector3 local = transform.InverseTransformPoint(worldPosition);
+        float halfWidth = Footprint.Width / 2f;
+        float halfDepth = Footprint.Depth / 2f;
+        int ix = Mathf.RoundToInt((local.x + halfWidth - TileSize / 2f) / TileSize);
+        int iz = Mathf.RoundToInt((local.z + halfDepth - TileSize / 2f) / TileSize);
+        return new Vector2Int(ix, iz);
+    }
+
+    private Vector3 CellToLocal(Vector2Int cell)
+    {
+        float halfWidth = Footprint.Width / 2f;
+        float halfDepth = Footprint.Depth / 2f;
+        float x = -halfWidth + TileSize / 2f + cell.x * TileSize;
+        float z = -halfDepth + TileSize / 2f + cell.y * TileSize;
+        return new Vector3(x, 0f, z);
     }
 
     // True while a body of `bodyRadius` is still within the interior, plus `slack`
@@ -235,7 +329,17 @@ public class RoomController : MonoBehaviour
                 instance.transform.localPosition = new Vector3(x, 0f, z);
                 instance.transform.localRotation = Quaternion.Euler(0f, placement.RotationY, 0f);
 
-                Vector3 size = alongX ? new Vector3(TileSize, 0f, ConnectorThickness) : new Vector3(ConnectorThickness, 0f, TileSize);
+                // Thin along the axis a body actually crosses to get through this connector
+                // (blocking that), full TileSize along the shared boundary line it sits on -
+                // an east/west (alongX) connector is thin in X and spans the full Z width of
+                // the boundary; a north/south one is thin in Z and spans the full X width.
+                // Swapped these two until 2026-09-13: the box ended up thin on the boundary's
+                // own line and TileSize-deep along the crossing axis instead, so its inflated
+                // clamp footprint reached a full tile deep into both neighbouring cells - far
+                // more than the thin wall it was meant to represent - and MoveTo's clamp kept
+                // shoving a chasing enemy back out of cells RoomPathfindingGrid correctly
+                // considered open, well short of a path it had already computed correctly.
+                Vector3 size = alongX ? new Vector3(ConnectorThickness, 0f, TileSize) : new Vector3(TileSize, 0f, ConnectorThickness);
                 _obstacleBounds.Add(new Bounds(new Vector3(x, 0f, z), size));
             }
             else
@@ -252,9 +356,36 @@ public class RoomController : MonoBehaviour
                 instance.transform.localPosition = new Vector3(anchorX, 0f, anchorZ);
                 instance.transform.localRotation = Quaternion.Euler(0f, placement.RotationY, 0f);
 
-                _obstacleBounds.Add(new Bounds(new Vector3(anchorX, 0f, anchorZ), new Vector3(TileSize, 0f, TileSize)));
+                _obstacleBounds.Add(SoloClampBounds(instance, anchorX, anchorZ));
             }
         }
+    }
+
+    // A Solo obstacle's actual footprint (a rock, a pillar, whatever the variant is) is
+    // frequently smaller than the full tile it's placed on, but until now the movement
+    // clamp (RoomObstacleBounds, below) assumed a full TileSize x TileSize box regardless -
+    // while EnemyStateMachine.HasClearLineToPlayer's Physics.Linecast tests the instance's
+    // real collider. That mismatch let a fast direction change (e.g. the player's dash)
+    // open "clear line" over the real collider while the coarse full-tile clamp still had
+    // the enemy pinned to the tile's edge, or the reverse - a straight-line MoveTo step
+    // could land past the real wall's edge while still reading as "outside" the full-tile
+    // box on both samples, tunnelling through what onscreen looked like solid stone
+    // (2026-09-14, "대쉬하면 벽을 뚫고 온다"). Reading the instance's actual collider bounds
+    // here makes the clamp agree with the same geometry the line-of-sight check already
+    // uses. Falls back to the old full-tile box only if a variant somehow ships with no
+    // collider, so an obstacle can never end up completely unclamped.
+    private Bounds SoloClampBounds(GameObject instance, float anchorX, float anchorZ)
+    {
+        Collider collider = instance.GetComponentInChildren<Collider>();
+        if (collider == null)
+        {
+            return new Bounds(new Vector3(anchorX, 0f, anchorZ), new Vector3(TileSize, 0f, TileSize));
+        }
+
+        Physics.SyncTransforms();
+        Bounds worldBounds = collider.bounds;
+        Vector3 localCenter = transform.InverseTransformPoint(worldBounds.center);
+        return new Bounds(new Vector3(localCenter.x, 0f, localCenter.z), new Vector3(worldBounds.size.x, 0f, worldBounds.size.z));
     }
 
     // Fills every grid cell except the (up to 4) bounding-box corners and, for a

@@ -510,6 +510,54 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 95202017}
   m_CullTransparentMesh: 1
+--- !u!1 &118380137
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 118380139}
+  - component: {fileID: 118380138}
+  m_Layer: 0
+  m_Name: EnemyPool_RelentlessMelee
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &118380138
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 118380137}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 00716125b86821345828f736fc825429, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: RogueLike::GameObjectPool
+  prefab: {fileID: 5630606254057332534, guid: 32aa894706868a24c86f574a32b38cce, type: 3}
+  defaultCapacity: 2
+  maxSize: 5
+  existingInstanceTag: 
+--- !u!4 &118380139
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 118380137}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!21 &129049406
 Material:
   serializedVersion: 8
@@ -7040,6 +7088,8 @@ MonoBehaviour:
     pool: {fileID: 1844833928}
   - variant: 4
     pool: {fileID: 674703307}
+  - variant: 5
+    pool: {fileID: 118380138}
   projectilePool: {fileID: 1606551805}
   activeItemDropManager: {fileID: 720580580}
 --- !u!4 &1499158212
@@ -9449,3 +9499,4 @@ SceneRoots:
   - {fileID: 610959581}
   - {fileID: 1873849705}
   - {fileID: 1579080805}
+  - {fileID: 118380139}

@@ -17,7 +17,8 @@ MonoBehaviour:
   patrolRadius: 3
   idleDuration: 1.5
   detectionRange: 6
-  leashRange: 9
+  leashRange: 12
+  searchDuration: 4
   attackPatterns:
   - {fileID: 11400000, guid: 4e545610843d4884accb3fb2ab09a2bf, type: 2}
   stunDuration: 0.15

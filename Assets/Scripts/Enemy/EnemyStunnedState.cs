@@ -28,7 +28,15 @@ public class EnemyStunnedState : IEnemyState
     public void SetKnockback(Vector3 direction, float distance)
     {
         _knockbackStart = _machine.Body.position;
-        _knockbackTarget = _knockbackStart + direction * distance;
+
+        // The Lerp below only ever checks the room/obstacle bounds it lands ON each step (via
+        // MoveTo), never the path between steps - a thin Connector segment (1 unit) is easy to
+        // jump clean over in a single step of the ease-out curve's early, larger deltas. Sweep
+        // the full knockback distance up front instead, the same way WallClamp already does for
+        // player movement, so the target itself is never past solid geometry.
+        Vector3 clampedDirection = WallClamp.ClampDirection(_machine.Capsule, direction, distance);
+        _knockbackTarget = _knockbackStart + clampedDirection * distance;
+
         _knockbackDuration = Mathf.Min(KnockbackDuration, _duration);
         _knockbackElapsed = 0f;
     }

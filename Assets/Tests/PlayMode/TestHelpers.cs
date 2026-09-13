@@ -37,15 +37,33 @@ namespace RogueLike.Tests
             float leashRange = 9f,
             float moveSpeed = 3f,
             float stunDuration = 0.15f,
-            float knockbackResistance = 0f)
+            float knockbackResistance = 0f,
+            float searchDuration = 4f,
+            bool tracksLivePositionWhileBlind = false,
+            float? attackRange = null)
         {
             var d = ScriptableObject.CreateInstance<EnemyData>();
-            SetPrivateField(d, "attackPatterns", Array.Empty<AttackPatternData>());
+
+            AttackPatternData[] patterns;
+            if (attackRange.HasValue)
+            {
+                var pattern = Track(ScriptableObject.CreateInstance<MeleeAttackPatternData>());
+                SetPrivateField(pattern, "range", attackRange.Value);
+                patterns = new AttackPatternData[] { pattern };
+            }
+            else
+            {
+                patterns = Array.Empty<AttackPatternData>();
+            }
+
+            SetPrivateField(d, "attackPatterns", patterns);
             SetPrivateField(d, "detectionRange", detectionRange);
             SetPrivateField(d, "leashRange", leashRange);
             SetPrivateField(d, "moveSpeed", moveSpeed);
             SetPrivateField(d, "stunDuration", stunDuration);
             SetPrivateField(d, "knockbackResistance", knockbackResistance);
+            SetPrivateField(d, "searchDuration", searchDuration);
+            SetPrivateField(d, "tracksLivePositionWhileBlind", tracksLivePositionWhileBlind);
             SetPrivateField(d, "wobbleAmplitude", 0f); // keep position assertions clean
             return Track(d);
         }
@@ -58,6 +76,12 @@ namespace RogueLike.Tests
             var go = new GameObject("TEST_Enemy");
             go.SetActive(false);
             go.transform.position = position;
+
+            // Matches Enemy_Basic.prefab's capsule - added before EnemyStateMachine so Awake's
+            // TryGetComponent<CapsuleCollider> (which populates its Capsule property) sees it.
+            var capsule = go.AddComponent<CapsuleCollider>();
+            capsule.radius = 0.5f;
+            capsule.height = 2f;
 
             var esm = go.AddComponent<EnemyStateMachine>();
             SetPrivateField(esm, "data", data);
@@ -72,12 +96,12 @@ namespace RogueLike.Tests
             return Track(esm);
         }
 
-        public RoomController BuildRoom(Vector3 center, float roomSize)
+        public RoomController BuildRoom(Vector3 center, float roomSize, StageEnemyEntry[] enemies = null, EnemySpawner enemySpawner = null, IReadOnlyList<ObstaclePlacement> obstacles = null, RoomObstacleSet obstacleSet = null)
         {
-            return BuildRoom(center, RoomFootprint.Square(roomSize));
+            return BuildRoom(center, RoomFootprint.Square(roomSize), enemies, enemySpawner, obstacles, obstacleSet);
         }
 
-        public RoomController BuildRoom(Vector3 center, RoomFootprint footprint)
+        public RoomController BuildRoom(Vector3 center, RoomFootprint footprint, StageEnemyEntry[] enemies = null, EnemySpawner enemySpawner = null, IReadOnlyList<ObstaclePlacement> obstacles = null, RoomObstacleSet obstacleSet = null)
         {
             var go = new GameObject("TEST_Room");
             go.transform.position = center;
@@ -90,9 +114,14 @@ namespace RogueLike.Tests
                 "Assets/Prefabs/RoomTiles/RoomTileSet_ModularSpace.asset");
             SetPrivateField(room, "tileSet", tileSet);
 #endif
+            if (obstacleSet != null)
+            {
+                SetPrivateField(room, "obstacleSet", obstacleSet);
+            }
+
             var data = new RoomData(1, RoomType.Combat, Vector2Int.zero, footprint,
-                Array.Empty<StageEnemyEntry>(), Array.Empty<RoomDoorConnection>());
-            room.Initialize(data, null, null);
+                enemies ?? Array.Empty<StageEnemyEntry>(), Array.Empty<RoomDoorConnection>(), obstacles);
+            room.Initialize(data, enemySpawner, null);
             return Track(room);
         }
 
@@ -100,6 +129,40 @@ namespace RogueLike.Tests
         {
             var go = new GameObject("TEST_Player") { tag = "Player" };
             go.transform.position = position;
+            return Track(go);
+        }
+
+        // A RoomObstacleSet wired with a bare, otherwise-unused GameObject as its
+        // ConnectorPrefab - enough for RoomController.BuildObstacles to actually run its real
+        // Connector sizing/placement logic (it early-returns with obstacleSet == null
+        // otherwise, which is why no earlier test caught the 2026-09-13 swapped-axis clamp
+        // bug: none of them wired one). Instantiate() only needs a GameObject to clone, not a
+        // saved asset, so this never touches the project's real obstacle prefabs.
+        public RoomObstacleSet MakeObstacleSet(GameObject soloPrefab = null)
+        {
+            var connectorPrefab = new GameObject("TEST_ConnectorPrefab");
+            Track(connectorPrefab);
+
+            var set = ScriptableObject.CreateInstance<RoomObstacleSet>();
+            SetPrivateField(set, "connectorPrefab", connectorPrefab);
+            if (soloPrefab != null)
+            {
+                SetPrivateField(set, "prefabs", new[] { soloPrefab });
+            }
+
+            return Track(set);
+        }
+
+        // Mirrors a real wall/room-obstacle collider: non-trigger BoxCollider, no Rigidbody.
+        // That combination is what WallClamp/EnemyStateMachine.IsSightBlocked treat as static
+        // blocking geometry, as opposed to dynamic bodies (player/enemy capsules) which are
+        // non-trigger but DO carry a Rigidbody.
+        public GameObject BuildStaticBlocker(Vector3 position, Vector3 size)
+        {
+            var go = new GameObject("TEST_StaticBlocker");
+            go.transform.position = position;
+            var box = go.AddComponent<BoxCollider>();
+            box.size = size;
             return Track(go);
         }
 
@@ -115,10 +178,19 @@ namespace RogueLike.Tests
 
         private static FieldInfo ResolveField(object target, string name)
         {
-            FieldInfo f = target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+            // GetField alone only sees fields declared directly on this exact type - a private
+            // field declared on a base class (e.g. AttackPatternData.range, set through a
+            // MeleeAttackPatternData instance) is otherwise invisible without walking up the
+            // hierarchy by hand.
+            FieldInfo f = null;
+            for (Type t = target.GetType(); t != null && f == null; t = t.BaseType)
+            {
+                f = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            }
+
             if (f == null)
             {
-                throw new ArgumentException($"no private instance field '{name}' on {target.GetType().Name}");
+                throw new ArgumentException($"no private instance field '{name}' on {target.GetType().Name} or its base types");
             }
             return f;
         }

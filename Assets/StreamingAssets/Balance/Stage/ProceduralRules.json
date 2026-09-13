@@ -5,11 +5,12 @@
     "itemRoomChance": "전투 없는 아이템 방을 배치할 확률 0~1. 데드엔드(문 1개짜리 방)가 보스 방 말고 하나 더 있어야 배치됩니다.",
     "enemiesPerCombatRoom": "각 전투방에 스폰되는 적 수 범위 {min, max}. 방마다 이 범위에서 시드가 뽑습니다. Start/Item 방은 적 0, Boss 방은 보스 1.",
     "variantWeights": "전투방 적의 변형 상대 가중치. melee/ranged/erraticMelee/burstRanged 4종(Boss 제외). 예: {melee:5, ranged:3, ...}이면 근접이 원거리보다 5:3으로 자주 나옵니다. 0으로 두면 그 변형은 안 나옵니다.",
-    "roomShapeWeights": "전투방(Combat)에 한해서만 적용되는 방 모양 상대 가중치 — square(정사각형 40x40)/wideRect(가로직사각형 44x28)/lShape(ㄱ자, 40x40 바운딩박스에서 한쪽 모서리 16x16 노치). Start/Item/Boss 방은 항상 정사각형(모양 가중치 미적용). 필드가 없으면 square만 100%. 0으로 두면 그 모양은 안 나옵니다."
+    "roomShapeWeights": "전투방(Combat)에 한해서만 적용되는 방 모양 상대 가중치 — square(정사각형 40x40)/wideRect(가로직사각형 44x28)/lShape(ㄱ자, 40x40 바운딩박스에서 한쪽 모서리 16x16 노치). Start/Item/Boss 방은 항상 정사각형(모양 가중치 미적용). 필드가 없으면 square만 100%. 0으로 두면 그 모양은 안 나옵니다.",
+    "relentlessCount": "이 층 전체에 배치될 RelentlessMelee(한 번 발각되면 방 안에서는 절대 놓치지 않는 근접 적)의 정확한 개수 범위 {min, max} - variantWeights와 별개로, 각 방의 평소 적 구성에 '추가로' 얹힘. 방마다 최대 1마리만 배치되도록 서로 다른 전투방에 분산됩니다(요청 개수가 전투방 수보다 많으면 있는 만큼만). 필드가 없으면 0마리."
   },
   "floors": [
-    { "roomCount": { "min": 6,  "max": 8  }, "itemRoomChance": 1.0, "enemiesPerCombatRoom": { "min": 2, "max": 4 }, "variantWeights": { "melee": 5, "ranged": 3, "erraticMelee": 1, "burstRanged": 1 }, "roomShapeWeights": { "square": 6, "wideRect": 2, "lShape": 2 } },
-    { "roomCount": { "min": 9,  "max": 11 }, "itemRoomChance": 1.0, "enemiesPerCombatRoom": { "min": 4, "max": 6 }, "variantWeights": { "melee": 4, "ranged": 4, "erraticMelee": 3, "burstRanged": 2 }, "roomShapeWeights": { "square": 4, "wideRect": 3, "lShape": 3 } },
-    { "roomCount": { "min": 12, "max": 14 }, "itemRoomChance": 0.5, "enemiesPerCombatRoom": { "min": 5, "max": 8 }, "variantWeights": { "melee": 3, "ranged": 5, "erraticMelee": 3, "burstRanged": 4 }, "roomShapeWeights": { "square": 3, "wideRect": 3, "lShape": 4 } }
+    { "roomCount": { "min": 6,  "max": 8  }, "itemRoomChance": 1.0, "enemiesPerCombatRoom": { "min": 2, "max": 4 }, "variantWeights": { "melee": 5, "ranged": 3, "erraticMelee": 1, "burstRanged": 1 }, "roomShapeWeights": { "square": 6, "wideRect": 2, "lShape": 2 }, "relentlessCount": { "min": 1, "max": 2 } },
+    { "roomCount": { "min": 9,  "max": 11 }, "itemRoomChance": 1.0, "enemiesPerCombatRoom": { "min": 4, "max": 6 }, "variantWeights": { "melee": 4, "ranged": 4, "erraticMelee": 3, "burstRanged": 2 }, "roomShapeWeights": { "square": 4, "wideRect": 3, "lShape": 3 }, "relentlessCount": { "min": 2, "max": 4 } },
+    { "roomCount": { "min": 12, "max": 14 }, "itemRoomChance": 0.5, "enemiesPerCombatRoom": { "min": 5, "max": 8 }, "variantWeights": { "melee": 3, "ranged": 5, "erraticMelee": 3, "burstRanged": 4 }, "roomShapeWeights": { "square": 3, "wideRect": 3, "lShape": 4 }, "relentlessCount": { "min": 2, "max": 4 } }
   ]
 }

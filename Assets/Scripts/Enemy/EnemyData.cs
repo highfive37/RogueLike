@@ -19,6 +19,15 @@ public class EnemyData : ScriptableObject
     [Header("Detection")]
     [SerializeField] private float detectionRange = 6f;
     [SerializeField] private float leashRange = 9f;
+    // How long (seconds) EnemyChaseState keeps heading toward the last position the player was
+    // seen at after losing line of sight, before giving up and returning to Patrol.
+    [SerializeField] private float searchDuration = 4f;
+    // When true, EnemyChaseState skips the last-known-position/predicted/look-around search
+    // entirely while blind and just keeps re-pathing toward the player's real current position
+    // every repath cycle - a "never loses track" enemy that always knows where you are, only
+    // blocked by needing to route around obstacles (see EnemyRelentlessMeleeData). Combined
+    // with a very large LeashRange/SearchDuration so it never gives up within the room either.
+    [SerializeField] private bool tracksLivePositionWhileBlind = false;
 
     [Header("Attack")]
     [SerializeField] private AttackPatternData[] attackPatterns;
@@ -41,6 +50,8 @@ public class EnemyData : ScriptableObject
     public float IdleDuration => idleDuration;
     public float DetectionRange => detectionRange;
     public float LeashRange => leashRange;
+    public float SearchDuration => searchDuration;
+    public bool TracksLivePositionWhileBlind => tracksLivePositionWhileBlind;
     public float WobbleFrequency => wobbleFrequency;
     public float WobbleAmplitude => wobbleAmplitude;
     public AttackPatternData[] AttackPatterns => attackPatterns;

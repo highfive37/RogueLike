@@ -36,12 +36,18 @@ public class PlayerMovement : MonoBehaviour
             direction.Normalize();
         }
 
-        // At high move speed (stacked move-speed pickups) a raw MovePosition command into a
-        // wall out-runs the solver and creeps the capsule through - strip the into-wall
-        // component first. See WallClamp.
+        // Strip any into-wall component so a full-speed move can't out-run the solver and
+        // tunnel through a wall - see WallClamp. A graze slides along the wall instead of
+        // stopping dead.
         direction = WallClamp.ClampDirection(_capsule, direction, CurrentMoveSpeed * Time.fixedDeltaTime);
 
-        Vector3 nextPosition = _rigidbody.position + direction * CurrentMoveSpeed * Time.fixedDeltaTime;
-        _rigidbody.MovePosition(nextPosition);
+        // Velocity-driven, not MovePosition (2026-09-13): with zero input this drives velocity
+        // to exactly zero every fixed step, which also clears any residual velocity a physics
+        // contact left on the Rigidbody (e.g. a spawn-time overlap with an enemy - both are
+        // non-kinematic). MovePosition to the Rigidbody's own current position never did that,
+        // so a stray solver push could linger and drift the player indefinitely (linearDamping
+        // is 0). Mirrors PlayerDodgeRoll's dash, which already uses linearVelocity for the same
+        // tunneling reason.
+        _rigidbody.linearVelocity = direction * CurrentMoveSpeed;
     }
 }

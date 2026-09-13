@@ -91,7 +91,8 @@ public static class ProceduralRules
             d.itemRoomChance,
             d.enemiesPerCombatRoom.min, d.enemiesPerCombatRoom.max,
             new VariantWeights(w.melee, w.ranged, w.erraticMelee, w.burstRanged),
-            shapeWeights);
+            shapeWeights,
+            d.relentlessCount.min, d.relentlessCount.max);
         // FloorRule's constructor sanitises out-of-range numbers.
     }
 
@@ -103,9 +104,9 @@ public static class ProceduralRules
     {
         return new List<FloorRule>
         {
-            new FloorRule(6, 8, 1.0f, 2, 4, new VariantWeights(5, 3, 1, 1), RoomShapeWeights.SquareOnly),
-            new FloorRule(9, 11, 1.0f, 4, 6, new VariantWeights(4, 4, 3, 2), RoomShapeWeights.SquareOnly),
-            new FloorRule(12, 14, 0.5f, 5, 8, new VariantWeights(3, 5, 3, 4), RoomShapeWeights.SquareOnly),
+            new FloorRule(6, 8, 1.0f, 2, 4, new VariantWeights(5, 3, 1, 1), RoomShapeWeights.SquareOnly, 1, 2),
+            new FloorRule(9, 11, 1.0f, 4, 6, new VariantWeights(4, 4, 3, 2), RoomShapeWeights.SquareOnly, 2, 4),
+            new FloorRule(12, 14, 0.5f, 5, 8, new VariantWeights(3, 5, 3, 4), RoomShapeWeights.SquareOnly, 2, 4),
         };
     }
 
@@ -123,6 +124,7 @@ public static class ProceduralRules
         public IntRange enemiesPerCombatRoom;
         public VariantWeightsDto variantWeights;
         public RoomShapeWeightsDto roomShapeWeights;
+        public IntRange relentlessCount;
     }
 
     [Serializable]

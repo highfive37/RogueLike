@@ -13,11 +13,13 @@ namespace RogueLike.Tests
         private static FloorRule Rule(
             int minRooms = 8, int maxRooms = 12, float itemChance = 1f,
             int minEnemies = 2, int maxEnemies = 4, VariantWeights? weights = null,
-            RoomShapeWeights? shapeWeights = null)
+            RoomShapeWeights? shapeWeights = null,
+            int minRelentless = 0, int maxRelentless = 0)
         {
             return new FloorRule(minRooms, maxRooms, itemChance, minEnemies, maxEnemies,
                 weights ?? new VariantWeights(1, 1, 1, 1),
-                shapeWeights ?? RoomShapeWeights.SquareOnly);
+                shapeWeights ?? RoomShapeWeights.SquareOnly,
+                minRelentless, maxRelentless);
         }
 
         private static readonly FloorRule P = Rule();
@@ -219,6 +221,120 @@ namespace RogueLike.Tests
                     foreach (StageEnemyEntry e in room.Enemies)
                     {
                         Assert.That(e.Variant, Is.EqualTo(EnemyVariantType.Ranged), $"seed {seed}");
+                    }
+                }
+            }
+        }
+
+        // --- RelentlessMelee (guaranteed per-floor count, not VariantWeights) ---
+
+        [Test]
+        public void RelentlessEnemies_NeverAppear_WhenRuleOmitsThem()
+        {
+            for (int seed = 0; seed < 40; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, P).Rooms)
+                {
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        Assert.That(e.Variant, Is.Not.EqualTo(EnemyVariantType.RelentlessMelee), $"seed {seed}");
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void RelentlessEnemies_TotalAcrossFloor_StaysWithinRequestedRange()
+        {
+            FloorRule r = Rule(minRooms: 9, maxRooms: 11, minRelentless: 2, maxRelentless: 4);
+            for (int seed = 0; seed < 60; seed++)
+            {
+                int total = 0;
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
+                {
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        if (e.Variant == EnemyVariantType.RelentlessMelee) { total++; }
+                    }
+                }
+                Assert.That(total, Is.InRange(2, 4), $"seed {seed} -> {total} relentless");
+            }
+        }
+
+        [Test]
+        public void RelentlessEnemies_NeverMoreThanOnePerRoom()
+        {
+            FloorRule r = Rule(minRooms: 9, maxRooms: 11, minRelentless: 2, maxRelentless: 4);
+            for (int seed = 0; seed < 60; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
+                {
+                    int inThisRoom = 0;
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        if (e.Variant == EnemyVariantType.RelentlessMelee) { inThisRoom++; }
+                    }
+                    Assert.That(inThisRoom, Is.LessThanOrEqualTo(1), $"seed {seed} room {room.RoomId}");
+                }
+            }
+        }
+
+        [Test]
+        public void RelentlessEnemies_AreAdditional_OnTopOfTheNormalVariantWeightsRoll()
+        {
+            // minEnemies == maxEnemies pins the normal roll's count exactly, so any room with
+            // more than that must have gotten its extra enemy from the relentless pass.
+            FloorRule r = Rule(minRooms: 9, maxRooms: 11, minEnemies: 3, maxEnemies: 3, minRelentless: 2, maxRelentless: 4);
+            bool sawAnAugmentedRoom = false;
+            for (int seed = 0; seed < 60; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
+                {
+                    if (room.Type != RoomType.Combat) { continue; }
+                    Assert.That(room.Enemies.Count, Is.InRange(3, 4), $"seed {seed} room {room.RoomId}");
+                    if (room.Enemies.Count == 4) { sawAnAugmentedRoom = true; }
+                }
+            }
+            Assert.That(sawAnAugmentedRoom, Is.True, "expected at least one room with 3 normal + 1 relentless across 60 seeds");
+        }
+
+        [Test]
+        public void RelentlessEnemies_NeverExceedAvailableCombatRoomCount()
+        {
+            // Ask for far more than any floor this small could possibly host distinct rooms for.
+            FloorRule r = Rule(minRooms: 8, maxRooms: 8, minRelentless: 50, maxRelentless: 50);
+            for (int seed = 0; seed < 20; seed++)
+            {
+                FloorLayout f = Gen(seed, 1, r);
+                int combatRooms = 0;
+                int relentless = 0;
+                foreach (RoomData room in f.Rooms)
+                {
+                    if (room.Type == RoomType.Combat) { combatRooms++; }
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        if (e.Variant == EnemyVariantType.RelentlessMelee) { relentless++; }
+                    }
+                }
+                Assert.That(relentless, Is.LessThanOrEqualTo(combatRooms), $"seed {seed}");
+            }
+        }
+
+        [Test]
+        public void RelentlessEnemySpawnPositions_StayInsideRoomInterior()
+        {
+            FloorRule r = Rule(minRooms: 9, maxRooms: 11, minRelentless: 2, maxRelentless: 4);
+            for (int seed = 0; seed < 40; seed++)
+            {
+                foreach (RoomData room in Gen(seed, 1, r).Rooms)
+                {
+                    float limitX = RoomBounds.InteriorHalfExtent(room.Footprint.Width, RoomBounds.WallThickness, 0.5f);
+                    float limitZ = RoomBounds.InteriorHalfExtent(room.Footprint.Depth, RoomBounds.WallThickness, 0.5f);
+                    foreach (StageEnemyEntry e in room.Enemies)
+                    {
+                        if (e.Variant != EnemyVariantType.RelentlessMelee) { continue; }
+                        Assert.That(Mathf.Abs(e.SpawnPosition.x), Is.LessThanOrEqualTo(limitX + 0.01f), $"seed {seed}");
+                        Assert.That(Mathf.Abs(e.SpawnPosition.z), Is.LessThanOrEqualTo(limitZ + 0.01f), $"seed {seed}");
                     }
                 }
             }

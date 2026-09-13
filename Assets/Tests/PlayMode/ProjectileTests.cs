@@ -43,6 +43,35 @@ namespace RogueLike.Tests
                 "player projectile should pass through the enemy projectile, not be cancelled");
         }
 
+        // 2026-09-13: confirms the "walls/obstacles already block projectiles" assumption
+        // from RoomObstacle work (non-trigger collider, no Rigidbody - same combo the wall
+        // cubes use) actually deactivates the projectile via OnTriggerEnter's generic
+        // "hit anything that isn't the owner or another Projectile" branch. That branch
+        // never inspects owner identity, so this covers enemy-fired and player-fired
+        // projectiles identically - both go through this same Projectile/OnTriggerEnter code.
+        [UnityTest]
+        public IEnumerator Projectile_HitsStaticWall_DespawnsInsteadOfPassingThrough()
+        {
+            GameObject owner = _t.Track(new GameObject("TEST_Owner"));
+            _t.BuildStaticBlocker(new Vector3(0f, 0f, 1f), new Vector3(1f, 3f, 3f));
+
+            Projectile shot = BuildProjectile(Vector3.zero, Vector3.forward, owner.transform);
+
+            Physics.SyncTransforms();
+
+            for (int i = 0; i < 4; i++)
+            {
+                yield return new WaitForFixedUpdate();
+                if (shot == null || !shot.gameObject.activeSelf)
+                {
+                    break;
+                }
+            }
+
+            Assert.That(shot != null && shot.gameObject.activeSelf, Is.False,
+                "projectile should despawn on hitting a static wall/obstacle collider, not pass through");
+        }
+
         // Mirrors Projectile_Basic.prefab: trigger SphereCollider r=0.5 on a
         // kinematic, no-gravity Rigidbody. Built inactive so Initialize lands after
         // Awake, like the pooled instances the game hands out.

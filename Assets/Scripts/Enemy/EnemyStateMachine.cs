@@ -10,6 +10,7 @@ public class EnemyStateMachine : MonoBehaviour
     private HealthComponent _healthComponent;
     private Transform _player;
     private IDamageable _playerDamageable;
+    private Rigidbody _playerRigidbody;
     private IEnemyState _currentState;
     private IAttackPattern[] _attackPatterns;
     private float _maxAttackRange;
@@ -18,8 +19,13 @@ public class EnemyStateMachine : MonoBehaviour
 
     public EnemyData Data => data;
     public Rigidbody Body { get; private set; }
+    public CapsuleCollider Capsule { get; private set; }
     public Transform Player => _player;
     public IDamageable PlayerDamageable => _playerDamageable;
+    // Zero if the player has no Rigidbody (e.g. a bare stand-in in a test) - EnemyChaseState's
+    // search uses this to extrapolate a bit past the last-seen position instead of freezing
+    // exactly on it.
+    public Vector3 PlayerVelocity => _playerRigidbody != null ? _playerRigidbody.linearVelocity : Vector3.zero;
     public Vector3 SpawnPosition { get; private set; }
     public IAttackPattern[] AttackPatterns => _attackPatterns;
     public float MaxAttackRange => _maxAttackRange;
@@ -42,6 +48,7 @@ public class EnemyStateMachine : MonoBehaviour
         if (TryGetComponent(out CapsuleCollider capsule))
         {
             _bodyRadius = capsule.radius;
+            Capsule = capsule;
         }
         WobblePhaseSeed = EnemyMovementFlavor.RandomPhaseSeed();
 
@@ -60,6 +67,12 @@ public class EnemyStateMachine : MonoBehaviour
     {
         projectilePool = pool;
     }
+
+    // The room this instance was spawned into - also EnemyChaseState's source for
+    // grid pathfinding (RoomController.FindPath) when a straight line to the player is
+    // blocked. Null-checked by callers (e.g. a stray enemy with no room wired falls back
+    // to straight-line chase, same as before pathfinding existed).
+    public RoomController Room => _room;
 
     // The room this instance was spawned into. Every enemy translation goes
     // through MoveTo, which clamps to this room's interior, so nothing - chase,
@@ -126,6 +139,7 @@ public class EnemyStateMachine : MonoBehaviour
         {
             _player = playerObject.transform;
             playerObject.TryGetComponent(out _playerDamageable);
+            playerObject.TryGetComponent(out _playerRigidbody);
         }
     }
 
@@ -219,7 +233,10 @@ public class EnemyStateMachine : MonoBehaviour
         Stun(data.StunDuration, direction, knockbackDistance);
     }
 
-    public bool CanSeePlayer(float range)
+    // Pure distance, no occlusion - EnemyChaseState's leash check uses this (not
+    // CanSeePlayer) so a chase isn't abandoned just because an obstacle briefly breaks line
+    // of sight around a corner; that's exactly the case grid pathfinding is meant to cover.
+    public bool IsPlayerWithinRange(float range)
     {
         if (_player == null)
         {
@@ -228,6 +245,31 @@ public class EnemyStateMachine : MonoBehaviour
 
         float sqrDistance = (transform.position - _player.position).sqrMagnitude;
         return sqrDistance <= range * range;
+    }
+
+    // Pure occlusion, no range gate - lets EnemyChaseState decide "straight line vs path
+    // around the obstacle" independent of leash distance.
+    public bool HasClearLineToPlayer()
+    {
+        return _player != null && !IsSightBlocked(transform.position, _player.position);
+    }
+
+    public bool CanSeePlayer(float range)
+    {
+        return IsPlayerWithinRange(range) && HasClearLineToPlayer();
+    }
+
+    // Same static-vs-dynamic test WallClamp.ClampDirection uses to tell walls/room
+    // obstacles (non-trigger, no Rigidbody) apart from bodies that shouldn't block sight
+    // (other enemies, the player capsule itself, both non-trigger WITH a Rigidbody) - so a
+    // crowd of enemies never blinds each other and a locked door (solid, no Rigidbody)
+    // correctly blocks like a wall while an unlocked one (blocker disabled) does not.
+    // A ray whose origin sits inside a collider never reports a hit against that same
+    // collider, so this doesn't self-block on the caster's or the player's own capsule.
+    private static bool IsSightBlocked(Vector3 from, Vector3 to)
+    {
+        return Physics.Linecast(from, to, out RaycastHit hit, ~0, QueryTriggerInteraction.Ignore)
+            && hit.rigidbody == null;
     }
 
     private void HandleDied()

@@ -5,7 +5,8 @@
 `Docs/AI_Decision_Log.md`를 참고. 원본 기획 문서는 `Docs/ProjectPlan.md`.
 각 문서의 역할 구분은 `Docs/DocumentationGuide.md` 참고.
 
-마지막 갱신: 2026-08-31 (Stage 2.5 — 아이작 스타일 방/문 시스템 전환 +
+마지막 갱신: 2026-09-14 (RelentlessMelee 실플레이 검증 중 A* 경로추종/이동 클램프
+버그 6건 발견·수정 — §6 #3d 사실상 완료); 2026-08-31 (Stage 2.5 — 아이작 스타일 방/문 시스템 전환 +
 액티브/패시브 아이템 시스템 도입 시점 기준); 2026-09-01 실플레이 검증 결과 반영;
 2026-09-02 로드맵 개정 — 다음 층 제작(목표 총 3층) + 3층 완성 후 UI Scene 전체
 플레이 루프 구성으로 §3·§5·§6 갱신; 2026-09-02 (2) `FloorCompleteUI` 자기-비활성
@@ -174,6 +175,23 @@ X축만 1/4 축소). 같은 세션에 유저가 요청한 "더 복잡한 패턴"
 `FenceCrossHub`/`PlusHub`/`DiagonalDoubleScatter` 3종 추가(대각선 패턴은 좁은 정사각형 방 대신
 ㄱ자 방에 배치). EditMode 104개 전부 통과, SceneView로 사방 교차 Connector 육안 확인. 상세는
 `DevLog.md`/`AI_Decision_Log.md` 2026-09-13.
+2026-09-13 (계속)~2026-09-14 신규 적 `RelentlessMelee`(한 번 본 플레이어를 방 안에서
+끝까지 쫓음, `TracksLivePositionWhileBlind`)를 실플레이로 검증하는 과정에서 **A*
+경로추종·이동 시스템에 서로 다른 원인의 버그 6건**을 순차 발견·수정(전부 신규 회귀
+테스트로 잠금): (1) 시작/목표가 같은 칸으로 반올림돼 트리비얼 경로가 나오던 문제 →
+`FindPath`가 같은 칸일 때 실제 위치 기준 인접 칸으로 보정(`ResolveEffectiveCell`),
+(2) 시야가 확보되면 공격 사거리 안에서도 멈추지 않던 문제 → `clearLine` 게이팅 추가,
+(3) Connector(얇은 벽) 클램프 박스의 두 축 크기가 뒤바뀌어 실제보다 훨씬 두껍게
+작동 → 축 스왑 수정, (4) 웨이포인트는 Y=0인데 적 몸체는 Y=1이라 도착 판정이 영원히
+성립 안 하던 문제 → 수평 거리만 비교하도록 수정, (5) `Repath()`가 재탐색마다
+`_pathIndex`를 0("지금 서 있는 칸 자신")으로 되돌려 진행을 스스로 취소하던 "떨림" 버그
+→ 경로가 2칸 이상이면 1번 인덱스로 바로 건너뛰도록 수정, (6) Solo 장애물의 이동
+클램프가 실제 프리팹 크기와 무관하게 항상 타일 전체(4×4)로 등록되어, 시야 판정(실제
+콜라이더 기준)과 서로 다른 장애물 모델을 쓰는 바람에 대쉬처럼 순간적인 위치 변화
+상황에서 적이 벽을 관통하던 문제 → 클램프 박스를 실제 `Collider.bounds`에서 읽도록
+변경. §6 #3d(A*)는 실질적으로 이 6건까지 포함해 완료 — EditMode 115/115, PlayMode
+36/36. 상세는 `DevLog.md` 2026-09-13(다섯 건)·2026-09-14(여섯 번째),
+`AI_Decision_Log.md` 2026-09-14(여섯 번째, 대안 비교 있었던 결정).
 
 ---
 
@@ -388,9 +406,9 @@ active 저장). `TitleScreenController`(Canvas에 부착): Start → TitleGroup 
 | 액티브 아이템 보유/장착 | `PlayerActiveItemInventory`, `OwnedActiveItem`, `ActiveItemEquipUI` | ESC 메뉴에서 소지 아이템 목록 확인 + 장착 전환 |
 | 패시브 스탯 | `PlayerPassiveStats`, `PlayerStatsPanelUI` | 공격력/이동속도/사거리/공격속도 4종 전부 "base + 고정값 보너스" 덧셈 모델로 통일(2026-08-31, §4 참고), ESC 메뉴에 Pip 바(10칸)로 표시 |
 | 밸런스 수치 | `GameBalance`, `Assets/StreamingAssets/Balance/*.json` | 플레이어 기본 스탯/패시브 아이템 효과를 JSON에서 로드, 파일 없거나 파싱 실패 시 내장 기본값으로 폴백 |
-| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead; 피격 시 `HealthComponent.AnyDamageTaken` 구독으로 `StunDuration`만큼 Stunned + `KnockbackResistance` 기반 넉백 — 2026-09-08. **모든 적 이동은 단일 초크포인트 `MoveTo(worldPos)` 경유** → 스폰 시 주입된 `RoomController`의 `ClampToInterior`로 방 내부 AABB에 클램프 + `FixedUpdate`의 `EnforceRoomContainment`가 slack 밖으로 나간 적을 스폰 지점으로 스냅 — 2026-09-09 적 방 이탈/진행 불가 버그 수정, §4 참고), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`, `Interrupt()` 있음), 공유 헬퍼 `RangedKitingBehavior`(원거리 3패턴 공통 후퇴/윈드업), `EnemyMovementFlavor`(직선 이동에 수직 sine wobble) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화. 원거리는 예외 없이 "가까우면 후퇴 → 벌어지면 윈드업 → 발사". 사거리(`MaxAttackRange`) 안에서는 Chase가 전진을 멈추고 이동은 공격 패턴 런지만 담당 — 공격 사이엔 정지·회전만(2026-09-08, 근접 적 공전 수정). 벽 관통 방지는 물리(적 Rigidbody는 Discrete)가 아니라 `MoveTo` 클램프가 담당 |
+| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead; 피격 시 `HealthComponent.AnyDamageTaken` 구독으로 `StunDuration`만큼 Stunned + `KnockbackResistance` 기반 넉백 — 2026-09-08. **모든 적 이동은 단일 초크포인트 `MoveTo(worldPos)` 경유** → 스폰 시 주입된 `RoomController`의 `ClampToInterior`로 방 내부 AABB에 클램프 + `FixedUpdate`의 `EnforceRoomContainment`가 slack 밖으로 나간 적을 스폰 지점으로 스냅 — 2026-09-09 적 방 이탈/진행 불가 버그 수정, §4 참고), `IAttackPattern`(`MeleeAttackPattern`/`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`, `Interrupt()` 있음), 공유 헬퍼 `RangedKitingBehavior`(원거리 3패턴 공통 후퇴/윈드업), `EnemyMovementFlavor`(직선 이동에 수직 sine wobble) | 일반 적과 보스가 같은 FSM을 공유, 공격 패턴 데이터로 차별화. 원거리는 예외 없이 "가까우면 후퇴 → 벌어지면 윈드업 → 발사". 사거리(`MaxAttackRange`) 안에서는 Chase가 전진을 멈추고 이동은 공격 패턴 런지만 담당 — 공격 사이엔 정지·회전만(2026-09-08, 근접 적 공전 수정). 벽 관통 방지는 물리(적 Rigidbody는 Discrete)가 아니라 `MoveTo` 클램프가 담당. Chase는 시야가 막히면(`HasClearLineToPlayer`) `RoomController.FindPath`(그리드 A*) 경로를 따르고 확보되면 직선 추격으로 복귀(2026-09-13) — 실플레이로 드러난 경로추종/클램프 버그 6건(트리비얼 same-cell 경로, Connector 클램프 축 스왑, 웨이포인트 도착판정 Y오차, `Repath` 진행취소 진동, 장애물 클램프-시야판정 불일치로 인한 벽관통 등) 전부 수정 완료(2026-09-13/14, 상세 `DevLog.md`) |
 | 적 스폰 | `EnemySpawner` | `EnemyVariantType`(Melee/Ranged/Boss/ErraticMelee/BurstRanged — 뒤 2종 2026-09-08 추가) → `GameObjectPool` 매핑 보유, 방 진입 시 `RoomData` 구성대로 스폰(방 로컬 오프셋 → 월드 좌표 변환), 사망 시 드롭 굴림(`ItemDropManager`) 트리거. 격리 측정용 `BenchmarkSpawner`는 이 경로를 우회(§3 Stage 3) |
-| 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, `modular_space` 타일 절차적 지오메트리 생성 — 2026-09-11, `RoomObstacleSet` 기반 장애물 배치(Solo 블록 + Connector 얇은 세그먼트 — 2026-09-13), 문 배선), `RoomFootprint`(바운딩박스+선택적 노치로 정사각형/가로직사각형/ㄱ자 표현 — 2026-09-11), `ObstaclePlacement`(`ObstacleShape{Solo,Connector}` — 2026-09-13)/`RoomObstacleSet`(`prefabs`+`connectorPrefab`)/`RoomObstacleBounds`(전투방 장애물 데이터·프리팹 세트·`ClampToInterior` 확장 클램프 — 2026-09-12, Connector는 세그먼트 실폭 기준 바운드로 정교화 — 2026-09-13), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커, `OwnerRoom` 보유 — 2026-09-11), `RoomTransitionController`(문 통과 시 `TargetRoom` 매칭으로 도착 문 특정 + 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)), 전투방 한정 격자 셀 2~3개를 실제로 병합하는 진짜 멀티셀 방(한 변에 문 여러 개 가능) 도입(2026-09-11), 전투방 한정 시드 기반 장애물 배치 도입(2026-09-12), 이어진 장애물을 칸 중심을 잇는 얇은 세그먼트로 교체 + 패턴 복잡도 확장(2026-09-13) — 적 우회(A*)는 다음 세션 |
+| 방/문 진행 | `StageManager`(`FloorDefinition[] floors` 기반 층/방 그래프 빌드+현재 방 추적, `AdvanceToNextFloor()`로 씬 리로드 없이 제자리에서 다음 층 재빌드— 2026-09-02 (3)), `RoomController`(방 하나의 생명주기: 지연 스폰, 클리어 추적, `modular_space` 타일 절차적 지오메트리 생성 — 2026-09-11, `RoomObstacleSet` 기반 장애물 배치(Solo 블록 + Connector 얇은 세그먼트 — 2026-09-13), 문 배선), `RoomFootprint`(바운딩박스+선택적 노치로 정사각형/가로직사각형/ㄱ자 표현 — 2026-09-11), `ObstaclePlacement`(`ObstacleShape{Solo,Connector}` — 2026-09-13)/`RoomObstacleSet`(`prefabs`+`connectorPrefab`)/`RoomObstacleBounds`(전투방 장애물 데이터·프리팹 세트·`ClampToInterior` 확장 클램프 — 2026-09-12, Connector는 세그먼트 실폭 기준 바운드로 정교화 — 2026-09-13), `DoorController`(문 잠금/해제 + 물리 차단 콜라이더 + 시각 마커, `OwnerRoom` 보유 — 2026-09-11), `RoomTransitionController`(문 통과 시 `TargetRoom` 매칭으로 도착 문 특정 + 카메라 연출 전환 + 층 시작 시 `PlacePlayerAt()`으로 플레이어를 시작방에 배치) | 스테이지 기반 진행을 아이작 스타일 공간형 방/문 시스템으로 전면 대체(2026-08-31), 다층 진행 지원 추가(2026-09-02 (3)), 전투방 한정 격자 셀 2~3개를 실제로 병합하는 진짜 멀티셀 방(한 변에 문 여러 개 가능) 도입(2026-09-11), 전투방 한정 시드 기반 장애물 배치 도입(2026-09-12), 이어진 장애물을 칸 중심을 잇는 얇은 세그먼트로 교체 + 패턴 복잡도 확장(2026-09-13), 적 우회는 그리드 A*(`RoomPathfindingGrid`)로 도입 완료(2026-09-13) — 이후 실플레이로 드러난 경로추종/클램프 버그 6건 수정(2026-09-13/14, 상세 `DevLog.md`) |
 | 아이템 드롭/픽업 | `ItemDropManager`, `ItemPickup` | 적 사망 시 확률 굴림(중복 방지 — 드롭된 아이템은 풀에서 제거). 드롭 좌표는 `Instantiate` 전에 `NudgeClearOfDoors()`로 근처 문 트리거 밖으로 밀어냄(문 앞 드랍템을 문 안 밟고 줍게, 슬라이드 안 보이게). 바닥 픽업 오브젝트가 트리거로 습득 처리 + `PickupNotificationUI` 표시(`HideImmediate()`로 층 전환 시 즉시 정리) |
 | 데미지 | `IDamageable`, `Health`(순수 C#), `HealthComponent` | 데미지 판정 + 수치·가해자 로그, 체력 상태, 사망 이벤트 |
 | 방 클리어 후 흐름 / 런 종료 | `RoomFlowManager` | "업그레이드 선택" 흐름은 폐기됨(§3). `FloorCompleted`(Floor Exit 진입) 시 결과 화면 표시 + 진행 중 구르기 취소(`CancelDodgeRoll`) + 픽업 알림 즉시 숨김(`HideImmediate`) — 둘 다 `timeScale=0` 일시정지 전에. 비마지막 층은 `AutoAdvanceRequested` → 페이드 전환 지휘. 플레이어 사망(`Health.Died`)도 여기서 처리(2026-09-08): `HandlePlayerDied` → 입력 off + `PauseState.RequestPause` + 캡슐 틱오버 코루틴 + `UIManager.ShowGameOver`, 스탯은 승/패 공용 `BuildCurrentStats()` |
@@ -460,8 +478,8 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
   지원. 플레이어/발사체는 기존 벽과 동일 메커니즘으로 자동 차단, 적은 `ClampToInterior` 확장으로
   통과만 막음(우회는 아직 없음). 상세는 위 헤더 changelog + `DevLog.md`/`AI_Decision_Log.md`
   2026-09-12.
-- 적 경로탐색(그리드 A*) — **다음 세션 예정**. 장애물 데이터가 이미 `RoomData.Obstacles`에
-  타일 그리드(4유닛) 좌표로 있으니 A*의 "막힌 칸" 입력으로 그대로 재사용 가능.
+- ~~적 경로탐색(그리드 A*)~~ — 완료(2026-09-13, `RoomPathfindingGrid`+`EnemyChaseState`).
+  이후 실플레이로 드러난 경로추종/클램프 버그 6건도 수정 완료(2026-09-13/14). §6 #3d 참고.
 - ~~**3층 제작**~~ — 완료(2026-09-04). 아이작식 13방(id 301~313, 중앙 시작 / 최원거리
   단문 보스 / CombatF 뒤 아이템 데드엔드 / 본체 루프 2개 / 선택 전투 데드엔드), 전투 적 54 +
   보스 1. 구조 검증(중복 0/상호대응·인접/BFS 13-13) 통과. 실플레이 최종 확인은 이월.
@@ -708,7 +726,7 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
    (`DeterministicRng`/`RngStreams`/`RunConfig`/`IFloorSource`/`ProceduralFloorGenerator`/
    `ProceduralRules.json`). 층 수 3 고정, 레이아웃·방 타입·문·적 구성이 절차적. Phase F(시드
    화면 표시 + 타이틀 시드 입력칸) 완료. 유저 1주파 실플레이 검증 완료.
-3. **적 경로탐색(그리드 A* 권장) + 방 안 장애물** — 절차적 방이 생긴 뒤 가치 상승(장애물이
+3. ~~**적 경로탐색(그리드 A* 권장) + 방 안 장애물**~~ — **완료(2026-09-14).** 절차적 방이 생긴 뒤 가치 상승(장애물이
    생성기의 일부). `EnemyChaseState` 이동만 교체. 프로파일러 계측(원래 #7)을 여기 흡수. 규모 4~5 세션.
    - 3a. ~~**방 구성(형태 다양화 + 진짜 멀티셀 병합)**~~ — **완료(2026-09-11).** `modular_space`
      타일 기반 지오메트리, 전투방 한정 가로직사각형/ㄱ자 형태, 격자 셀 2~3개를 실제로 병합하는
@@ -718,8 +736,28 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
      시드 기반 배치(타일 그리드 4유닛 좌표, 문/입구 클리어런스 + BFS 연결성 검사),
      플레이어/발사체는 기존 벽 메커니즘 그대로 자동 차단, 적은 `ClampToInterior` 확장으로
      통과만 막음. 상세는 헤더 changelog 2026-09-12 + `DevLog.md`/`AI_Decision_Log.md` 2026-09-12.
-   - 3c. **적 경로탐색(A*)** — **다음 세션 예정.** `EnemyChaseState` 이동을 그리드 A*로 교체
-     (막힌 칸 데이터는 `RoomData.Obstacles`에 이미 있음).
+   - 3c. **적 시야(Line of Sight) + 발사체 벽 차단** — **완료(2026-09-13).**
+     `EnemyStateMachine.CanSeePlayer`에 거리 체크 통과 후 `Physics.Linecast` 차단 판정 추가
+     (레이어 `~0` + `QueryTriggerInteraction.Ignore`, 히트 콜라이더에 `Rigidbody`가 없으면
+     차단 - `WallClamp`가 이미 쓰는 관례 재사용, 신규 레이어 불필요). 발사체 벽 차단은
+     `Projectile.OnTriggerEnter`가 owner 타입을 구분하지 않아 코드 변경 없이 이미 동작 확인.
+     PlayMode 신규 6개(`EnemyLineOfSightTests` 5 + `ProjectileTests` 1) 포함 17개 전부 통과,
+     EditMode 104개 회귀 없음. 상세는 `DevLog.md` 2026-09-13.
+   - 3d. **적 경로탐색(A*)** — **완료(2026-09-13).** 신규 `RoomPathfindingGrid`(순수 클래스,
+     `RoomBounds`/`RoomObstacleBounds`와 동일한 씬-비의존 패턴) - `ObstaclePlacement.LocalCell`
+     좌표계 그대로 4방향 A*, Solo는 칸 전체 차단·Connector는 두 칸 사이 간선만 차단.
+     `RoomController.FindPath`로 노출, `EnemyChaseState`는 시야가 막혔을 때만(`HasClearLineToPlayer`)
+     경로를 따라가고 확보되면 기존 직선 추격 유지. 부수적으로 `CanSeePlayer`(사거리+차단
+     통합)를 리쉬 체크에 그대로 쓰면 추격이 모퉁이에서 즉시 풀려버리는 상충을 발견해
+     `IsPlayerWithinRange`(순수 거리)로 리쉬 체크를 분리. 상세는 `DevLog.md` 2026-09-13.
+   - 3e. **실플레이 검증 중 경로추종/클램프 버그 6건 수정** — **완료(2026-09-14).**
+     신규 적 `RelentlessMelee` 실플레이로 A*가 실제로는 안정적으로 동작하지 않는 지점을
+     연속 발견: 트리비얼 same-cell 경로, 시야 확보 시에도 안 멈추던 문제, Connector 클램프
+     축 스왑, 웨이포인트 도착판정 Y오차, `Repath`가 매번 진행을 스스로 취소하던 "떨림",
+     Solo 장애물 클램프가 항상 4×4로 뭉뚱그려져 시야판정(실제 콜라이더)과 불일치해 대쉬 중
+     벽을 관통하던 문제 — 전부 회귀 테스트로 잠금. EditMode 115/115, PlayMode 36/36.
+     대안 비교가 있었던 마지막 건(벽 관통)은 `AI_Decision_Log.md` 2026-09-14, 전체 상세는
+     `DevLog.md` 2026-09-13(1~5)·2026-09-14(6).
 4. **입력 버퍼링 + 프레임레이트 독립성** — 건전식 타이트 조작. 규모 1 세션. 게임필 우선 시 3과 순서 교체 가능.
 5. **커스텀 에디터 툴링 — SO 검증 패스** (+ 여유 시 층 그래프 비주얼라이저) — 노력 대비 신호 큼, 1 세션.
 6. **세이브/로드 — 버전드 직렬화 + 런 이어하기** — 아무것도 언블록 안 함, 가장 나중 또는 마감 시 스킵.

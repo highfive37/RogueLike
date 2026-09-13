@@ -30,6 +30,71 @@
 
 ---
 
+## 2026-09-14
+
+### 진행 내용
+
+**RelentlessMelee 여섯 번째 원인: 장애물 이동 클램프가 항상 4×4 타일 박스로 뭉뚱그려져, 실제 콜라이더를 쓰는 시야 판정과 서로 다른 장애물 모델을 씀 ("대쉬하면 벽을 뚫고 온다")**
+- 유저가 다섯 번째 수정 이후에도 라이브 플레이 중 재현: "적이 계속 벽을 비비고 있고, 내가
+  위쪽으로 대쉬하면 얘가 벽을 뚫고 온다." 대쉬와 상관관계가 있다는 새 단서.
+- `Time.frameCount`를 여러 번 확인해 시뮬레이션이 실제로 멈춰있던(에디터 창 포커스 상실)
+  구간과 실제로 진행 중인 구간을 먼저 구분한 뒤(이번 세션에서 반복 확인된 환경적 아티팩트),
+  `RunCommand`로 실제 위치/`FindPath`/`HasClearLineToPlayer`를 읽어 코드 경로를 추적.
+- 근본 원인: `EnemyStateMachine.HasClearLineToPlayer()`는 `Physics.Linecast`로 인스턴스의
+  **실제 콜라이더**를 검사하는 반면, 이동을 막는 `RoomObstacleBounds`/`ClampToInterior`의
+  장애물 박스(`RoomController._obstacleBounds`)는 Solo형 장애물의 경우 실제 프리팹 크기와
+  무관하게 항상 **타일 전체(4×4)** 크기로 등록되어 있었음(`BuildObstacles`, 이전 세션에
+  "장애물이 항상 4x4로 취급된다"고 지적했던 바로 그 지점). 즉 시야 판정과 이동 클램프가
+  서로 다른 두 장애물 모델을 씀. 대쉬처럼 플레이어 위치가 짧은 시간에 크게 바뀌는 상황에서
+  `EnemyChaseState.PhysicsTick`의 `clearLine` 분기(177~181줄, 실제 콜라이더 기준 시야가
+  열리면 A* 경로를 버리고 플레이어를 향해 직선 이동)가 켜지는 순간, 그 직선 이동이 화면상
+  벽으로 보이는 지점(실제보다 부풀려진 4×4 클램프 박스와 실제 콜라이더 사이의 불일치 구간)을
+  가로지르며 클램프에 걸리지 않고 통과하는 경우가 생김.
+- 수정: `RoomController.BuildObstacles`가 Solo 장애물 인스턴스를 배치한 직후
+  `Physics.SyncTransforms()`로 트랜스폼을 동기화하고, 그 인스턴스의 실제 `Collider.bounds`를
+  읽어 이동 클램프 박스를 구성하도록 변경(`SoloClampBounds` 신규 메서드) - 콜라이더가 없는
+  변형은 안전하게 기존 전체 타일 박스로 폴백. Connector 장애물은 2026-09-13에 이미 실제
+  두께에 맞게 고쳐져 있어 이번 수정 대상에서 제외(그대로 유지).
+- A* 경로탐색 그리드(`RoomPathfindingGrid`, 셀 단위 walkable/blocked)는 이번 수정과 무관 -
+  여전히 셀 전체를 막힌 것으로 취급하며, 이번 수정은 오직 이동 클램프의 "실제로 어디까지가
+  물리적으로 막힌 영역인가"만 시야 판정과 일치시킨 것.
+- 회귀 테스트 추가: `ClampToInterior_SoloObstacleSmallerThanTile_ClampBoxMatchesRealColliderNotFullTile`
+  - 1×1×1 콜라이더를 가진 테스트용 Solo 프리팹을 타일 중심에 배치하고, 실제 콜라이더
+  바깥이지만 옛 전체-타일 가정 안쪽인 지점(로컬 z=1.5)이 더 이상 밀려나지 않는지 검증.
+- [x] 재검증: EditMode 115/115. PlayMode는 신규 테스트 포함 36개 기준 4회 반복 실행 -
+  35/36, 34/36, 35/36, 36/36(첫 클린 런은 재실행 없이 확정하지 않고 추가 확인). 실패는 항상
+  기존에 알려진 Patrol/Idle 타이밍 플레이키 테스트(`Chase_VisitsEveryCheckpoint_With
+  NobodyThere_GivesUpToPatrol`) 또는 다섯 번째 수정의 회귀 테스트(`ChaseState_
+  SlowEnemyAcrossManyRepathCycles_MakesSteadyProgressInsteadOfOscillating`, 대칭 우회
+  경로의 A* 동률 특성상 원래도 결과 변동폭이 있다고 문서화된 테스트)에서만 발생 - 이 두
+  테스트가 정확히 관여하는 `RoomController` 코드 경로(전자는 obstacleSet 없이 room을
+  빌드해 `BuildObstacles`가 조기 반환, 후자도 obstacleSet 미전달이라 이번 수정 대상인
+  `SoloClampBounds`가 전혀 호출되지 않음)를 확인해 이번 수정과 무관함을 확정. 신규 테스트
+  자체는 4회 모두, 그리고 별도 단독 실행 2회에서도 전부 통과.
+
+### 테스트 결과
+- [x] EditMode 115/115
+- [x] PlayMode 36/36 (신규 테스트 포함) - 반복 실행 중 실패는 전부 기존에 알려진 무관한
+  플레이키 테스트에서만 발생, 최종 1회는 완전 클린(36/36)
+
+### 이슈/메모
+- `ChaseState_SlowEnemyAcrossManyRepathCycles_MakesSteadyProgressInsteadOfOscillating`이
+  전체 36개 스위트 안에서 돌 때는 이번 세션 확인 중 2/3회 실패(둘 다 "거리가 오히려 늘어남"
+  형태)했지만, 이 테스트만 단독으로 필터링해 돌리면 2/2회 모두 통과 - 이 테스트가 관여하는
+  코드 경로가 이번 수정과 무관함을 이미 확인했으므로, 스위트 전체를 순서대로 돌릴 때만
+  발생하는 타이밍/부하 민감성(다른 테스트들이 남긴 상태나 프레임 타이밍 영향)으로 보임.
+  기존에 알려진 Patrol/Idle 플레이키 2종에 이어 세 번째로 "정상적인 결함이 아닌 스위트
+  실행 순서 민감성" 사례로 추가 기록.
+
+### 다음 작업
+- 로드맵 §3(방/장애물 배치 + A* 경로탐색) 관련 라이브 버그 6건 모두 수정 완료. 이제 §4
+  입력 버퍼링 + 프레임레이트 독립성, 또는 §5 커스텀 에디터 툴링으로 넘어갈 시점.
+- 유저 최종 판단(2026-09-14): 적이 매끄럽게 코너를 돌지는 못하지만(직선 MoveTo + 클램프
+  방식의 태생적 한계, 코너 비빔 잔존) 결국 찾아오고 공격은 성립하므로, 움직임 스무딩은
+  더 파지 않고 여기서 §3 마무리 — 이동 다듬기는 우선순위 낮은 백로그로 남김.
+
+---
+
 ## 2026-09-13
 
 ### 진행 내용
@@ -65,8 +130,279 @@
   방은 클리어런스 제외 시 3×3칸뿐이라 폭이 필요한 대각선 패턴은 ㄱ자 방(실질 7×7 가용 영역)에만
   배치.
 
+**적 시야(Line of Sight) 추가 + 발사체 벽 차단 검증 (계획대로 A* 이전에 선행)**
+- 설계는 사전 합의된 A안 그대로: `EnemyStateMachine.CanSeePlayer(range)` 한 곳에만 손을 댐 -
+  기존 거리 체크를 통과한 뒤 `Physics.Linecast`로 적↔플레이어 사이를 검사, 막혔으면 `false`.
+  이 메서드가 Chase/Attack/Idle/Patrol 상태와 공격 패턴 4종까지 총 8곳에서 이미 유일한
+  "보인다" 판정 지점이라 호출부는 전혀 안 건드림.
+- 차단 판정은 새 레이어를 만들지 않고 `WallClamp.ClampDirection`이 이미 쓰는 관례를 그대로
+  재사용: 레이어 `~0` + `QueryTriggerInteraction.Ignore`로 캐스트하고, 히트한 콜라이더에
+  `Rigidbody`가 없으면(=벽/장애물/잠긴 문 같은 정적 지형) 시야 차단으로 취급. `Rigidbody`가
+  있으면(적/플레이어 캡슐) 차단하지 않음 - 적끼리 서로의 시야를 가리는 일이 없음. 신규 레이어
+  세팅이나 프리팹 재배정이 전혀 필요 없었음.
+- 플레이어/적 캡슐 프리팹의 `CapsuleCollider.center`가 둘 다 `(0,0,0)`(피벗 = 몸통 중심)이라
+  레이캐스트 시작/끝점에 별도 눈높이 오프셋을 줄 필요가 없음을 프리팹 값 확인 후 결정.
+- 발사체 벽 차단은 코드 변경 없이 기존 구조로 이미 동작함을 확인만 함: `Projectile.
+  OnTriggerEnter`는 owner 타입(플레이어/적)을 전혀 구분하지 않고 "owner 자신도, 다른
+  Projectile도 아닌 콜라이더에 닿으면 소멸"이라 벽/장애물(non-trigger, Rigidbody 없음)에
+  플레이어 발사체든 적 발사체든 동일하게 막힘.
+
 ### 테스트 결과
-- [x] EditMode 104개 전부 통과 (`TestRunnerApi` in-process 실행, `TestResults.xml` 확인)
+**플레이어-적 스폰 겹침 + 유휴 상태 잔여 속도 드리프트 수정 (유저 실플레이 중 발견)**
+- 유저가 1층 근접 전투방에서 겪은 두 증상을 보고: (a) 입장 시 스폰된 적과 플레이어가 겹쳐
+  "비벼지는" 현상, (b) 적을 몇 마리 잡은 뒤 아무 조작 없이도 플레이어가 화면 위쪽으로 천천히
+  계속 밀리는 현상. 원인 분석 결과 두 개의 별개 구멍이 연쇄된 것으로 확인 (상세 비교는
+  `AI_Decision_Log.md` 2026-09-13 (2)):
+  1. `EnemySpawner.SpawnRoom`이 스폰 위치를 방 벽/장애물 기준으로만 클램프하고 플레이어의
+     실제 현재 위치와의 거리는 전혀 검사하지 않아, 근접 전투방에서 적이 플레이어 위에 그대로
+     스폰될 수 있었음.
+  2. 플레이어 Rigidbody는 `m_LinearDamping: 0`(감쇠 없음)인데 `PlayerMovement.FixedUpdate`는
+     입력이 0이어도 `MovePosition(현재위치)`만 호출할 뿐 `Rigidbody.linearVelocity`를 절대
+     리셋하지 않음 - 위 스폰 겹침처럼 물리 솔버가 접촉 시 부여한 속도가 있으면, 대시
+     로직(`PlayerDodgeRoll`)과 달리 아무것도 그 속도를 지우지 않아 등속으로 무한히 남음.
+- 수정 1(`EnemySpawner`): 벽 클램프 직후 `ClearOfPlayer` 단계 추가 - 스폰 위치가 플레이어와
+  (두 캡슐 반지름 합 + 여유 마진) 미만으로 가까우면 플레이어→스폰위치 방향으로 필요한 만큼만
+  밀어내고 다시 방 경계로 클램프. 정확히 같은 좌표(거리 0)인 엣지 케이스는 임의 방향
+  (`Vector3.forward`)으로 폴백.
+- 수정 2(`PlayerMovement`): 이동 방식을 `MovePosition` → `Rigidbody.linearVelocity` 직접
+  구동으로 전환(입력 0이면 매 FixedUpdate마다 속도를 정확히 0으로 덮어씀) - `PlayerDodgeRoll`
+  대시가 이미 쓰는 것과 동일한 관례로 통일. `WallClamp.ClampDirection`으로 벽 방향 성분을
+  걸러내는 로직은 그대로 유지(밀어붙이면 멈춤, 스치면 벽을 따라 슬라이드).
+- 실플레이 중 부가로 발견했던 넉백 관통도 이번에 같이 수정: 원인은
+  `EnemyStunnedState.PhysicsTick`의 넉백이 PhysX 충돌이 아니라 `Lerp` + `RoomController.
+  ClampToInterior`(순수 위치 클램프, AABB 기준)로 구현되어 있어 - 한 프레임의 lerp 이동량이
+  벽 두께(1유닛)보다 크면 시작점과 끝점 둘 다 벽 바깥이라 클램프가 "통과 자체"를 못 봄
+  (경로를 따라가며 검사하는 스윕 방식이 아니라 최종 위치만 사후 검사하는 방식의 한계).
+  수정: `EnemyStunnedState.SetKnockback`에서 넉백 목표 지점을 계산하는 시점에 플레이어
+  걷기가 이미 쓰는 `WallClamp.ClampDirection`(캡슐 스윕)을 그대로 재사용해 전체 넉백 거리를
+  한 번에 스윕 검사 - 매 프레임 재검사가 아니라 넉백 시작 시 한 번만 계산하므로 `PhysicsTick`
+  자체는 무수정. `EnemyStateMachine`에 `Capsule` 프로퍼티를 새로 노출해 넉백 계산이 실제 캡슐
+  형상을 참조할 수 있게 함.
+
+**C1(velocity 구동 전환) 수정 후 유저가 "초기 이동 속도가 눈에 띄게 느려진 것 같다"고 피드백
+- 새 버그가 아니라 원래 있던 문제가 처음 드러난 것**
+- 실측 결과 플레이어 캡슐이 바닥 콜라이더에 실제로 0.1유닛 파묻혀 있었음
+  (`Physics.ComputePenetration` 확인). 바닥은 `Ground` 레이어의 진짜(트리거 아닌) 콜라이더고
+  레이어 충돌 행렬은 전부 켜져 있어 물리적으로 충돌 중 - 그런데 플레이어 Rigidbody가
+  `FreezePositionY` 제약이라 이 겹침을 절대 못 풂. 이전 `MovePosition` 방식은 매 프레임 위치를
+  강제로 덮어써서 이 마찰이 드러날 자리가 없었는데, `linearVelocity` 직접 구동으로 바뀌면서
+  진짜 PhysX 접촉 마찰이 매 스텝 이동량을 갉아먹기 시작한 것 (`Physics.Simulate`로 10스텝
+  격리 측정: 마찰 없다면 1.2유닛 이동해야 하는데 실제로는 0.72유닛, 약 40% 손실).
+- 수정: 유저와 상의 후 스폰/정지 높이를 조정하는 대신(눈에 보이는 팝/드롭 위험 우려)
+  **Physics Layer Collision Matrix에서 `Default × Ground` 충돌 자체를 끔**
+  (`Physics.IgnoreLayerCollision(Default, Ground, true)`를 에디터 모드에서 호출해
+  `ProjectSettings/DynamicsManager.asset`에 영구 반영, 코드 무변경). 적/벽/장애물도 전부
+  Default 레이어라 이 설정으로 다 같이 혜택 보는데, 벽/장애물은 정적이라 원래 영향 없고 적은
+  아직 `MoveTo`(포지션 강제 이동) 방식이라 이 마찰이 원래도 안 드러나던 상태 그대로라
+  회귀 없음. 위치값은 전혀 안 건드리므로 시각적 변화 없음.
+
+**적 경로탐색(그리드 A*) 도입 — 로드맵 §3 마지막 항목**
+- 사전 확정한 설계대로 진행: (1) Connector 얇은 세그먼트는 셀 전체가 아니라 두 칸 사이의
+  간선(edge)만 차단, (2) 시야가 확보되면 직선 추격(기존 그대로, 저렴함) / 막혔을 때만 경로
+  추종 - 오늘 만든 `CanSeePlayer`(시야) 작업이 정확히 이 게이팅에 재사용됨.
+- 신규 `RoomPathfindingGrid`(순수 클래스, `RoomBounds`/`RoomObstacleBounds`와 동일하게 씬
+  의존성 없음) - `ObstaclePlacement.LocalCell`과 같은 좌표계로 4방향 A* 수행. Solo는 칸 전체
+  차단, Connector는 `LocalCell`↔이웃 칸 사이의 간선만 별도 `HashSet`으로 차단(칸 자체는
+  걸어다닐 수 있음). 노치(L자 방) 칸은 `RoomController.BuildFloor`의 동일한 판정식을 그대로
+  복제해 항상 통행 불가 처리. 오픈셋은 배열 선형 스캔(방 크기가 수십 칸 수준이라 힙 오버헤드가
+  손해).
+- `RoomController.Initialize`에서 지오메트리/장애물 빌드 직후 그리드 1회 생성해 캐싱,
+  `FindPath(월드좌표, 월드좌표)`로 얇은 래퍼 노출(`ClampToInterior`와 동일한 위상의 룸 소유
+  공간 쿼리) - 셀↔월드 변환은 `RoomController.BuildFloor`가 쓰는 것과 동일한 공식.
+  `RoomData.Obstacles`가 원래부터 옵션 파라미터(기본 빈 리스트)라 장애물 없는 방도 그대로
+  동작(전 칸이 열린 그리드).
+- `EnemyChaseState`가 매 프레임 직선 추격 대신: `HasClearLineToPlayer()`(신규, 사거리 무관
+  순수 시야 차단 여부)가 참이면 기존 직선 로직 그대로, 거짓이면 캐싱된 경로의 다음 웨이포인트로
+  이동 - 0.3초 주기 또는 경로 소진 시 재탐색. 룸이 없거나 경로를 못 찾으면 플레이어 위치로
+  직행하는 예전 동작으로 안전하게 폴백.
+- **부수 발견/수정**: 오늘 오전 시야 작업에서 `CanSeePlayer`(사거리+차단 통합 판정)를
+  `EnemyChaseState`의 리쉬(leash) 체크에도 그대로 썼는데, 그러면 추격 중 모퉁이에 잠깐
+  가려지기만 해도 즉시 Patrol로 풀려버려 - A*가 존재할 이유 자체가 없어지는 상충이 발견됨.
+  `EnemyStateMachine`에 순수 거리 전용 `IsPlayerWithinRange(range)`를 분리해 리쉬 체크는
+  이걸로 교체(공격 전이/최초 발견 판정은 기존처럼 차단 포함 `CanSeePlayer` 유지) - 추격은
+  거리로만 유지, 시야 차단 여부는 순수하게 "직선이냐 경로냐"만 결정하도록 역할을 나눔.
+
+**같은 세션 (2) — 실플레이 재검증 중 발견: 근접 적이 십자형 장애물 뒤에 숨은 플레이어를
+놓친 뒤 "경로탐색을 안 하는 것처럼" 보임 → 원인은 `leashRange` 값 자체가 방 크기 대비
+너무 작았던 것 (A* 코드 문제 아님), + 후속으로 "마지막 목격 위치 수색" 행동 추가**
+- 원인: `EnemyBasicData.leashRange = 9`인데 전투방은 28×28(정사각형)~36×16(병합)~40×40(보스)
+  - 리쉬가 방 한 변보다도 작아서, 장애물 뒤에 숨어 시야가 막히기도 전에 이미 순수 직선
+    거리만으로 추격이 풀려버림(A* 코드 자체는 실제 절차생성 방들에서 이미 `FindPath` 정상
+    반환 확인됨 - 버그 아니라 밸런스 수치 문제였음).
+- 유저와 논의 후 `leashRange: 9 → 12`(`EnemyBasicData.asset`)로 조정 + 근본적으로
+  `EnemyChaseState`에 "마지막 목격 위치 수색" 행동 추가(새 상태 클래스 대신 기존 State
+  확장 - 경로 추종 로직이 이미 있어서 재사용). `EnemyData`에 `searchDuration`(기본 4초)
+  신규 필드 추가.
+- `EnemyChaseState.Tick`: 시야 확보 중엔 기존 그대로(실시간 거리로 리쉬 감시 + Attack 전이).
+  시야를 잃으면 실시간 거리 감시를 멈추고 셋 중 하나로만 포기 판단 - (a) 마지막 목격
+  위치(`_lastKnownPlayerPosition`, 시야 확보 중 매 틱 갱신)에 도착했는데 없음, (b)
+  `searchDuration` 초과, (c) 그새 실제 위치가 `leashRange × 2`(하드 컷오프, 코드 상수)보다
+  멀어짐 - 이건 수색 중에도 남겨두는 안전장치. `EnemyChaseState.PhysicsTick`/`Repath`도
+  경로 목표를 실시간 플레이어 위치 대신 이 스냅샷으로 교체(수색이지 전지적 추적이 아니게).
+- 다른 적 데이터(`EnemyErraticMeleeData` 등)는 이번엔 안 건드림 - 신규 `searchDuration`
+  필드는 직렬화 안 된 에셋도 C# 기본값(4)으로 정상 로드됨을 라이브로 확인.
+
+**같은 세션 (3) — 실플레이 재검증 중 재발견: 근접 적이 바짝 붙어 쫓다가 코너에서 놓치면
+수색을 한 걸음도 안 해보고 바로 Patrol로 빠짐 → "도착 판정이 시야를 잃은 즉시 이미
+충족돼 있는" 근접전 특유의 엣지 케이스로 확인, 최소 수색 시간 추가로 수정**
+- 원인: `_lastKnownPlayerPosition`은 시야가 확보된 마지막 틱의 플레이어 위치인데, 근접
+  적은 공격 사거리(~1.2)까지 파고들며 쫓기 때문에 시야를 잃는 그 순간 이미 적이 그 위치
+  바로 옆(`SearchArriveDistance` 1.5 이내)에 서 있는 경우가 대부분 - 그래서 수색 이동을
+  시작하기도 전에 "도착했는데 없음" 조건이 즉시 참이 됨. 원거리에서 놓친 경우(방이 크거나
+  거리를 두고 시야가 끊기는 경우)엔 원래 의도대로 몇 걸음 이동한 뒤 판정되어 문제 없었음 -
+  근접 교전 특유의 좁은 사거리 때문에 생기는 엣지 케이스였음.
+- 수정: `EnemyChaseState`에 `MinimumSearchTime`(0.5초, 코드 상수) 추가 - "도착했는데 없음"
+  조건이 이 시간 이상 지난 뒤에만 성립하도록 게이트. 이미 도착해 있어도 최소 그 시간만큼은
+  그 자리에서 버틴 뒤 포기하게 되어, 시야를 잃자마자 즉시 Patrol로 빠지는 일이 없어짐.
+  나머지 두 포기 조건(시간 초과/하드 컷오프)은 무수정.
+- 논의 중 나온 "계속 추적하는 적 타입을 따로 만드는 게 나은가"는 기각 - A*가 눈에 보이려면
+  "절대 포기 안 함"이 필요조건이 아니라, 포기 조건(리쉬/도착 판정)이 실제 교전 거리와 안
+  맞아서 A*가 발동할 틈도 없이 상태가 넘어가는 게 문제였을 뿐. 이번 수정으로 일반 적들도
+  충분히 "경로를 따라 찾아오는" 모습을 보여줄 수 있을 것으로 판단, "포기 안 하는 적"은
+  버그 수정이 아니라 순수 컨텐츠 다양성 차원의 별개 아이디어로 보류.
+
+**같은 세션 (4) — 최소 수색 시간만으로는 "적이 이미 목표 지점에 있어서 갈 곳이 없는" 경우
+(얇은 벽 옆에서 빠르게 빠지는 경우) 여전히 제자리에 서 있다가 돌아가는 것처럼 보임 →
+"플레이어 이동 방향 예측"(A안) + "도착 후 주변 재확인"(B안, 실제 이동 버전)을 조합해 추가**
+- A안: 시야가 확보된 동안 `_lastKnownPlayerVelocity`(플레이어 Rigidbody의 `linearVelocity`,
+  `EnemyStateMachine.PlayerVelocity`로 신규 노출)도 같이 스냅샷 - 시야를 잃으면 목표를
+  "마지막 위치" 그대로가 아니라 `마지막 위치 + 마지막 속도 × PredictionLookAheadTime(0.6초)`로
+  약간 밀어서 계산. 플레이어가 실제로 이동 중이었다면 근접 상황에서도 실제로 몇 걸음은
+  이동하게 됨.
+- B안(제대로 된 버전): 예측 지점(체크포인트 0)에 도착했는데도 없으면 곧장 포기하지 않고,
+  마지막 목격 위치 주변에 무작위로 2곳(`LookAroundPointCount`, 반경 `LookAroundRadius` 3유닛)을
+  더 체크포인트로 잡아 순서대로 이동/확인. 모든 체크포인트를 다 확인했는데도 없으면 그때
+  Patrol로 전환. 재사용성을 위해 `EnemyChaseState`가 이제 단일 목표가 아니라 체크포인트
+  리스트(`_searchCheckpoints`/`_checkpointIndex`)를 순회하는 구조로 재구성 - 기존
+  `Repath`/`NextWaypoint`/`MinimumSearchTime`/하드 컷오프 로직은 "현재 체크포인트가 무엇이냐"만
+  바뀌었을 뿐 그대로 재사용됨.
+- 구현 중 발견한 버그: `Enter()`가 `_lastKnownPlayerVelocity`를 실제 플레이어 속도가 아니라
+  `Vector3.zero`로 하드코딩하고 있었음(위치만 제대로 스냅샷하고 속도는 빠뜨림) - 예측이
+  전혀 안 먹히는 상태였던 것을 테스트 작성 중 발견, `_machine.PlayerVelocity`를 읽도록 수정.
+- 지점 유효성 사전 검증은 안 함(경로를 못 찾는 지점이 나와도 `Repath`의 기존 null 처리가
+  그대로 커버) - `PatrolState.Enter()`가 스폰 위치 주변 무작위 지점을 검증 없이 쓰는 것과
+  동일한 철학.
+
+**같은 세션 (5) — A* 길찾기를 직관적으로 보여줄 "한 번 발각되면 방 안에서는 끝까지 쫓는"
+근접 적(구 모양) 신규 추가 — 1층 1~2마리(방당 최대 1), 2층부터 층당 2~4마리**
+- 신규 `EnemyVariantType.RelentlessMelee`. "절대 포기 안 함"은 새 코드 분기 없이 순수
+  데이터로 구현 - 전용 `EnemyRelentlessMeleeData.asset`의 `leashRange=200`/`searchDuration=300`이
+  어떤 방의 대각선(보스방 40×40 기준 약 56.6)보다도, 수색 중 하드 컷오프(`leashRange×2`)보다도
+  훨씬 커서 거리/시간 기반 포기 조건이 절대 안 걸림 - 방 자체를 못 벗어나는 건 기존
+  `RoomController.ClampToInterior`가 그대로 담당. 나머지 스펙(이동속도, 근접 공격 패턴 등)은
+  `EnemyBasicData`와 동일.
+- 배치는 `VariantWeights`(슬롯마다 확률roll) 방식이 아니라 **정확한 개수 보장 후처리 패스**로
+  구현 - `FloorRule.MinRelentlessEnemies/Max`(신규, `ProceduralRules.json`의 `relentlessCount`)를
+  시드로 뽑아 그만큼의 **서로 다른** 전투방에 정확히 1마리씩 추가(요청한 방식과 동일하게 방당
+  최대 1마리를 전 층 공통 규칙으로 채택 - 1층만 특별 취급하지 않고 "겹치지 않게 분산"을
+  기본값으로 둠). 오늘 확립된 "핵심 알고리즘은 안 건드리고 후처리 패스만 추가" 컨벤션(장애물
+  배치와 동일) 그대로 재사용 - `ProceduralFloorGenerator.ApplyRelentlessEnemies`가
+  `FloorGraph.Validate` 통과 직후, `FloorLayout` 생성 직전에 실행되고, `RoomData`가 불변이라
+  선택된 방은 기존 적 리스트에 하나를 더한 새 `RoomData`로 교체됨(장애물/커넥션/모양 등 다른
+  필드는 그대로 이전). 전용 명명 RNG 스트림(`relentless.f{층}`)이라 기존 시드의 방 그래프/적
+  구성은 전혀 안 바뀜.
+- 시각적으로는 구(Unity 내장 Sphere 메시)로 구분, 물리 콜라이더는 다른 적과 동일한
+  CapsuleCollider 유지(경로탐색/시야 코드가 `CapsuleCollider` 타입을 직접 참조하므로) - `Enemy_
+  Basic.prefab`을 그대로 복제한 뒤 메시와 `EnemyStateMachine.data` 참조만 교체. Unity MCP로
+  프리팹 복제(`Unity_ManageAsset` Duplicate) 후 `PrefabUtility.LoadPrefabContents`/
+  `SerializedObject`로 수정, 씬의 `EnemySpawner.variantPools` 배열도 같은 방식(`SerializedObject`
+  로 배열 엔트리 추가)으로 신규 풀(`EnemyPool_RelentlessMelee`)을 연결.
+- 테스트 작성 중 발견한 순수 타이밍 결함(오늘 (4)의 체크포인트 테스트 2개) 수정: 무작위
+  둘러보기 지점이 우연히 가까워서 여러 체크포인트가 한 번에 연쇄로 넘어가거나, Patrol 진입
+  직후 같은 폴링 간격 안에서 Patrol→Idle까지 넘어가버리는 경우가 드물게 있었음 - 프레임 단위
+  폴링 + "어느 시점에든 체크포인트가 전진하는 걸 관측했는가"로 판정 방식을 바꿔 타이밍에
+  안전하게 만듦.
+
+**끝까지 쫓아오는 적이 실제로는 안 따라오는 것처럼 보이던 문제 진단 + 진단용 로그 제거**
+- 유저 피드백: "적어도 새로 만든 근접 적은 A* 알고리즘으로 길찾기 해서 내가 어디에 있든
+  길찾기해서 따라와야되는거 아닌가? 현재는 잘 따라오고 있지 못하고 있는 걸로 보여." 자동화
+  테스트(`Chase_TracksLivePositionWhileBlind_RepathsTowardNewPosition_NotFrozenLastKnown`)는
+  이미 통과하고 있어서, 실제 에디터 Play Mode에서 재현하며 원인을 좁혀나감.
+- 1차 진단용으로 `EnemyChaseState.PhysicsTick`에 임시 `Debug.Log("[DIAG] ...")`를 여러 지점에
+  추가해 재현했더니 `_machine.Player == null`에서 즉시 리턴하는 것으로 보였음 - 그런데 이건
+  재현 스크립트가 `pool.Get()` 직후 같은 동기 호출 안에서 프레임 하나도 안 지난 채 바로
+  `ChangeState(ChaseState)`를 강제로 불러서 `EnemyStateMachine.Start()`(플레이어 참조를 채우는
+  지점)가 아직 실행되지 않았던 것 - 실제 게임 흐름에서는 `Start()`가 먼저 여러 프레임 지난
+  뒤에야 Chase로 전이되므로 절대 발생하지 않는, 순전히 테스트 스크립트 자체의 아티팩트였음.
+  진단용 로그는 모두 제거.
+- 이 결론을 실제 게임 흐름 그대로 재현해 재확인: `EnemySpawner.SpawnRoom`과 동일한 순서
+  (`pool.Get` → 벽 클램프 → `SetRoom`/`SetSpawnPosition` → `Physics.SyncTransforms()`)로
+  `EnemyPool_RelentlessMelee`에서 인스턴스를 하나 스폰해 Play Mode에서 자연 상태 전이를
+  관찰 - 플레이어를 자동으로 감지해 Chase→Attack까지 정상 진행했고("Player took 5 damage
+  from VERIFY_Relentless3." 로그로 실제 타격까지 확인), 이후 플레이어를 직선거리 13유닛
+  밖으로 순간이동시켰더니 거리가 13.7 → 4.27로 계속 줄어드는 것을 확인해 시야를 잃어도
+  마지막 목격 위치가 아니라 플레이어의 실시간 위치로 계속 재경로 탐색함을 라이브로 검증함.
+  (중간에 한 번 `Time.timeScale=0`으로 멈춰 있어 안 움직이는 것처럼 보인 적이 있었는데, 이는
+  방금 돌린 PlayMode 테스트 스위트가 종료 후 timeScale을 복구하지 않고 남긴 것으로, 추적
+  로직과는 무관한 순수 테스트 부작용이었음 - `Time.timeScale = 1`로 되돌리자마자 정상 진행.)
+- 별도로 재현 스크립트에서 `GameObject.FindFirstObjectByType<RoomController>()`로 아무 방이나
+  집으면(StageManager가 층 전체 방을 미리 각자의 그리드 오프셋에 인스턴스화해두므로 씬에 방이
+  여러 개 동시에 존재함) 플레이어가 있는 방이 아니라 완전히 다른 좌표의 방을 집어 그 방의
+  `ClampToInterior` 결과로 순간이동하듯 보이는 현상도 발견 - 실제 코드(`EnemySpawner`)는 항상
+  올바른 `RoomController` 참조를 인자로 받으므로 이 역시 테스트 스크립트만의 함정이었음.
+
+**진짜 버그 발견: 발각 후 벽 뒤로 숨으면 안 따라오는 문제 (RelentlessMelee 한정이 아니라 근접 적 전체)**
+- 유저가 실제 플레이 중 재현: "적어도 새로 만든 근접 적은... 한번 발각되고 벽 뒤로 숨었는데
+  안따라온다. 이 적 로직만 발각 후 시야 처리 같은 거를 건너 뛰어야하는거 아닐까." 위의
+  라이브 검증(플레이어를 순간이동시켜 확인)은 우연히 장애물이 없는 트인 공간에서만 진행돼
+  이 경로를 건드리지 못했던 것으로 드러남.
+- 근본 원인: `EnemyChaseState.PhysicsTick`의 "공격 사거리 안이면 멈춘다" 체크가 시야 확보
+  여부와 무관하게 순수 직선 거리(`toPlayer.magnitude <= MaxAttackRange`)만 보고 있었음 -
+  플레이어가 얇은 벽/장애물 바로 뒤에 숨어 직선 거리는 가깝지만 실제로는 막혀 있는 상황이면,
+  벽 반대편으로 돌아가는 `HasClearLineToPlayer()`/`NextWaypoint` 경로탐색 분기까지 가지도
+  못하고 그 자리에서 그냥 멈춰버림. 기존 테스트는 전부 플레이어를 공격 사거리보다 훨씬 멀리
+  (8유닛 이상) 배치해서 이 분기를 검증한 적이 없었고, 테스트용 `EnemyData`도 기본적으로
+  공격 패턴이 비어 있어(`MaxAttackRange=0`) 이 버그 자체가 애초에 발동할 수 없는 조건이었음.
+- 수정: "공격 사거리 안이면 멈춘다" 체크에 `HasClearLineToPlayer()` 결과를 함께 게이트 -
+  막혀 있으면 직선 거리와 무관하게 항상 경로탐색 분기로 진입하도록 변경(`EnemyChaseState.cs`).
+  RelentlessMelee뿐 아니라 모든 근접 적에 적용되는 일반 수정.
+- 회귀 테스트 `EnemyChasePathfindingTests.ChaseState_PlayerHidesBehindThinWall_WithinStraight
+  LineAttackRange_StillRoutesAround` 신규 추가: Connector(칸 사이 얇은 간선 차단)로 나뉜 두
+  칸에 적과 플레이어를 1유닛 간격(기본 공격 사거리 1.2 이내)으로 마주 세워두고, 적이 제자리에
+  얼어붙지 않고 실제로 돌아가서 플레이어에게 도달하는지 검증. 작성 중 두 가지 부수적 결함도
+  같이 드러나 고침: (1) `ObstaclePlacement` 생성자 인자 순서(`variantIndex`가 3번째 `int`,
+  `rotationY`가 4번째 `float`)를 착각해 CS1503 컴파일 에러 - 순서 수정. (2) `TestHelpers.
+  ResolveField`가 `target.GetType().GetField(...)`만 봐서 부모 클래스(`AttackPatternData`)에
+  선언된 `private` 필드(`range`)를 못 찾음 - 타입 계층을 타고 올라가며 찾도록 수정.
+
+### 테스트 결과
+- [x] EditMode 115개 전부 통과 (`TestRunnerApi` in-process 실행, `TestResults.xml` 확인) -
+      신규 `RoomPathfindingGridTests` 5개(빈 방 최단경로, Solo 장애물 우회, Connector는 칸이
+      아니라 간선만 차단됨, 노치 칸은 항상 통행 불가, 완전히 둘러싸인 목표는 경로 없음) +
+      `ProceduralFloorGeneratorTests` 신규 6개(RelentlessMelee: 규칙 없으면 절대 안 나옴 / 층
+      전체 총 개수가 요청 범위 안 / 방당 최대 1마리 / 평소 적 구성에 추가로 얹힘 / 요청 개수가
+      전투방 수보다 많아도 절대 안 넘침 / 스폰 위치가 방 안에 머무름) 포함
+- [x] PlayMode 28개 전부 통과(연속 3회 재실행 모두 그린 - 무작위 지점 선택이 얽혀 있어 1회성
+      통과가 아님을 확인, 그 과정에서 타이밍에 민감했던 검증 방식 2건도 같이 안정화) -
+      `EnemyLineOfSightTests` 5개(사거리 내 시야 확보, 정적 벽에 막힘,
+      아주 가까운 거리에서도 벽에 막힘, 사거리 밖이면 시야가 뚫려 있어도 실패, 다른 적 캐릭터는
+      시야를 막지 않음) + `ProjectileTests` 신규 1개(정적 벽 콜라이더에 닿으면 관통하지 않고
+      디스폰) + `EnemySpawnerPlayerClearanceTests` 신규 2개(플레이어와 겹치는 스폰 지점은
+      밀려남 / 멀리 있는 스폰 지점은 그대로 유지) + `PlayerMovementResidualVelocityTests`
+      신규 1개(입력 없을 때 기존에 걸려 있던 속도가 다음 FixedUpdate에 정확히 0이 됨) +
+      `EnemyStunnedStateKnockbackTests` 신규 2개(얇은 벽을 향한 넉백은 관통하지 않고 멈춤 /
+      빈 공간에서는 여전히 전체 거리 이동) + `EnemyChasePathfindingTests` 신규 1개(장애물이
+      직선을 막고 있어도 우회해서 실제로 거리를 좁힘) + `EnemyChaseSearchTests` 5개(모든
+      체크포인트를 확인했는데 없으면 Patrol / 이미 첫 체크포인트에 있어도 최소 수색 시간
+      전엔 안 풀리고 그 이후엔 Patrol이 아니라 다음 체크포인트로 넘어감 / 플레이어가 이동
+      중이었으면 첫 체크포인트가 마지막 위치 그대로가 아니라 속도 방향으로 예측되어 있음 /
+      수색 시간 초과로 Patrol / 수색 도중 시야 재확보하면 Chase 유지) 포함
+      - 검증 중 상태 폴링을 `WaitForFixedUpdate` 기준으로 했다가, Update(Tick 발생 지점)가
+        FixedUpdate보다 더 자주 도는 구간에서 Patrol 진입 프레임을 건너뛰고 그다음 Patrol→Idle
+        전이까지 관측해버리는 문제 발견 → `yield return null`(프레임당 1회, Tick과 같은
+        빈도)로 폴링하도록 수정해 해결.
+- [x] 실제 Play Mode(`Prototype.unity`)에서 라이브 검증 5건: (1) 플레이어 Rigidbody에
+      `linearVelocity = (3,0,0)` 직접 주입 후 다음 프레임에 정확히 `(0,0,0)`으로 복귀 확인,
+      (2) `Physics.GetIgnoreLayerCollision(Default, Ground)`가 런타임에 `true`로 반영됨을 확인,
+      (3) `Physics.Simulate` 10스텝 격리 측정 결과 마찰 손실이 완전히 사라짐(수정 전 0.72유닛 →
+      수정 후 1.20유닛, 마찰 없는 기대값과 정확히 일치), (4) 실제로 절차 생성된 전투방(1002~1004)
+      전부에서 `RoomController.FindPath`가 예외 없이 유효한 경로를 반환함을 확인, (5) 실제
+      전투방에 `EnterRoom()` 호출 후 스폰된 `Enemy_Basic`이 `leashRange=12, searchDuration=4`로
+      정상 로드됨을 확인(신규 필드가 없는 다른 에셋도 C# 기본값 4로 정상 로드됨도 함께 확인),
+      (6) `EnemyPool_RelentlessMelee`에서 실제로 스폰한 인스턴스가 구 메시 + `leashRange=200`으로
+      정상 로드됨을 확인, 플레이어를 32유닛 밖으로 이동시키고 강제로 Chase 진입시켜도
+      `IsPlayerWithinRange(leash)`가 `true`를 유지하고 실제로 그 방향으로 계속 이동함을 확인
+      (일반 근접 적이라면 리쉬 12에서 이미 풀렸을 거리)
 - [x] `DiagonalDoubleScatter`를 처음 대각선 간격 2칸으로 저작했다가
       `LShapePatterns_NeverDisconnectTheRoom_ForEveryNotchCorner`에서 실패 → 두 대각선
       사이에 낀 칸이 4방향 전부 막혀 고립되는 "대각선 체커보드 함정" 확인, 간격 3칸으로 수정
@@ -74,8 +410,161 @@
 - [x] SceneView 멀티앵글 캡처로 사방 교차(+) Connector + 회전된/축정렬 Solo 블록을 한 방에
       직접 배치해 육안 확인 - 이음매 없이 매끈하게 이어진 얇은 십자형 벽, 정확한 90°/45° 블록
       회전 모두 정상
+- [x] 진단용 로그 제거 후 재검증: EditMode 115/115, PlayMode 29/29 전부 통과(1차 PlayMode
+      실행에서 `Chase_SearchTimesOut_GivesUpToPatrol_WhenLastKnownSpotUnreachable` 1건이
+      Patrol 대신 Idle을 관측해 실패했으나, 이번 로그 제거와 무관한 재현 스크립트 수정
+      없이 그대로 재실행했더니 29/29 전부 통과 - 기존에도 있던 Patrol→Idle 타이밍
+      경쟁상태로 보이는 기존 결함성 플레이키니스, 이번 작업으로 인한 회귀 아님)
+- [x] `EnemyPool_RelentlessMelee`로 실제 스폰한 인스턴스가 `EnemySpawner`와 동일한 순서로
+      Play Mode에서 자연스럽게 Idle→Chase→Attack까지 전이하고 실제로 플레이어를 타격,
+      시야 차단 후에도 마지막 목격 위치가 아니라 플레이어의 실시간 위치로 계속 접근함을
+      라이브로 확인(상세 내용은 위 진행 내용 참고)
+- [x] "벽 뒤 숨음" 수정 후 재검증: EditMode 115/115, PlayMode 30/30(신규
+      `ChaseState_PlayerHidesBehindThinWall_WithinStraightLineAttackRange_StillRoutesAround`
+      포함) 전부 통과. 중간에 신규 테스트 자체의 결함(생성자 인자 순서, 컷오프 기준 2유닛이
+      실제 정상 동작인 1.83유닛 이동보다 과하게 엄격했던 것) 두 건과, 무관한 `Chase_
+      VisitsEveryCheckpoint_WithNobodyThere_GivesUpToPatrol` 1건의 기존 Patrol/Idle
+      타이밍 플레이키니스(재실행 시 통과)를 거쳐 최종 30/30 확정.
+
+**"+"자 십자 장애물(FenceCrossHub)에서 반대편 플레이어를 못 쫓아오는 문제 - 진짜 원인은 A*가 아니라 "같은 칸" 판정**
+- 유저가 실제 플레이 중(Play Mode) 재현: "+"자 모양 얇은 장애물이 있는 방에서 플레이어가
+  좌상단 모서리, RelentlessMelee가 반대편 우하단 모서리에 있는데, 적이 우회하지 않고 자기
+  쪽 벽에 계속 비비기만 함. 라이브 상태를 직접 조회해서 확인(`Room.FindPath(적,플레이어)`가
+  딱 1개짜리 웨이포인트, 그것도 두 장애물 조각(`Connector_3_2`)이 막고 있는 방 정중앙 좌표를
+  반환) - `ObstaclePatterns.json`의 `FenceCrossHub` 패턴(중앙 허브 칸 하나 + 사방 연결
+  Connector 4개)을 그대로 씀.
+- 근본 원인: Connector는 "칸과 칸 사이 간선"만 막지 칸 자체를 막지 않으므로, 허브 칸은
+  이웃 4방향 전부 막혀 고립돼 있어도 그 칸 자체는 여전히 "통행 가능"으로 남아있음. 플레이어와
+  적이 둘 다 그 허브 칸 한가운데 반경 2유닛 이내(칸 하나의 실제 물리 폭)에 서 있으면, 좌표를
+  칸 인덱스로 반올림하는 `WorldToCell`이 둘을 정확히 같은 칸으로 계산해버림. `RoomPathfinding
+  Grid.TryFindPath`는 "출발 칸==도착 칸"이면 두 칸 사이 간선이 막혔는지 확인도 안 하고 바로
+  "이미 도착"으로 처리해 그 칸 중심 좌표 하나짜리 경로를 반환 - 그 중심이 하필 십자가 교차하는
+  지점이라 적은 거기로 계속 걸어가려다 벽에 막혀 비비기만 함. A* 알고리즘이나 실시간 추적
+  설계 자체의 결함이 아니라, 격자 한 칸보다 촘촘한 장애물(칸 하나를 4등분하는 +자)을 지금
+  격자 모델이 표현 못 하는 구조적 허점이었음(검토 방식은 2건 사전 제시 후 유저가 1안 선택).
+- 수정(1안): `RoomController.FindPath`에서 출발/도착 칸이 우연히 같아도, 각자의 연속 좌표가
+  그 칸 중심 기준 어느 이웃 방향에 더 가까운지 보고 그 방향의 간선이 실제로 막혀 있으면(그리고
+  이웃 칸 자체는 통행 가능하면) 그 이웃 칸으로 스냅 보정한 뒤 A*를 돌리도록 변경
+  (`ResolveEffectiveCell` 신규). 막힌 간선이 없는 평범한 칸에서는 아무 영향 없음(안전한
+  국소 보정). 이를 위해 `RoomPathfindingGrid.IsEdgeBlocked`를 private에서 public으로 공개.
+- 회귀 테스트 2건 추가(`EnemyChasePathfindingTests.cs`): `FindPath_BothSidesOfCrossHubRound
+  ToSameCell_ReturnsRouteInsteadOfTrivialSameCellPath`(허브 사방을 막는 Connector 4개를
+  구성해 `Room.FindPath`가 더 이상 1개짜리 트리비얼 경로를 안 주고 실제 우회 경로를 반환하는지
+  직접 검증) + `ChaseState_BothSidesOfCrossHubRoundToSameCell_StillRoutesAroundInsteadOf
+  RubbingOnFence`(같은 배치에서 실제 `EnemyChaseState`가 우회해서 거리를 좁히는지 행동
+  단위로 검증). 작성 중 테스트 자체의 실수 발견: 십자 벽 대역으로 세운 콜라이더 박스가
+  너무 커서 양쪽 테스트 좌표를 둘 다 감싸버림 → `Physics.Linecast`는 두 끝점이 이미 같은
+  콜라이더 안에 있으면 표면을 가로지르는 지점이 없어 막힘 판정이 안 나옴 - 박스를 두 좌표
+  사이에 걸치되 양쪽 다 바깥에 남도록 축소해서 해결.
+
+**세 번째 원인: Connector 클램프 박스의 가로/세로 축이 서로 뒤바뀌어 있었음**
+- 유저가 같은 세션에서 곧바로 또 다른 재현 발견: 이번엔 "+"자 허브가 아니라 평범한 얇은
+  Connector 벽 하나 앞에서, 길찾기 자체는 정상 경로를 계산하는데도 적이 실제로는 한 발짝도
+  못 나아가고 벽을 계속 비비는 상태. 라이브 조회로 확인: `Room.FindPath(적→플레이어)`가
+  올바른 2칸짜리 우회 경로((4,3)→(3,3)→(3,2))를 반환하고 있었는데도, 그 첫 걸음(칸 (4,3)
+  중심 방향으로 0.03유닛 이동 시도)이 `room.ClampToInterior`에 의해 매번 제자리로 되돌아옴.
+  (※ 중간에 한 번은 유니티 창이 OS 포커스를 못 받아 `Time.frameCount` 자체가 멈춰있던 상태를
+  실제 버그로 오인할 뻔했음 - 포커스를 주고 재확인해 그건 오탐임을 먼저 걸러냄.)
+- 근본 원인: `RoomController.BuildObstacles`가 Connector 하나당 클램프 전용(연속 좌표
+  밀어내기용) 박스 크기를 계산하는 삼항연산자가 **가로/세로가 서로 뒤바뀌어** 있었음 - 원래는
+  "그 벽을 가로질러 통과하는 축으로는 얇게, 벽이 걸쳐 있는 경계선 축으로는 칸 폭(4유닛)
+  그대로"여야 하는데, 코드는 정확히 반대로 "경계선 축으로 얇게, 통과하는 축으로 칸 폭 그대로"
+  되어 있었음. 그 결과 이 클램프 박스 하나가 실제로는 얇은 벽 하나의 자리가 아니라 **적이 서
+  있는 칸의 중심부터 그 너머 칸의 중심까지, 못해도 한 칸 전체 깊이(4유닛+bodyRadius)를
+  통째로 "장애물"로 취급**하고 있었음. 경로탐색(`RoomPathfindingGrid`)은 이 박스 크기를 전혀
+  참조하지 않고 "어느 칸-칸 간선이 막혔는지"만 보므로 정상적으로 우회 경로를 계산하지만,
+  실제 이동을 맡는 `MoveTo`의 연속 좌표 클램프(`RoomObstacleBounds.ClampLocal`)는 이
+  잘못된(훨씬 큰) 박스를 그대로 써서 이미 계산된 정상 경로의 첫 걸음부터 계속 되돌려버림 -
+  "길찾기는 맞는데 실제로는 한 발짝도 못 감"이 정확히 이 증상이었음.
+- 이 버그는 지금까지의 모든 테스트가 못 잡고 있었음 - 테스트용 `TestObjects.BuildRoom`이
+  실제 `RoomObstacleSet`을 한 번도 연결한 적이 없어서(`obstacleSet == null`이면
+  `BuildObstacles`가 아예 조기 반환) 이 크기 계산 코드 자체가 지금까지 단 한 번도 실행된
+  적이 없는, 실제 게임 씬에서만 재현되는 사각지대였음.
+- 수정: `alongX`(동서 방향 Connector) 분기와 그 반대 분기의 `size` 값을 맞바꿈 - 이제
+  동서 방향은 X축으로 얇고 Z축으로 칸 폭 그대로, 남북 방향은 그 반대로 정확히 표현됨.
+- 회귀 테스트 추가를 위해 `TestObjects`에 `MakeObstacleSet()`(더미 `ConnectorPrefab` 하나만
+  꽂은 최소 `RoomObstacleSet`) 헬퍼와 `BuildRoom`의 `obstacleSet` 선택 인자를 신규 추가 -
+  이제부터 이 클램프 박스 생성 경로도 테스트로 실제 실행 가능. 신규 테스트
+  `ClampToInterior_PositionWellInsideNeighbourCellAcrossAConnector_IsNotPushedBack`: 이웃
+  칸 안쪽 깊숙한(경계 벽과는 전혀 안 닿는) 좌표가 클램프에 의해 밀려나지 않는지 검증 - 수정
+  전 크기였다면 밀려났을 위치를 정확히 골라서 확인.
+- [x] 수정 후 재검증: EditMode 115/115, PlayMode 33/33(신규 테스트 포함) 전부 첫 실행에
+      바로 통과.
+
+**네 번째 원인이자 아마 가장 근본적인 원인: 웨이포인트 "도착" 판정이 Y축까지 포함해서 계산되고 있었음**
+- 유저가 세 번째 수정 직후 또 재현: 앞선 세 버그와 무관해 보이는 상황(장애물도 특별할 것
+  없는 평범한 방)인데도 여전히 "안 움직인다"는 보고. 처음 조회했을 때는 속도가 정확히 0이
+  아니고(`vel=(-0.19,0,0)`) 경로도 정상(`Room.FindPath`가 4개짜리 유효 경로 반환)이라 일단
+  "멈추기 직전 스냅샷을 잘못 잡았을 수 있다"고 보류했으나, 유저가 "그래도 안 움직인다"고 재차
+  확인해줘서 재조사 → 프레임이 실제로 약 1800틱 진행되는 동안 좌표가 소수점까지 완전히
+  동일하게 고정되어 있음을 확인, 진짜 정지 상태로 확정.
+- 정확한 진단: 적의 실제 위치(45.92, **1.00**, 4.01)와 경로의 첫 웨이포인트(46.00, **0.00**,
+  4.00) 사이 수평(XZ) 거리는 0.08유닛뿐인데, 도착 판정에 쓰이는 `Vector3.Distance`(Y축 포함
+  3D 거리)로 계산하면 약 1.003유닛이 나옴 - 도착 기준(`WaypointArriveDistance = 1f`)을 근소하게
+  못 넘김.
+- 근본 원인: `EnemyChaseState.NextWaypoint`의 "이 웨이포인트에 도착했는가" 판정이
+  `Vector3.Distance(body.position, waypoint)`로 Y축까지 포함해서 계산되고 있었음. 그런데
+  `RoomController.CellToLocal`이 만드는 경로 웨이포인트는 항상 Y=0인 반면, 실제 적
+  Rigidbody는 항상 Y=1에 서 있음(이번 세션 내내 라이브로 찍힌 좌표 전부 y=1.00으로 일관).
+  이 고정된 Y축 차이 1.0유닛만으로 이미 도착 판정 기준(1유닛)과 거의 같아서, 수평으로 아무리
+  가까이 가도 3D 거리가 그 기준보다 작아질 방법이 없었음 - `_pathIndex`가 **영원히 0에서
+  못 넘어가고** 적은 항상 자기 출발 칸만 다시 목표로 삼는 것을 무한 반복. 마침 `PhysicsTick`
+  자신의 별도 정지 조건(Y를 무시하는 수평 거리 기준)은 이 근접을 정상 감지해 그 자리에서
+  멈춰버려, 결과적으로 "출발 칸 바로 앞에서 굳어버림"이 되었음.
+  이건 이번 세션에서 찾은 것 중 가장 파급력이 큰 버그로 보임 - RelentlessMelee뿐 아니라
+  **경로가 2칸 이상인 모든 추격(장애물을 낀 모든 근접 적 포함)에서 실제 게임 빌드 기준으로는
+  거의 항상 재현됐을 결함**이기 때문.
+- 왜 지금까지 안 잡혔나: 이번 세션에서 작성한 회귀 테스트 세 개를 포함해 `TestObjects.
+  BuildEnemy`를 쓰는 모든 기존 테스트가 예외 없이 적을 **Y=0**에 배치해서 만들었음(웨이포인트와
+  정확히 같은 높이) - 그래서 이 Y축 격차 자체가 테스트에서는 단 한 번도 노출된 적이 없었음.
+- 수정: `EnemyChaseState.cs`에 `HorizontalDistance(a, b)` 헬퍼(Y를 0으로 지운 뒤
+  `Vector3.Distance`)를 추가하고, `NextWaypoint`의 도착 판정을 이걸로 교체.
+- 회귀 테스트 추가: `ChaseState_EnemyBodyRestsAboveWaypointHeight_StillAdvancesPastEachWaypoint`
+  - 이번엔 일부러 적을 실제 프리팹과 같은 **Y=1**에 배치해서(다른 모든 테스트는 Y=0) 이 격차를
+  드러나게 하고, 그래도 경로를 끝까지 따라가 거리를 좁히는지 검증.
+- [x] 수정 후 재검증: EditMode 115/115, PlayMode 34/34(신규 테스트 포함) 전부 첫 실행에
+      바로 통과.
+
+**다섯 번째 원인: `Repath()`가 매번 자기 자신이 서 있는 칸으로 되돌아가 진행을 스스로 취소함 ("떨리는" 증상)**
+- 유저가 네 번째 수정 직후 또 재현: 이번엔 "안 움직인다"가 아니라 "위치가 떨리는 느낌으로
+  달라진다"는 새로운 표현. 창 포커스가 없어 시뮬레이션이 멈춰있는 상태를 몇 차례 잘못 짚은 뒤,
+  `Physics.simulationMode = SimulationMode.Script`로 바꿔서 `Tick`/`PhysicsTick`을 직접 강제
+  호출하며 궤적을 30틱 단위로 추적 - 실제로 `clearLine=False`가 계속 유지된 채로 x좌표가
+  2.77~3.01 사이를 주기적으로(약 15~16틱, `RepathInterval` 0.3초와 정확히 일치) 왕복하는
+  진짜 진동임을 확인.
+- 근본 원인: `EnemyChaseState.Repath()`가 0.3초마다 무조건 `_pathIndex = 0`으로 리셋하고 경로를
+  처음부터 재계산함. 그런데 `Room.FindPath`가 반환하는 경로의 **0번 인덱스는 항상 "지금 서
+  있는 칸 자신"**(A* 경로 복원 방식상 시작 노드가 항상 포함됨) - 이미 그 자리에 있으니 목표로서
+  아무 의미가 없음. RelentlessMelee처럼 느린 적(`moveSpeed=1.5`)은 0.3초 동안 0.45유닛밖에 못
+  움직여서, 다음 리패스가 돌아올 때도 여전히 같은 칸 안에 있는 경우가 흔함 - 그러면 새로 계산된
+  경로도 "0번=지금 서 있는 그 칸"으로 또 나오고, 방금 1번 웨이포인트(진짜 다음 진행 방향)로
+  넘어갔던 진행이 통째로 취소되어 다시 0번 목표로 되돌아감. 이게 매 리패스 주기(0.3초)마다
+  반복되며 "떨리는" 것처럼 보임 - 실질적 순이동은 거의 0.
+- 수정: `Repath()`가 새 경로 계산 직후, 경로가 2칸 이상이면 `_pathIndex`를 0이 아니라 **1**로
+  바로 건너뛰도록 변경(0번=이미 도착해있는 자기 자신은 애초에 목표로 삼을 이유가 없음).
+- 회귀 테스트 추가: `ChaseState_SlowEnemyAcrossManyRepathCycles_MakesSteadyProgressInsteadOf
+  Oscillating` - 실제 RelentlessMelee 속도(1.5)로 여러 리패스 주기에 걸쳐 순이동이 실제로
+  발생하는지 검증. 작성 과정에서 이 버그와 무관한 테스트 자체의 문제 세 가지를 연달아 발견/수정:
+  (1) 처음엔 시간 예산(8초)이 느린 속도로 우회 경로를 완주하기엔 부족해서 실패 → 24초로 확장.
+  (2) 그래도 기준(시작 거리의 절반 이하)이 너무 빡빡해 실패 → "시작보다 최소 1유닛은 확실히
+  가까워졌는가"로 완화. (3) 그래도 실행마다 결과가 들쭉날쭉(8→6.54, 8→7.70 등) - 방 중앙
+  장애물 하나만으로는 남쪽/북쪽 우회 경로 비용이 정확히 동률이라, A*가 매 리패스마다 그때그때
+  다른 쪽을 택하면서(버그와 무관한 별도의 비효율) 진행 속도가 실행마다 달라졌던 것 → 장애물을
+  하나 더(북쪽 경로만) 막아 남쪽이 확실히 더 짧도록 비대칭화해서 동률 자체를 없앰. 이 세 가지
+  모두 프로덕션 버그가 아니라 테스트 자체의 시간/기준/지형 설계 문제였음.
+- [x] 최종 재검증: EditMode 115/115, PlayMode 35/35(신규 테스트 3연속 통과) - 확인 과정에서
+      기존에 알려진 Patrol/Idle 타이밍 플레이키 테스트 2종(`Chase_VisitsEveryCheckpoint_With
+      NobodyThere_GivesUpToPatrol`, `Chase_SearchTimesOut_GivesUpToPatrol_WhenLastKnownSpot
+      Unreachable`)이 번갈아 가며 각각 1회씩 실패했으나 재실행 시 항상 통과 - 이번 수정과
+      무관한 기존 결함성 플레이키니스로 확정.
 
 ### 이슈/메모
+- `TestRunnerApi.Execute()`에 직접 `RegisterCallbacks`한 `ICallbacks` 인스턴스는 실행을 발사한
+  `TestRunnerApi` 자체가 어디에도 참조로 안 남아 있으면(로컬 변수뿐) 테스트는 정상 진행되는데도
+  내 콜백(`RunFinished` 등)이 전혀 호출되지 않음 - 실제 원인 확정은 못 했지만(GC 추정) 결과
+  파일이 끝까지 안 생김. 우회: 커스텀 콜백에 의존하지 말고, 엔진이 항상 남기는
+  `%APPDATA%/../LocalLow/DefaultCompany/RogueLike/TestResults.xml`의 mtime 변화를 폴링해서
+  그 안의 `total/passed/failed`와 `fullname` 목록으로 결과를 읽는 편이 훨씬 안정적.
 - `TestRunnerApi.Execute()`를 호출한 뒤 같은 RunCommand 안에서 `Thread.Sleep` 루프로 완료를
   기다리면 절대 완료를 감지 못함 - 실제 테스트 실행은 이 RunCommand 호출이 리턴하고 에디터가
   자기 업데이트 루프로 돌아간 "이후"에 비동기로 진행되기 때문에, 같은 호출 안에서 블로킹
@@ -89,11 +578,34 @@
 - RunCommand에서 클래스를 `CommandScript` 안에 `private class`로 중첩하면 자동 수정기가 같은
   클래스를 네임스페이스 최상위에도 중복 생성해 `private` 접근제한자 충돌(CS1527)을 냄 →
   헬퍼 클래스는 애초에 `CommandScript`와 같은 레벨의 별도 `internal class`로 작성할 것.
+- `Chase_SearchTimesOut_GivesUpToPatrol_WhenLastKnownSpotUnreachable`이 드물게 Patrol
+  대신 Idle을 관측해 실패하는 타이밍 플레이키니스 확인(재실행하면 통과) - PatrolState가
+  진입 직후 매우 짧게 Idle로 넘어갈 수 있는 기존 폴링 경쟁상태로 보임, 언젠가 시간 나면
+  프레임 단위 폴링으로 안정화할 것(급하지 않음, 로직 결함 아님).
+- Play Mode에서 `GameObject.FindFirstObjectByType<RoomController>()`로 "아무 방이나" 집으면
+  안 됨 - `StageManager`가 층의 모든 방을 각자의 그리드 오프셋 월드 좌표에 동시에
+  인스턴스화해두므로, 진단/재현 스크립트는 항상 "플레이어와 가장 가까운 방"처럼 명시적으로
+  올바른 방을 찾아써야 함. 실제 게임 코드(`EnemySpawner`)는 애초에 올바른 참조를 인자로
+  받으므로 이 함정에 걸리지 않음.
+- PlayMode 테스트 스위트를 돌린 직후 곧바로 수동으로 Play 버튼을 눌러 라이브 검증하면
+  `Time.timeScale`이 `0`으로 남아있어 아무것도 안 움직이는 것처럼 보일 수 있음 - 라이브
+  검증 전에 `Time.timeScale`을 확인/복구할 것.
+- `ObstaclePlacement` 생성자는 `(shape, localCell, variantIndex:int, rotationY:float)` 순서 -
+  Connector를 수동으로 만들 때 뒤 두 인자(정수/실수) 순서를 착각하기 쉬우니 주의.
+- `TestObjects.ResolveField`는 `target.GetType().GetField(...)` 한 단계만 보므로, 부모
+  클래스에 선언된 `private` 필드(예: `AttackPatternData.range`를 `MeleeAttackPatternData`
+  인스턴스에)는 타입 계층을 타고 올라가며 찾도록 고치기 전까진 못 찾았음 - 지금은 수정됨.
+- 이 세션 중 에디터 자체가 한동안 심하게 느려진 구간 관측(`EditorApplication.timeSinceStartup`
+  이 실제 경과 시간 대비 거의 정지 수준으로 느리게 흐름, Play Mode를 켜도 `Time.frameCount`가
+  몇 분간 그대로 멈춰 있었음) - 에디터 창이 포커스/리페인트를 못 받는 상태로 방치되면 생기는
+  것으로 추정(원인 미확정). 라이브 Play Mode 검증 중 아무 반응이 없다면 먼저 `Time.frameCount`
+  가 실제로 진행되는지부터 확인할 것 - 로직 버그로 오인하기 쉬움.
 
 ### 다음 작업
-- 적 경로탐색(그리드 A*) — `EnemyChaseState` 이동을 그리드 A*로 교체 (막힌 칸 데이터는
-  `RoomData.Obstacles`에 이미 있음, Connector 세그먼트는 실제 폭이 얇으므로 A* 격자 차단
-  판정을 셀 전체 대신 세그먼트 실제 폭 기준으로 할지 결정 필요)
+- 로드맵 §3(방/장애물 배치 + A* 경로탐색) 완료. 다음은 §4 입력 버퍼링 + 프레임레이트
+  독립성, 또는 §5 커스텀 에디터 툴링(SO 검증 패스) - `ClaudeSessionSummary.md` §6 순서 참고.
+- (튜닝 여지, 급하지 않음) `EnemyChaseState`의 재탐색 주기(0.3초)와 웨이포인트 도달 판정
+  거리(1유닛)는 첫 구현값 - 실제 플레이로 손맛 확인 후 조정 여지 있음.
 
 ---
 

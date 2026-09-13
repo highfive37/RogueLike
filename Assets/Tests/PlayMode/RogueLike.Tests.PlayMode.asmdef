@@ -3,7 +3,8 @@
     "rootNamespace": "",
     "references": [
         "RogueLike",
-        "UnityEngine.TestRunner"
+        "UnityEngine.TestRunner",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

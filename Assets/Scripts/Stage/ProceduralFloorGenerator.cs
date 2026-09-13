@@ -93,7 +93,8 @@ public sealed class ProceduralFloorGenerator
             IRng roomShapeRng = streams.Stream($"roomShape.f{floorNumber}");
             IRng obstacleRng = streams.Stream($"obstacles.f{floorNumber}");
             IRng patternRng = streams.Stream($"obstaclePatterns.f{floorNumber}");
-            if (TryGenerate(floorNumber, isLastFloor, rule, layoutRng, enemyRng, roomShapeRng, obstacleRng, patternRng, out FloorLayout layout))
+            IRng relentlessRng = streams.Stream($"relentless.f{floorNumber}");
+            if (TryGenerate(floorNumber, isLastFloor, rule, layoutRng, enemyRng, roomShapeRng, obstacleRng, patternRng, relentlessRng, out FloorLayout layout))
             {
                 return layout;
             }
@@ -105,7 +106,7 @@ public sealed class ProceduralFloorGenerator
         return TrivialLine(floorNumber, isLastFloor);
     }
 
-    private bool TryGenerate(int floorNumber, bool isLastFloor, FloorRule rule, IRng rng, IRng enemyRng, IRng roomShapeRng, IRng obstacleRng, IRng patternRng, out FloorLayout layout)
+    private bool TryGenerate(int floorNumber, bool isLastFloor, FloorRule rule, IRng rng, IRng enemyRng, IRng roomShapeRng, IRng obstacleRng, IRng patternRng, IRng relentlessRng, out FloorLayout layout)
     {
         layout = null;
 
@@ -344,8 +345,73 @@ public sealed class ProceduralFloorGenerator
             return false;
         }
 
+        ApplyRelentlessEnemies(rooms, rule, relentlessRng);
+
         layout = new FloorLayout(floorNumber, isLastFloor, isCorrupted: false, startId, rooms);
         return true;
+    }
+
+    // Post-process pass (same "don't touch the core algorithm" shape as obstacle placement -
+    // see Docs/AI_Decision_Log.md 2026-09-12): picks a seed-random count in
+    // [MinRelentlessEnemies, MaxRelentlessEnemies], then that many DISTINCT combat rooms each
+    // get exactly one RelentlessMelee appended to their already-built enemy list (never two in
+    // the same room, and never more than the floor actually has combat rooms). RoomData is
+    // immutable, so a selected room's entry in `rooms` is replaced wholesale with a copy that
+    // carries the extra enemy - every other field (obstacles, connections, footprint...) is
+    // carried over unchanged.
+    private static void ApplyRelentlessEnemies(List<RoomData> rooms, FloorRule rule, IRng relentlessRng)
+    {
+        if (rule.MaxRelentlessEnemies <= 0)
+        {
+            return;
+        }
+
+        var combatIndices = new List<int>();
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            if (rooms[i].Type == RoomType.Combat)
+            {
+                combatIndices.Add(i);
+            }
+        }
+
+        if (combatIndices.Count == 0)
+        {
+            return;
+        }
+
+        int count = Mathf.Min(
+            relentlessRng.Range(rule.MinRelentlessEnemies, rule.MaxRelentlessEnemies + 1),
+            combatIndices.Count);
+
+        Shuffle(combatIndices, relentlessRng);
+
+        for (int i = 0; i < count; i++)
+        {
+            RoomData room = rooms[combatIndices[i]];
+
+            float roomSize = Mathf.Min(room.Footprint.Width, room.Footprint.Depth);
+            float half = RoomBounds.InteriorHalfExtent(roomSize, RoomBounds.WallThickness, EnemyBodyRadius);
+            float radius = half * relentlessRng.Range(RingInnerFrac, RingOuterFrac);
+            float angle = relentlessRng.Range(0f, Mathf.PI * 2f);
+            var pos = new Vector3(Mathf.Cos(angle) * radius, EnemyStandHeight, Mathf.Sin(angle) * radius);
+
+            var enemies = new List<StageEnemyEntry>(room.Enemies) { new StageEnemyEntry(EnemyVariantType.RelentlessMelee, pos) };
+
+            rooms[combatIndices[i]] = new RoomData(
+                room.RoomId, room.Type, room.GridPosition, room.Footprint, enemies, room.Connections, room.Obstacles);
+        }
+    }
+
+    // Fisher-Yates using the seeded stream, so which rooms get picked is as deterministic
+    // (same seed -> same floor) as everything else this generator draws.
+    private static void Shuffle(List<int> values, IRng rng)
+    {
+        for (int i = values.Count - 1; i > 0; i--)
+        {
+            int j = rng.Range(0, i + 1);
+            (values[i], values[j]) = (values[j], values[i]);
+        }
     }
 
     // Picks which still-unmerged Combat cells merge together, and into what

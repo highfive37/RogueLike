@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "RangedAttackPatternData", menuName = "RogueLike/Enemies/Attack Patterns/Ranged")]
@@ -15,5 +16,20 @@ public class RangedAttackPatternData : AttackPatternData
     public override IAttackPattern CreatePattern(EnemyAttackContext context)
     {
         return new RangedAttackPattern(this, context.ProjectilePool);
+    }
+
+    public override void Validate(List<string> errors)
+    {
+        base.Validate(errors);
+
+        if (projectileSpawnDistance <= 0f)
+        {
+            errors.Add($"Projectile Spawn Distance should be positive (currently {projectileSpawnDistance}).");
+        }
+
+        if (retreatTriggerRange < 0f)
+        {
+            errors.Add($"Retreat Trigger Range should not be negative (currently {retreatTriggerRange}).");
+        }
     }
 }

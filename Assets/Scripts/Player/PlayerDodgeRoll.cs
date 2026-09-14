@@ -5,6 +5,7 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(PlayerInputActions))]
 [RequireComponent(typeof(PlayerMovement))]
 [RequireComponent(typeof(HealthComponent))]
+[RequireComponent(typeof(PlayerHitReaction))]
 public class PlayerDodgeRoll : MonoBehaviour
 {
     // Dash speed = PlayerMovement.CurrentMoveSpeed * dashSpeedMultiplier, held for dashDuration
@@ -26,6 +27,8 @@ public class PlayerDodgeRoll : MonoBehaviour
     private CapsuleCollider _capsule;
     private PlayerMovement _playerMovement;
     private HealthComponent _healthComponent;
+    private PlayerHitReaction _hitReaction;
+    private PlayerAnimationController _animation;
     private InputAction _dodgeRollAction;
     private InputAction _moveAction;
     private int _enemyLayer;
@@ -36,6 +39,7 @@ public class PlayerDodgeRoll : MonoBehaviour
     private float _correctionElapsed;
     private bool _isDodgeRolling;
     private bool _isCorrectingOverlap;
+    private InputBuffer _inputBuffer;
 
     // Read-only cooldown state for the HUD (DashCooldownUI), mirroring the shape
     // ActiveItemController exposes for ActiveItemCooldownUI: Progress is 1 right
@@ -43,12 +47,20 @@ public class PlayerDodgeRoll : MonoBehaviour
     public float CooldownRemaining => Mathf.Max(0f, _cooldownRemaining);
     public float CooldownProgress => cooldown > 0f ? Mathf.Clamp01(_cooldownRemaining / cooldown) : 0f;
 
+    // True for the whole committed dash, including the post-dash overlap-correction tail - not
+    // just considered "over" the instant the timed roll ends. PlayerCombat/ActiveItemController
+    // read this to block attacks/skills for the same duration a second dash would itself be
+    // blocked for.
+    public bool IsDodgeRolling => _isDodgeRolling || _isCorrectingOverlap;
+
     private void Awake()
     {
         _rigidbody = GetComponent<Rigidbody>();
         _capsule = GetComponent<CapsuleCollider>();
         _playerMovement = GetComponent<PlayerMovement>();
         _healthComponent = GetComponent<HealthComponent>();
+        _hitReaction = GetComponent<PlayerHitReaction>();
+        _animation = GetComponentInChildren<PlayerAnimationController>();
         _enemyLayer = LayerMask.NameToLayer("Enemy");
 
         PlayerInputActions inputActions = GetComponent<PlayerInputActions>();
@@ -72,15 +84,43 @@ public class PlayerDodgeRoll : MonoBehaviour
         {
             _cooldownRemaining -= Time.deltaTime;
         }
+
+        _inputBuffer.Tick(Time.deltaTime);
+        TryConsumeBufferedDash();
     }
 
     private void OnDodgeRollPerformed(InputAction.CallbackContext context)
     {
-        if (PauseState.IsPaused || _isDodgeRolling || _isCorrectingOverlap || _cooldownRemaining > 0f)
+        if (PauseState.IsPaused)
         {
             return;
         }
 
+        if (_isDodgeRolling || _isCorrectingOverlap || _cooldownRemaining > 0f || _hitReaction.IsHitStunned)
+        {
+            // Blocked right now (mid-roll, on cooldown, or hit-stunned) - remember the press for
+            // a short window instead of dropping it; see InputBuffer for why.
+            _inputBuffer.Record(InputBuffer.DefaultWindowSeconds);
+            return;
+        }
+
+        StartDash();
+    }
+
+    private void TryConsumeBufferedDash()
+    {
+        if (!_inputBuffer.HasPending || PauseState.IsPaused || _isDodgeRolling || _isCorrectingOverlap
+            || _cooldownRemaining > 0f || _hitReaction.IsHitStunned)
+        {
+            return;
+        }
+
+        _inputBuffer.TryConsume();
+        StartDash();
+    }
+
+    private void StartDash()
+    {
         Vector2 moveInput = _moveAction.ReadValue<Vector2>();
         Vector3 direction = new Vector3(moveInput.x, 0f, moveInput.y);
         _dodgeRollDirection = direction.sqrMagnitude > 0.0001f ? direction.normalized : transform.forward;
@@ -90,6 +130,13 @@ public class PlayerDodgeRoll : MonoBehaviour
         _playerMovement.enabled = false;
         _healthComponent.Health.SetInvulnerable(true);
         SetEnemyCollisionIgnored(true);
+        _animation?.PlayRoll();
+
+        // Face the roll direction instead of the mouse cursor for the whole committed dash
+        // (PlayerAim skips its own rotation update while IsDodgeRolling is true and resumes
+        // on its own once it drops back to false - see PlayerAim.FixedUpdate). Direction is
+        // fixed for the whole roll, so this only needs to be set once here.
+        _rigidbody.MoveRotation(Quaternion.LookRotation(_dodgeRollDirection));
     }
 
     // Abort an in-progress roll and restore normal control immediately - called by
@@ -108,6 +155,7 @@ public class PlayerDodgeRoll : MonoBehaviour
         _isDodgeRolling = false;
         _isCorrectingOverlap = false;
         _cooldownRemaining = cooldown;
+        _inputBuffer = default;
         _rigidbody.linearVelocity = Vector3.zero;
         _playerMovement.enabled = true;
         _healthComponent.Health.SetInvulnerable(false);

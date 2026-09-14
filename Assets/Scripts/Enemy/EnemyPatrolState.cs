@@ -14,6 +14,7 @@ public class EnemyPatrolState : IEnemyState
     {
         Vector2 randomOffset = Random.insideUnitCircle * _machine.Data.PatrolRadius;
         _targetPosition = _machine.SpawnPosition + new Vector3(randomOffset.x, 0f, randomOffset.y);
+        _machine.Animation?.PlayWalk();
     }
 
     public void Tick(float deltaTime)

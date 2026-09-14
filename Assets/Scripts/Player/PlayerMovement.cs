@@ -19,18 +19,47 @@ public class PlayerMovement : MonoBehaviour
     private Rigidbody _rigidbody;
     private CapsuleCollider _capsule;
     private InputAction _moveAction;
+    private PlayerAnimationController _animation;
+    private bool _wasMoving;
+    private bool _forceAnimationRefresh;
 
     private void Awake()
     {
         _rigidbody = GetComponent<Rigidbody>();
         _capsule = GetComponent<CapsuleCollider>();
         _moveAction = GetComponent<PlayerInputActions>().FindAction("Move");
+        _animation = GetComponentInChildren<PlayerAnimationController>();
+    }
+
+    // Runs whenever this component transitions from disabled back to enabled - notably right
+    // after PlayerDodgeRoll re-enables it at the end of a dash. Without this, resuming the exact
+    // same movement state (e.g. still holding the same direction through the whole roll) would
+    // never re-trigger PlayIdle/PlayRun, leaving the Animator stuck on Roll's last frame.
+    private void OnEnable()
+    {
+        _forceAnimationRefresh = true;
     }
 
     private void FixedUpdate()
     {
         Vector2 moveInput = _moveAction.ReadValue<Vector2>();
         Vector3 direction = new Vector3(moveInput.x, 0f, moveInput.y);
+
+        bool isMoving = direction.sqrMagnitude > 0.0001f;
+        if (isMoving != _wasMoving || _forceAnimationRefresh)
+        {
+            _forceAnimationRefresh = false;
+            _wasMoving = isMoving;
+            if (isMoving)
+            {
+                _animation?.PlayRun();
+            }
+            else
+            {
+                _animation?.PlayIdle();
+            }
+        }
+
         if (direction.sqrMagnitude > 1f)
         {
             direction.Normalize();

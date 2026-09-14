@@ -14,6 +14,7 @@ public class GrenadeActiveItem : IActiveItem
 
     private GrenadeProjectile _heldGrenade;
     private float _cooldownRemaining;
+    private InputBuffer _inputBuffer;
 
     public GrenadeActiveItem(Transform owner, GrenadeActiveItemData data, GameObjectPool grenadePool, int level)
     {
@@ -36,6 +37,8 @@ public class GrenadeActiveItem : IActiveItem
         {
             if (_cooldownRemaining > 0f)
             {
+                // On cooldown - buffer the arm attempt instead of dropping it; see InputBuffer.
+                _inputBuffer.Record(InputBuffer.DefaultWindowSeconds);
                 return;
             }
 
@@ -43,6 +46,7 @@ public class GrenadeActiveItem : IActiveItem
             return;
         }
 
+        // Throwing an already-armed grenade is never gated, so nothing to buffer here.
         Throw();
     }
 
@@ -58,6 +62,13 @@ public class GrenadeActiveItem : IActiveItem
         if (_cooldownRemaining > 0f)
         {
             _cooldownRemaining -= deltaTime;
+        }
+
+        _inputBuffer.Tick(deltaTime);
+
+        if (_heldGrenade == null && _cooldownRemaining <= 0f && _inputBuffer.TryConsume())
+        {
+            Arm();
         }
     }
 

@@ -15,6 +15,13 @@ public class EnemyAttackState : IEnemyState
     {
         _activePattern = null;
         _idleSwayCenter = _machine.Body.position;
+
+        // Whatever animation was playing on entry (typically Chase's Run) otherwise just sits
+        // there unchanged until a pattern actually executes - if nothing is immediately ready/in
+        // range (e.g. only a low-probability pattern is in range and it hasn't rolled a hit yet),
+        // the enemy visibly "runs in place" for however long that takes. Reset to Idle up front;
+        // SelectPattern below still overrides it the same tick if something fires immediately.
+        _machine.Animation?.PlayIdle();
     }
 
     public void Tick(float deltaTime)
@@ -40,6 +47,11 @@ public class EnemyAttackState : IEnemyState
 
             _activePattern = null;
             _idleSwayCenter = _machine.Body.position;
+
+            // Same reasoning as Enter() - a pattern that just finished leaves its own cue
+            // (Attack/Shoot) showing, which would otherwise sit frozen through however many
+            // ticks pass before the next pattern actually fires.
+            _machine.Animation?.PlayIdle();
         }
 
         IAttackPattern selected = SelectPattern(patterns);
@@ -49,6 +61,7 @@ public class EnemyAttackState : IEnemyState
         }
 
         selected.Execute(_machine);
+        _machine.Animation?.Play(selected.AnimationCue);
         if (selected.IsBusy)
         {
             _activePattern = selected;

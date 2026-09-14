@@ -201,7 +201,7 @@ public class DebugOverlayController : MonoBehaviour
         return text;
     }
 
-    private void HandleAnyDamageTaken(HealthComponent health, float amount, Transform source)
+    private void HandleAnyDamageTaken(HealthComponent health, float amount, Transform source, Vector3 knockbackDirection)
     {
         if (!_visible)
         {

@@ -11,6 +11,7 @@ public class EnemyIdleState : IEnemyState
     public void Enter()
     {
         _idleElapsed = 0f;
+        _machine.Animation?.PlayIdle();
     }
 
     public void Tick(float deltaTime)

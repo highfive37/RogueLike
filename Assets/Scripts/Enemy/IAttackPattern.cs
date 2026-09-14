@@ -2,6 +2,11 @@ public interface IAttackPattern
 {
     bool IsReady { get; }
     bool IsBusy { get; }
+
+    // Which animation EnemyAttackState should trigger when this pattern's Execute() fires -
+    // melee lunges play "Attack", every ranged/burst/kiting pattern plays "Shoot".
+    EnemyAnimationCue AnimationCue { get; }
+
     bool IsInRange(EnemyStateMachine machine);
     void Execute(EnemyStateMachine machine);
     void Tick(float deltaTime);

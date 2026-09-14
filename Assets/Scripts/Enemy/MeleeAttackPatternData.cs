@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "MeleeAttackPatternData", menuName = "RogueLike/Enemies/Attack Patterns/Melee")]
@@ -15,5 +16,20 @@ public class MeleeAttackPatternData : AttackPatternData
     public override IAttackPattern CreatePattern(EnemyAttackContext context)
     {
         return new MeleeAttackPattern(this);
+    }
+
+    public override void Validate(List<string> errors)
+    {
+        base.Validate(errors);
+
+        if (lungeSpeed <= 0f)
+        {
+            errors.Add($"Lunge Speed should be positive (currently {lungeSpeed}).");
+        }
+
+        if (lungeDuration < 0f)
+        {
+            errors.Add($"Lunge Duration should not be negative (currently {lungeDuration}).");
+        }
     }
 }

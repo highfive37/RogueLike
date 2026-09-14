@@ -8,6 +8,7 @@ public class EnhancedShotActiveItem : IActiveItem
     private readonly float _damage;
 
     private float _cooldownRemaining;
+    private InputBuffer _inputBuffer;
 
     public EnhancedShotActiveItem(Transform owner, EnhancedShotActiveItemData data, GameObjectPool projectilePool, int level)
     {
@@ -23,20 +24,19 @@ public class EnhancedShotActiveItem : IActiveItem
 
     public void OnActivatePressed()
     {
-        if (_cooldownRemaining > 0f || _projectilePool == null)
+        if (_projectilePool == null)
         {
+            // Not a timing issue (missing wiring) - nothing to buffer, retrying won't help.
             return;
         }
 
-        Vector3 spawnPosition = _owner.position + _owner.forward * 1f + Vector3.up * 0.5f;
-        GameObject instance = _projectilePool.Get(spawnPosition, _owner.rotation);
-
-        if (instance.TryGetComponent<Projectile>(out var projectile))
+        if (_cooldownRemaining > 0f)
         {
-            projectile.Initialize(_owner.forward, _damage, _owner, 0f, _data.Range);
+            _inputBuffer.Record(InputBuffer.DefaultWindowSeconds);
+            return;
         }
 
-        _cooldownRemaining = _data.Cooldown;
+        Fire();
     }
 
     public void OnActivateReleased()
@@ -49,5 +49,25 @@ public class EnhancedShotActiveItem : IActiveItem
         {
             _cooldownRemaining -= deltaTime;
         }
+
+        _inputBuffer.Tick(deltaTime);
+
+        if (_cooldownRemaining <= 0f && _inputBuffer.TryConsume())
+        {
+            Fire();
+        }
+    }
+
+    private void Fire()
+    {
+        Vector3 spawnPosition = _owner.position + _owner.forward * 1f + Vector3.up * 0.5f;
+        GameObject instance = _projectilePool.Get(spawnPosition, _owner.rotation);
+
+        if (instance.TryGetComponent<Projectile>(out var projectile))
+        {
+            projectile.Initialize(_owner.forward, _damage, _owner, 0f, _data.Range);
+        }
+
+        _cooldownRemaining = _data.Cooldown;
     }
 }

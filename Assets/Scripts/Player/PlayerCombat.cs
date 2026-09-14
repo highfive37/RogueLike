@@ -2,12 +2,17 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(PlayerInputActions))]
+[RequireComponent(typeof(PlayerDodgeRoll))]
+[RequireComponent(typeof(PlayerHitReaction))]
 public class PlayerCombat : MonoBehaviour
 {
     [SerializeField] private GameObjectPool projectilePool;
     [SerializeField] private PlayerPassiveStats passiveStats;
 
     private InputAction _attackAction;
+    private PlayerDodgeRoll _dodgeRoll;
+    private PlayerHitReaction _hitReaction;
+    private PlayerAnimationController _animation;
     private IWeapon _weapon;
     private WeaponData _equippedData;
 
@@ -22,6 +27,9 @@ public class PlayerCombat : MonoBehaviour
     private void Awake()
     {
         _attackAction = GetComponent<PlayerInputActions>().FindAction("Attack");
+        _dodgeRoll = GetComponent<PlayerDodgeRoll>();
+        _hitReaction = GetComponent<PlayerHitReaction>();
+        _animation = GetComponentInChildren<PlayerAnimationController>();
     }
 
     private void OnEnable()
@@ -43,11 +51,24 @@ public class PlayerCombat : MonoBehaviour
     {
         _equippedData = data;
         _weapon = data.CreateWeapon(transform, projectilePool, passiveStats);
+
+        // Trigger the attack animation exactly when the weapon actually fires/hits, not when the
+        // button was pressed - a ranged press made on cooldown is buffered and fires later inside
+        // Tick(), so the animation has to follow that real moment or it drifts out of sync with
+        // the projectile (see DevLog for the bug this fixed).
+        if (_equippedData is RangedWeaponData)
+        {
+            _weapon.OnFired = () => _animation?.PlayShoot();
+        }
+        else if (_equippedData is MeleeWeaponData)
+        {
+            _weapon.OnFired = () => _animation?.PlayAttack();
+        }
     }
 
     private void OnAttackPerformed(InputAction.CallbackContext context)
     {
-        if (PauseState.IsPaused)
+        if (PauseState.IsPaused || _dodgeRoll.IsDodgeRolling || _hitReaction.IsHitStunned)
         {
             return;
         }

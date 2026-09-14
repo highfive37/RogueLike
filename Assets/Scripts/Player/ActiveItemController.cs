@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(PlayerInputActions))]
+[RequireComponent(typeof(PlayerDodgeRoll))]
 public class ActiveItemController : MonoBehaviour
 {
     [SerializeField] private ActiveItemData defaultSkill;
@@ -9,6 +10,7 @@ public class ActiveItemController : MonoBehaviour
     [SerializeField] private GameObjectPool grenadePool;
 
     private InputAction _activateAction;
+    private PlayerDodgeRoll _dodgeRoll;
     private ActiveItemContext _context;
     private IActiveItem _equippedItem;
 
@@ -18,6 +20,7 @@ public class ActiveItemController : MonoBehaviour
     private void Awake()
     {
         _activateAction = GetComponent<PlayerInputActions>().FindAction("Skill");
+        _dodgeRoll = GetComponent<PlayerDodgeRoll>();
         _context = new ActiveItemContext(projectilePool, grenadePool);
 
         if (defaultSkill != null)
@@ -57,7 +60,7 @@ public class ActiveItemController : MonoBehaviour
 
     private void OnActivatePressed(InputAction.CallbackContext context)
     {
-        if (PauseState.IsPaused)
+        if (PauseState.IsPaused || _dodgeRoll.IsDodgeRolling)
         {
             return;
         }

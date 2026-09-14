@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 // Range = trigger distance (player invaded close range). PreferredRange =
@@ -16,5 +17,25 @@ public class RetreatAndShootPatternData : AttackPatternData
     public override IAttackPattern CreatePattern(EnemyAttackContext context)
     {
         return new RetreatAndShootPattern(this, context.ProjectilePool);
+    }
+
+    public override void Validate(List<string> errors)
+    {
+        base.Validate(errors);
+
+        if (preferredRange <= 0f)
+        {
+            errors.Add($"Preferred Range should be positive (currently {preferredRange}).");
+        }
+
+        if (moveSpeed <= 0f)
+        {
+            errors.Add($"Move Speed should be positive (currently {moveSpeed}).");
+        }
+
+        if (projectileSpawnDistance <= 0f)
+        {
+            errors.Add($"Projectile Spawn Distance should be positive (currently {projectileSpawnDistance}).");
+        }
     }
 }

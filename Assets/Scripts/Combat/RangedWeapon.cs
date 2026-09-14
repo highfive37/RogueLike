@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 public class RangedWeapon : IWeapon
@@ -8,6 +9,9 @@ public class RangedWeapon : IWeapon
     private readonly PlayerPassiveStats _passiveStats;
 
     private float _cooldownRemaining;
+    private InputBuffer _inputBuffer;
+
+    public Action OnFired { get; set; }
 
     public RangedWeapon(Transform owner, RangedWeaponData data, GameObjectPool projectilePool, PlayerPassiveStats passiveStats)
     {
@@ -21,8 +25,32 @@ public class RangedWeapon : IWeapon
     {
         if (_cooldownRemaining > 0f)
         {
+            // On cooldown - buffer the press instead of dropping it; see InputBuffer.
+            _inputBuffer.Record(InputBuffer.DefaultWindowSeconds);
             return;
         }
+
+        Fire();
+    }
+
+    public void Tick(float deltaTime)
+    {
+        if (_cooldownRemaining > 0f)
+        {
+            _cooldownRemaining -= deltaTime;
+        }
+
+        _inputBuffer.Tick(deltaTime);
+
+        if (_cooldownRemaining <= 0f && _inputBuffer.TryConsume())
+        {
+            Fire();
+        }
+    }
+
+    private void Fire()
+    {
+        OnFired?.Invoke();
 
         float damage = _data.Damage + (_passiveStats != null ? _passiveStats.AttackDamageBonus : 0f);
         float bonusLifetime = _passiveStats != null ? _passiveStats.ProjectileLifetimeBonus : 0f;
@@ -36,13 +64,5 @@ public class RangedWeapon : IWeapon
         float bonusRate = _passiveStats != null ? _passiveStats.AttackSpeedBonus : 0f;
         float effectiveRate = baseRate + bonusRate;
         _cooldownRemaining = effectiveRate > 0f ? 1f / effectiveRate : _data.FireCooldown;
-    }
-
-    public void Tick(float deltaTime)
-    {
-        if (_cooldownRemaining > 0f)
-        {
-            _cooldownRemaining -= deltaTime;
-        }
     }
 }

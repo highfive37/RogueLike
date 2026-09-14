@@ -22,6 +22,7 @@ public class FlamethrowerActiveItem : IActiveItem
     private float _totalDamageDealt;
     private float _cooldownRemaining;
     private float _tickTimer;
+    private InputBuffer _inputBuffer;
 
     // Lazily created only while spraying with the F1 debug overlay on; torn down the moment
     // either condition stops holding so it never lingers as a stray scene object.
@@ -46,9 +47,16 @@ public class FlamethrowerActiveItem : IActiveItem
     {
         if (_isActive || _cooldownRemaining > 0f)
         {
+            // Busy/on cooldown - buffer the press instead of dropping it; see InputBuffer.
+            _inputBuffer.Record(InputBuffer.DefaultWindowSeconds);
             return;
         }
 
+        StartActivation();
+    }
+
+    private void StartActivation()
+    {
         _isActive = true;
         _activeElapsed = 0f;
         _totalDamageDealt = 0f;
@@ -83,6 +91,13 @@ public class FlamethrowerActiveItem : IActiveItem
         if (_cooldownRemaining > 0f)
         {
             _cooldownRemaining -= deltaTime;
+        }
+
+        _inputBuffer.Tick(deltaTime);
+
+        if (_cooldownRemaining <= 0f && _inputBuffer.TryConsume())
+        {
+            StartActivation();
         }
     }
 

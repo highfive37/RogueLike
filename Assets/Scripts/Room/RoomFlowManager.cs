@@ -1,4 +1,3 @@
-using System.Collections;
 using UnityEngine;
 
 // Glues StageManager's flow events to gameplay/UI reactions. BossRoomCleared (boss just died)
@@ -27,18 +26,13 @@ public class RoomFlowManager : MonoBehaviour
     [SerializeField] private PlayerActiveItemInventory playerActiveItemInventory;
     [SerializeField] private FloorTransitionUI floorTransitionUI;
 
-    // Duration of the placeholder capsule "collapse" - a scripted tip-over, not physics, since
-    // the player is still an unanimated primitive capsule at this stage. Revisit once real
-    // character art/animation replaces it (see CLAUDE.md placeholder-geometry note).
-    private const float DeathFallDuration = 0.45f;
-    private const float DeathFallAngle = 90f;
-
     private PlayerDodgeRoll _playerDodgeRoll;
     private PickupNotificationUI _pickupNotificationUI;
     private HealthComponent _playerHealth;
     private PlayerInputActions _playerInputActions;
     private Rigidbody _playerRigidbody;
     private CapsuleCollider _playerCapsule;
+    private PlayerAnimationController _playerAnimation;
 
     private void Awake()
     {
@@ -48,6 +42,7 @@ public class RoomFlowManager : MonoBehaviour
         _playerInputActions = playerPassiveStats != null ? playerPassiveStats.GetComponent<PlayerInputActions>() : null;
         _playerRigidbody = playerPassiveStats != null ? playerPassiveStats.GetComponent<Rigidbody>() : null;
         _playerCapsule = playerPassiveStats != null ? playerPassiveStats.GetComponent<CapsuleCollider>() : null;
+        _playerAnimation = playerPassiveStats != null ? playerPassiveStats.GetComponentInChildren<PlayerAnimationController>() : null;
     }
 
     private void OnEnable()
@@ -137,38 +132,27 @@ public class RoomFlowManager : MonoBehaviour
 
         PauseState.RequestPause(this);
 
-        if (_playerRigidbody != null && _playerCapsule != null)
+        // Freeze the body in place rather than the old scripted capsule tip-over (removed) - the
+        // Death clip on the player's visual now carries the "died" read. PlayerAnimationController
+        // forces its Animator to UnscaledTime specifically so that clip keeps playing through the
+        // Time.timeScale=0 RequestPause just set.
+        if (_playerRigidbody != null)
         {
-            StartCoroutine(PlayerFallOverRoutine());
+            // Zero the velocities before flipping isKinematic - Rigidbody logs a warning if you
+            // try to set linear/angularVelocity on a body that's already kinematic.
+            _playerRigidbody.linearVelocity = Vector3.zero;
+            _playerRigidbody.angularVelocity = Vector3.zero;
+            _playerRigidbody.isKinematic = true;
         }
+
+        if (_playerCapsule != null)
+        {
+            _playerCapsule.enabled = false;
+        }
+
+        _playerAnimation?.PlayDeath();
 
         uiManager.ShowGameOver(BuildCurrentStats());
-    }
-
-    // Scripted tip-over, not physics (see the class-level note on DeathFallDuration): rotates
-    // around the capsule's base rather than its transform origin (the capsule's own center) so
-    // it visually topples onto the ground instead of pivoting through it. Runs on unscaled time
-    // because PauseState.RequestPause above already zeroed Time.timeScale.
-    private IEnumerator PlayerFallOverRoutine()
-    {
-        _playerRigidbody.isKinematic = true;
-
-        Transform playerTransform = _playerRigidbody.transform;
-        Vector3 pivot = playerTransform.position - Vector3.up * (_playerCapsule.height / 2f);
-        Vector3 axis = playerTransform.right;
-
-        float rotated = 0f;
-        float elapsed = 0f;
-        while (elapsed < DeathFallDuration)
-        {
-            elapsed += Time.unscaledDeltaTime;
-            float target = Mathf.Lerp(0f, DeathFallAngle, Mathf.Clamp01(elapsed / DeathFallDuration));
-            playerTransform.RotateAround(pivot, axis, target - rotated);
-            rotated = target;
-            yield return null;
-        }
-
-        playerTransform.RotateAround(pivot, axis, DeathFallAngle - rotated);
     }
 
     // Debug-only (F5/F6 via DebugOverlayController): pops the exact real result screen on

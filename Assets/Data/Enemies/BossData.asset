@@ -11,15 +11,20 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6c36d5884cbd71d469be64bc0ae129cb, type: 3}
   m_Name: BossData
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   moveSpeed: 2.5
   patrolSpeed: 1
   patrolRadius: 2
   idleDuration: 1.5
+  wobbleFrequency: 2
+  wobbleAmplitude: 0.2
   detectionRange: 8
   leashRange: 12
+  searchDuration: 4
+  tracksLivePositionWhileBlind: 0
   attackPatterns:
-  - {fileID: 11400000, guid: e4c1e41bb19e40d195f40f325676d0de, type: 2}
-  - {fileID: 11400000, guid: 4ac40097ab2a49ab89ad5983f8a6be5c, type: 2}
+  - {fileID: 11400000, guid: 255df4ab0dc90434da6e66d16fed41c7, type: 2}
+  - {fileID: 11400000, guid: 51fdf6eca87bf12449ad40e4c260e849, type: 2}
+  - {fileID: 11400000, guid: 17074bd2b7877604cba5e3dee2d03cf8, type: 2}
   stunDuration: 0.08
   knockbackResistance: 1

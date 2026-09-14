@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "RangedWeaponData", menuName = "RogueLike/Weapons/Ranged Weapon")]
@@ -16,5 +17,15 @@ public class RangedWeaponData : WeaponData
     public override IWeapon CreateWeapon(Transform owner, GameObjectPool projectilePool, PlayerPassiveStats passiveStats)
     {
         return new RangedWeapon(owner, this, projectilePool, passiveStats);
+    }
+
+    public override void Validate(List<string> errors)
+    {
+        base.Validate(errors);
+
+        if (projectileSpawnDistance <= 0f)
+        {
+            errors.Add($"Projectile Spawn Distance should be positive (currently {projectileSpawnDistance}).");
+        }
     }
 }

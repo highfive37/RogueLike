@@ -26,6 +26,7 @@ public class MeleeAttackPattern : IAttackPattern
 
     public bool IsReady => _cooldownRemaining <= 0f;
     public bool IsBusy => _isWindingUp || _isLunging;
+    public EnemyAnimationCue AnimationCue => EnemyAnimationCue.Attack;
 
     public bool IsInRange(EnemyStateMachine machine)
     {
@@ -94,7 +95,7 @@ public class MeleeAttackPattern : IAttackPattern
 
             if (machine.CanSeePlayer(_data.Range))
             {
-                machine.PlayerDamageable?.TakeDamage(_data.Damage, machine.transform);
+                machine.PlayerDamageable?.TakeDamage(_data.Damage, machine.transform, machine.transform.forward);
             }
         }
     }

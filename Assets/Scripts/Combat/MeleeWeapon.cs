@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 public class MeleeWeapon : IWeapon
@@ -5,6 +6,8 @@ public class MeleeWeapon : IWeapon
     private readonly Transform _owner;
     private readonly MeleeWeaponData _data;
     private readonly PlayerPassiveStats _passiveStats;
+
+    public Action OnFired { get; set; }
 
     public MeleeWeapon(Transform owner, MeleeWeaponData data, PlayerPassiveStats passiveStats)
     {
@@ -15,6 +18,8 @@ public class MeleeWeapon : IWeapon
 
     public void Attack()
     {
+        OnFired?.Invoke();
+
         float damage = _data.Damage + (_passiveStats != null ? _passiveStats.AttackDamageBonus : 0f);
         Vector3 origin = _owner.position + _owner.forward * 0.5f;
         Collider[] hits = Physics.OverlapSphere(origin, _data.Range);

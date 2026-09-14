@@ -11,9 +11,11 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 9f8af2d57a3d7f744a0b276ebad985fa, type: 3}
   m_Name: RangedAttack
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   patternName: Ranged
   range: 6
   cooldown: 2
   damage: 8
+  windUpDuration: 0.35
   projectileSpawnDistance: 1
+  retreatTriggerRange: 0

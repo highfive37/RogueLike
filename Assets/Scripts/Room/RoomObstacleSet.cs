@@ -17,11 +17,39 @@ using UnityEngine;
 // projectiles (Projectile.OnTriggerEnter reacts to any non-owner, non-projectile
 // collider), exactly like the existing wall tiles.
 [CreateAssetMenu(fileName = "RoomObstacleSet", menuName = "RogueLike/Room Obstacle Set")]
-public class RoomObstacleSet : ScriptableObject
+public class RoomObstacleSet : ScriptableObject, IValidatable
 {
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private GameObject connectorPrefab;
 
     public IReadOnlyList<GameObject> Prefabs => prefabs;
     public GameObject ConnectorPrefab => connectorPrefab;
+
+    public void Validate(List<string> errors)
+    {
+        if (prefabs == null || prefabs.Length == 0)
+        {
+            errors.Add("Prefabs is empty.");
+        }
+        else
+        {
+            for (int i = 0; i < prefabs.Length; i++)
+            {
+                if (prefabs[i] == null)
+                {
+                    errors.Add($"Prefabs[{i}] is not assigned.");
+                }
+            }
+        }
+
+        if (connectorPrefab == null)
+        {
+            errors.Add("Connector Prefab is not assigned.");
+        }
+    }
+
+    private void OnValidate()
+    {
+        DataValidation.LogIssues(this, this);
+    }
 }

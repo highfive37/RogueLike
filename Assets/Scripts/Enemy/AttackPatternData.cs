@@ -1,6 +1,7 @@
+using System.Collections.Generic;
 using UnityEngine;
 
-public abstract class AttackPatternData : ScriptableObject
+public abstract class AttackPatternData : ScriptableObject, IValidatable
 {
     [SerializeField] private string patternName;
     [SerializeField] private float range = 1.2f;
@@ -19,4 +20,37 @@ public abstract class AttackPatternData : ScriptableObject
     public float WindUpDuration => windUpDuration;
 
     public abstract IAttackPattern CreatePattern(EnemyAttackContext context);
+
+    public virtual void Validate(List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(patternName))
+        {
+            errors.Add("Pattern Name is empty.");
+        }
+
+        if (range <= 0f)
+        {
+            errors.Add($"Range should be positive (currently {range}).");
+        }
+
+        if (cooldown <= 0f)
+        {
+            errors.Add($"Cooldown should be positive (currently {cooldown}).");
+        }
+
+        if (damage < 0f)
+        {
+            errors.Add($"Damage should not be negative (currently {damage}).");
+        }
+
+        if (windUpDuration < 0f)
+        {
+            errors.Add($"Wind Up Duration should not be negative (currently {windUpDuration}).");
+        }
+    }
+
+    private void OnValidate()
+    {
+        DataValidation.LogIssues(this, this);
+    }
 }

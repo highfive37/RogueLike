@@ -19,6 +19,7 @@ public class RangedAttackPattern : IAttackPattern
 
     public bool IsReady => _cooldownRemaining <= 0f;
     public bool IsBusy => _kiting.IsBusy;
+    public EnemyAnimationCue AnimationCue => EnemyAnimationCue.Shoot;
 
     public bool IsInRange(EnemyStateMachine machine)
     {

@@ -80,7 +80,7 @@ public class Projectile : MonoBehaviour
 
         if (other.TryGetComponent<IDamageable>(out var damageable))
         {
-            damageable.TakeDamage(_damage, _owner);
+            damageable.TakeDamage(_damage, _owner, _direction);
         }
 
         ReturnToPoolOnce();

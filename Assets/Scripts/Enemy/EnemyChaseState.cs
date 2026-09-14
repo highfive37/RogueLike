@@ -45,6 +45,10 @@ public class EnemyChaseState : IEnemyState
     // (not the predicted one, so they don't also drift far off in one direction).
     private const int LookAroundPointCount = 2;
     private const float LookAroundRadius = 3f;
+    // Chase stops closing at this fraction of MaxAttackRange, not the full value - see
+    // PhysicsTick's stop-closing check for why parking exactly on the same boundary
+    // AttackState's own range gate uses is an unstable knife-edge.
+    private const float AttackRangeApproachFactor = 0.9f;
 
     public EnemyChaseState(EnemyStateMachine machine)
     {
@@ -63,6 +67,7 @@ public class EnemyChaseState : IEnemyState
         _searchElapsed = 0f;
         _searchCheckpoints.Clear();
         _checkpointIndex = 0;
+        _machine.Animation?.PlayRun();
     }
 
     public void Tick(float deltaTime)
@@ -168,7 +173,15 @@ public class EnemyChaseState : IEnemyState
         // alone can't tell a player standing right next to a thin wall apart from one actually
         // in reach, and stopping for the former just freezes the enemy in place forever since
         // nothing else in this method ever runs again while "in range".
-        if (clearLine && toPlayer.magnitude <= _machine.MaxAttackRange)
+        //
+        // Stops a bit SHORT of MaxAttackRange itself (not at it) on purpose: AttackState's own
+        // gate back into Chase uses the exact same MaxAttackRange value (CanSeePlayer(
+        // MaxAttackRange)), so parking exactly on that boundary put both states' range checks on
+        // the same knife-edge - a player hovering right at the limit could leave the enemy
+        // oscillating (or, worse, sitting motionless with no pattern ever both ready and in
+        // range) instead of ever settling cleanly into attack range. Closing in past the
+        // boundary first removes that shared razor's edge entirely.
+        if (clearLine && toPlayer.magnitude <= _machine.MaxAttackRange * AttackRangeApproachFactor)
         {
             return;
         }

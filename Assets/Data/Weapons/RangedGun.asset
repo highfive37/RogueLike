@@ -13,6 +13,4 @@ MonoBehaviour:
   m_Name: RangedGun
   m_EditorClassIdentifier: 
   weaponName: Ranged Gun
-  damage: 8
   projectileSpawnDistance: 1
-  fireCooldown: 0.65

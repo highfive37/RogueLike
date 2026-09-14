@@ -30,6 +30,1378 @@
 
 ---
 
+## 2026-09-15 (30)
+
+### 진행 내용
+- 유저 리포트: 히트박스 기반 재설계(29) 이후 데미지는 정상적으로 들어오는데 여전히
+  "넉백 맛이 안 산다". 요청: `ChargeStrike` 이 패턴의 공격만 넉백시키는 힘을 2.5배로.
+- 조사: `PlayerHitReaction`은 모든 피격에 대해 고정된 넉백 거리/속도(`KnockbackDistance`
+  = `KnockbackMath.BaseKnockbackDistance * 0.7`, 0.3초 동안)를 그대로 적용 - 공격
+  출처(근접/원거리/보스 돌진)를 구분하지 않는 구조라, 데미지량과 달리 넉백 세기를
+  공격별로 다르게 줄 방법이 아예 없었음.
+- 설계 선택: `IDamageable.TakeDamage`의 세 번째 인자 `knockbackDirection`을 새 파라미터
+  추가 없이 재활용 - 기존 모든 호출부(`MeleeWeapon`, `Projectile`, `MeleeAttackPattern`
+  등)가 예외 없이 단위벡터(`transform.forward`, `direction.normalized`)만 넘기고 있었던
+  것을 확인, 이 벡터의 **크기(magnitude)를 넉백 세기 배율**로 재해석하는 쪽이 인터페이스
+  시그니처를 건드리지 않고 기존 호출부 전부 무변화로 남길 수 있어 가장 단순했음(새
+  파라미터를 추가하는 대안은 모든 구현체/호출부를 건드려야 해서 기각).
+- 구현: `PlayerHitReaction`의 `FlattenAndNormalize`를 `FlattenAndSplit`으로 교체 - 방향은
+  그대로 정규화해 저장하되 원래 크기를 `_knockbackStrength`(기본 1)로 별도 보관,
+  `FixedUpdate`에서 `KnockbackSpeed * _knockbackStrength`로 속도(=같은 0.3초 동안 이동
+  거리)를 스케일. `EnemyChargeHitbox.Arm()`에 `knockbackMultiplier` 파라미터(기본 1) 추가,
+  `TakeDamage` 호출 시 `_owner.forward * _knockbackMultiplier`로 전달.
+  `ChargeStrikePattern`에 `KnockbackMultiplier = 2.5f` 상수 추가, `Arm()` 호출에 전달.
+  `IDamageable.cs`의 `knockbackDirection` 파라미터 문서에 이 크기=배율 관례를 명시.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 수정 파일 4개(`PlayerHitReaction`, `EnemyChargeHitbox`,
+      `ChargeStrikePattern`, `IDamageable`) 전부 클린(기존에도 있던 무관 경고만 재출력)
+- [x] EditMode 139/139 (`TestRunnerApi` 재실행, 회귀 없음)
+- [x] PlayMode 47/47(1회차 `EnemyChasePathfindingTests`의 동일 기존 플레이키 테스트
+      1건 실패 → 단독 재실행 통과로 무관함 재확인)
+- [ ] 실제 Play Mode 확인 필요 - 돌진 넉백이 2.5배 세진 게 실감상 만족스러운지는 유저
+      실플레이로만 확인 가능
+
+### 이슈/메모
+- 넉백 세기를 `knockbackDirection` 벡터의 크기로 암묵적으로 인코딩하는 방식은 인터페이스를
+  안 건드리는 대신 "단위벡터=1배"라는 안 보이는 규약에 의존하게 됨 - `IDamageable.cs`
+  문서 주석에 명시해뒀지만, 앞으로 넉백 배율이 필요한 공격이 더 늘어나면(현재는
+  `ChargeStrike` 하나뿐) 명시적 파라미터로 승격하는 편이 나을 수 있음.
+
+### 다음 작업
+- 유저 실플레이로 돌진 공격의 최종 넉백 임팩트 확인.
+
+---
+
+## 2026-09-15 (29)
+
+### 진행 내용
+- 유저 리포트: `ChargeStrike`가 이제 명중은 하는데(8l 수정 완료) "넉백 맛이 안 산다".
+  유저 제안: 돌진 완료 후 0.2초까지 유지되는 판정용 히트박스를 보스 바라보는 방향에
+  붙여서, 이 박스와 충돌하면 데미지+넉백이 들어가게 하자 - "이전의 0.4초 대기 끝
+  거리 체크를 **대체**하는 것"으로 명확화(추가가 아님, 판정을 하나로 유지).
+- 세부 사항 확정(유저 답변):
+  1. 돌진 시작부터(30% 지점 아님) 바로 히트박스 활성화 - 어차피 코앞에서 멈추니
+     부자연스럽지 않을 것
+  2. 박스 크기: 높이/폭은 보스 모델 크기(캡슐 반지름 0.5·높이 2 → 폭 1/높이 2),
+     두께는 적당히(1유닛으로 확정)
+  3. 한 번만 맞게 - 연속 히트 방지
+  4. 기존 0.4초 대기는 "공격 후딜레이"로 남기되 0.2초로 축소, 더 이상 히트박스와
+     연계되지 않음(정지 후엔 판정 없음, 그냥 회복 시간)
+- 구현: 신규 `EnemyChargeHitbox`(트리거 `BoxCollider` + 컴포넌트, 최초 1회만 명중
+  처리 후 자동 `Disarm`) - `ChargeStrikePattern`은 순수 C# 클래스라 `OnTriggerEnter`를
+  직접 못 받아서 보스 프리팹에 자식 오브젝트로 붙이고 패턴이 `Arm()`/`Disarm()`으로
+  켜고 끔. `EnemyStateMachine`에 `ChargeHitbox` 프로퍼티 신설(`Animation`과 동일한
+  null-conditional 관례). `Boss_Basic.prefab`에 `ChargeHitbox` 자식(박스 1×2×1,
+  보스 앞 1유닛 오프셋, 기본 비활성) 추가. `ChargeStrikePattern`에서 `Execute()`
+  (돌진 시작) 시 `Arm()`, 돌진 종료(도착/타임아웃) 시 `Disarm()`(정지 후 대기엔 판정
+  없음), `Interrupt()`에도 `Disarm()` 추가. 기존 "0.4초 대기 끝 거리 체크" 로직은
+  완전히 제거(대체 확인됨). `ChargeStrike.asset`의 `windUpDuration`을 0.4→0.2로 축소.
+- **버그 발견 및 수정**: 신규/수정 테스트 작성 중 히트박스가 매번 명중 실패 -
+  진단 결과 **테스트 버그가 아니라 실제 코드 결함**: `TickDash()`가 보스를 이동만
+  시키고 **회전은 시키지 않아서**, 자식으로 붙은 히트박스가 돌진 방향과 무관하게
+  이전 회전값 그대로인 채 엉뚱한 방향을 향하고 있었음. 실제 게임에선 보스가 직전
+  상태(추격/대기)에서 이미 플레이어를 바라보고 있던 관성 덕에 우연히 안 드러났을
+  뿐, 원점에 갓 스폰된(임의 회전) 상황이면 재현되는 진짜 결함이었음. `Execute()`에서
+  돌진 방향을 계산한 직후 `Body.MoveRotation`으로 그 방향을 즉시 바라보게 하는
+  한 줄 추가로 수정.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 클린
+- [x] `ChargeStrikePatternPhysicsTests` 전면 재작성(히트박스 기반 설계에 맞춰):
+      돌진 도중 히트박스가 명중시키는지+한 번만 맞는지(신규) / 충돌 무시가 돌진+
+      회복 구간 유지되다 회복 끝나면 복원되는지(갱신) / 중단 시 즉시 복원(기존
+      유지) - **최초 실행 시 2개 실패**(회전 결함), 수정 후 3개 전부 통과
+- [x] EditMode 139/139
+- [x] PlayMode 47/47(기존 플레이키 1건 재검증 통과)
+
+### 이슈/메모
+- **테스트가 실제 게임플레이 버그를 잡아낸 두 번째 사례(이 보스 작업에서만)**:
+  "실제 플레이에서는 우연히 안 드러나지만 테스트의 초기 조건(원점 스폰, 임의 회전)
+  에서는 바로 드러나는" 패턴 - 방금 스폰됐거나 다른 방향을 보고 있던 상태에서
+  바로 돌진이 트리거되면 라이브에서도 언젠가 재현될 수 있는 잠재 버그였음. 자동화
+  테스트가 "우연히 맞는 조건"에 의존하지 않는 깨끗한 초기 상태에서 시작하는 것의
+  가치를 다시 확인.
+
+### 다음 작업
+- 유저 실플레이로 돌진 공격의 넉백 임팩트가 이제 만족스러운지 확인 필요.
+
+---
+
+## 2026-09-15 (28)
+
+### 진행 내용
+- 유저 리포트: `ChargeStrike`(보스 돌진 공격)이 "그냥 오브젝트에 밀리는 느낌"만 나고
+  데미지 로그도 안 찍힘 - 명중이 안 되는 것으로 추정.
+- 유저 제안(돌진 시작~정지까지 유지되는 추적 히트박스)에 대해 의견 요청받음 - 검토
+  후 두 가지 이유로 기각 의견 제시: ① 돌진 도중 스치기만 해도 맞아버려 "0.4초 대기 후
+  타격"이라는 페어플레이 텔레그래프 설계가 무너짐 ② 이 프로젝트의 다른 모든 공격
+  패턴이 "특정 순간 거리 계산" 방식으로 통일돼 있는데 이것만 트리거 콜라이더 방식이
+  되면 구조가 하나 늘어남. 대안으로 플레이어 대시가 이미 쓰는 "돌진 중 충돌 무시"
+  패턴(`PlayerDodgeRoll`의 `Physics.IgnoreLayerCollision`) 재사용을 제안.
+- 유저가 날카로운 질문: "그럼 플레이어 원거리 공격도 안 맞게 되는 거 아니냐?" - 확인
+  결과 **정확한 지적**이었음: `Player.prefab`과 `Projectile_Basic.prefab`이 둘 다
+  레이어 0(Default)에 있어서, `IgnoreLayerCollision(Default, Enemy)`처럼 레이어
+  전체를 끄는 방식은 발사체까지 전부 막아버림. 플레이어 자신의 대시에서 이게 안
+  드러났던 이유는 그때는 `HealthComponent.SetInvulnerable(true)`로 이미 별도
+  무적 처리가 돼 있어서였을 뿐. 보스는 그런 장치가 없어 진짜 부작용으로 드러날 뻔함.
+- 수정된 방향으로 확정: 레이어 전체가 아니라 **`Physics.IgnoreCollision(보스캡슐,
+  플레이어캡슐)`로 이 두 콜라이더 쌍만 좁게** 무시. 발사체는 완전히 다른 콜라이더라
+  전혀 영향 없음.
+- 구현: `EnemyStateMachine`에 `PlayerCollider` 프로�터티 신설(`Start()`에서
+  `TryGetComponent`로 채움, 기존 `PlayerDamageable`/`PlayerVelocity`와 동일 패턴).
+  `ChargeStrikePattern`이 `Execute()`(돌진 시작) 시점에 `Physics.IgnoreCollision`을
+  켜고, 대기가 끝나 타격 판정을 마친 직후(또는 `Interrupt()`로 중단됐을 때) 다시
+  끄도록 수정.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 클린
+- [x] 신규 PlayMode 테스트 2개(돌진~타격 전 구간엔 무시 상태 유지되고 타격 직후
+      복원되는지 / `Interrupt()` 시 즉시 복원되는지) - **최초 실행에서 1개 실패**,
+      원인 조사 결과 **수정 자체는 정상 작동**(거리가 접촉 여유값 1.1에 소수점까지
+      완벽히 고정되는 것을 진단 로그로 확인 - 충돌 무시가 제대로 먹히고 있다는 뜻)
+      했지만, **테스트용 가짜 플레이어에 Rigidbody가 빠져있어서** `EnemyStateMachine.
+      HasClearLineToPlayer()`가 "Rigidbody 없는 콜라이더 = 벽"으로 오판, 플레이어
+      자신의 캡슐을 벽으로 오인해 지근거리에서도 시야 차단 판정을 내려 타격이
+      불발됐음(실제 `Player.prefab`은 Rigidbody가 있어 실제 게임에선 해당 없음) -
+      테스트에 `Rigidbody`(kinematic) 추가로 수정 후 재실행 전부 통과
+- [x] EditMode 139/139
+- [x] PlayMode 47/47(기존 플레이키 테스트 포함 전부 한 번에 통과)
+
+### 이슈/메모
+- **재사용 가능한 교훈**: `EnemyStateMachine.IsSightBlocked`는 "Rigidbody가 없는
+  콜라이더 = 벽/장애물"이라는 관례로 시야 차단을 판정하므로, 테스트에서 플레이어
+  스탠드인을 만들 때 **Collider만 넣고 Rigidbody를 빠뜨리면 실제 플레이어 프리팹과
+  다르게 동작**한다(자기 자신의 콜라이더가 "벽"으로 오인되어 근거리 시야/사거리
+  판정이 전부 깨짐). 플레이어 콜라이더가 관여하는 테스트를 짤 때는 항상 Rigidbody도
+  같이 넣을 것.
+- `Physics.IgnoreLayerCollision`(레이어 전체) vs `Physics.IgnoreCollision`(콜라이더
+  쌍 하나)의 차이를 실제로 헷갈릴 뻔한 사례 - 같은 레이어를 여러 종류의 오브젝트
+  (플레이어 본체, 발사체)가 공유하고 있다면 레이어 단위 무시는 항상 의도치 않은
+  범위까지 영향을 줄 수 있음을 유저가 먼저 캐치함.
+
+### 다음 작업
+- 유저 실플레이로 보스 돌진 공격이 실제로 명중하는지, 원거리 공격은 여전히 정상
+  들어가는지 확인 필요.
+
+---
+
+## 2026-09-14 (27)
+
+### 진행 내용
+- (26) 수정 후에도 유저가 "여전히 제자리걸음"이라고 재보고, 재조사 요청.
+- 라이브 재진단 과정에서 제 자체 진단 도구가 이 세션 내내 겪어온 "에디터 포커스
+  없으면 프레임 안 흐름" 문제에 다시 걸려, 직전 턴의 "보스가 완전히 영구 정지"
+  결론 일부가 오진임을 스스로 정정(강제로 Chase 상태로 되돌린 뒤 재확인하니
+  실제로는 16유닛 넘게 정상 이동했음을 확인).
+- 다만 **독립적인 두 시점, 서로 다른 월드 좌표에서 거리만 정확히 "8.0을 살짝
+  넘는 값"(8.00035, 8.000388)에 반복적으로 멈춰있는 패턴은 재현 확인** - 우연이라기엔
+  너무 정확한 일치. 코드 검토 결과: `EnemyChaseState.PhysicsTick()`의 "그만 다가가기"
+  조건(`toPlayer.magnitude <= MaxAttackRange`)과 `EnemyAttackState`가 공격 시도
+  가능 여부를 판단하는 조건(`CanSeePlayer(MaxAttackRange)`)이 **정확히 같은 경계값
+  (8)을 공유**하고 있어, 거리가 그 경계에 딱 걸리면 두 상태 어느 쪽도 확실한 전진을
+  보장 못 하는 불안정 지점이 생길 수 있음을 확인.
+- 유저 승인 후 수정: `EnemyChaseState`가 `MaxAttackRange` 정확히가 아니라 그
+  **90%(`AttackRangeApproachFactor`) 지점까지** 계속 다가가도록 변경 - 경계를 공유하지
+  않게 되어 `EnemyAttackState`의 사거리 판정에 항상 여유를 확보.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 클린
+- [x] 신규 PlayMode `EnemyChaseAttackRangeMarginTests` 2개(구 경계(8) 안이지만 신
+      마진(7.2) 밖이면 계속 접근 / 이미 마진 안이면 더 이상 안 움직임) - 첫 실행부터
+      통과
+- [x] EditMode 139/139
+- [x] PlayMode 45/45 - 1회차에 무관한 기존 플레이키 테스트(`ChaseState_
+      SlowEnemyAcrossManyRepathCycles...`, 이 세션에서 여러 차례 이미 확인된 것)
+      1건만 실패, 단독 재실행으로 통과 재확인
+
+### 이슈/메모
+- **자기 정정 기록**: 직전 턴에서 "보스가 강제로 Chase 상태를 줘도 전혀 안 움직인다"
+  고 단정했던 부분은, 제 진단 스크립트 자신이 그 순간 프레임 정지 문제에 걸려 있어서
+  생긴 오판이었음. 라이브 디버깅 중 `Time.time`이 실제로 흐르고 있는지를 매번 같이
+  확인하지 않으면 이런 식으로 원인을 완전히 잘못 짚을 수 있음 - 이번처럼 "강제로
+  상태를 리셋해도 안 움직인다"는 결론을 내리기 전에는 반드시 `Time.time`/
+  `frameCount`가 그 관찰 구간 동안 실제로 진행됐는지부터 재확인할 것.
+- 그럼에도 불구하고 "정확히 같은 거리값(8.0 부근)에서 반복 재현"이라는 독립적 관측
+  자체는 유효했고, 실제 코드에 있던 경계 공유 문제로 이어짐 - 진단 도구의 노이즈와
+  실제 신호를 구분해서 유효한 패턴만 추려낸 사례.
+
+### 다음 작업
+- 유저 실플레이 최종 확인 대기(사거리 경계에서 더 이상 제자리걸음 안 하는지).
+
+---
+
+## 2026-09-14 (26)
+
+### 진행 내용
+- 유저 추가 리포트(분석만 요청): 사거리 끄트머리에서 보스에게 발각된 직후, `ChargeStrike`
+  가 15% 룰렛을 통과하기 전까지 "뛰는 애니를 하면서 제자리에 있는" 현상.
+- 원인 분석: 보스의 `detectionRange`와 `MaxAttackRange`가 둘 다 8(`ChargeStrike`의
+  사거리)이라, 발각 즉시 `EnemyChaseState`(진입 시 `PlayRun()` 1회 재생)에서
+  `EnemyAttackState`로 바로 전환됨. 그런데 `EnemyAttackState.Enter()`/`Tick()`은
+  **선택 가능한 패턴이 하나도 없으면 애니메이션을 전혀 건드리지 않고 그냥 리턴** -
+  6~8유닛 구간에서는 `RangedAttack`/`BurstRangedAttack`(사거리 6)이 아직 사거리
+  밖이고 `ChargeStrike`(사거리 8)만 사거리 안인데 85% 확률로 미발동이라, `SelectPattern`
+  이 `null`을 반환하는 프레임이 이어짐 - 그 동안 Chase에서 재생된 "Run" 애니가 그대로
+  남아있고, 실제 이동은 `HoldOrSway()`가 담당(웨이브 진폭 0.2, 위치 변화 미미)해서
+  "뛰는 애니인데 제자리"로 보임.
+- 유저와 논의 후 해결 방향 확정(대안: 우선순위만 바꾸기 - 근본 원인이 사거리 갭이라
+  효과 없고 `ChargeStrike` 발동 빈도만 죽는다는 점을 설명해 기각):
+  1. `RangedAttack`/`BurstRangedAttack`의 보스 전용 복제본(사거리 8)을 만들어 6~8
+     사각지대 자체를 없앰 - 원본 에셋은 일반 적(`EnemyRangedData`/`EnemyBurstRangedData`)
+     이 그대로 공유 중이라 직접 못 건드림, 반드시 별도 에셋으로 분리해야 함을 먼저 확인.
+  2. `EnemyAttackState`가 선택된 패턴이 없어질 때(`Enter()` 진입 시, 그리고 패턴이
+     막 끝나 `_activePattern`이 `null`로 돌아갈 때) `PlayIdle()`을 재생하도록 추가 -
+     사거리를 아무리 맞춰도 남을 수 있는 "모든 패턴이 동시에 쿨다운" 같은 다른 틈까지
+     방어.
+- 구현: `RangedAttack_Boss.asset`/`BurstRangedAttack_Boss.asset` 신규 생성(원본을
+  `AssetDatabase.CopyAsset`으로 복제 후 `range`만 8로 변경, 나머지 수치·`retreatTriggerRange
+  =0`은 원본과 동일 유지). `BossData.asset.attackPatterns`를
+  `[ChargeStrike, RangedAttack_Boss, BurstRangedAttack_Boss]`로 교체. `EnemyAttackState.
+  Enter()`와 "패턴 방금 종료" 분기 2곳에 `_machine.Animation?.PlayIdle();` 추가(매
+  프레임이 아니라 전환 시점에만 1회씩 - 스팸 방지).
+- 작은 사고: `BurstRangedAttack_Boss.asset` 복제 직후 같은 커맨드 안에서 연달아
+  `SerializedObject`로 값을 고쳤는데 `AssetDatabase.SaveAssets()`를 안 불러서 range
+  변경이 디스크에 안 반영됨(첫 번째로 처리한 `RangedAttack_Boss`는 우연히 반영됨) -
+  파일을 직접 읽어보고 발견, 별도 커맨드로 `SaveAssets()`+재로드 검증까지 포함해서
+  재수정.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 수정 파일 클린
+- [x] EditMode 139/139
+- [x] PlayMode 43/43 - 1회차에 무관한 기존 플레이키 테스트 2건(`ChaseState_
+      SlowEnemyAcrossManyRepathCycles...`, `Chase_SearchTimesOut_GivesUpToPatrol_
+      WhenLastKnownSpotUnreachable` - 둘 다 이 세션/DevLog에 이미 기록된 상습
+      플레이키) 실패, 해당 2건만 재실행해 통과 확인
+- [ ] 실제 Play Mode 확인 필요 - 사거리 끄트머리에서 발각 직후 더 이상 "뛰는 애니
+      제자리" 현상이 안 보이는지, 원거리 두 패턴이 8까지 정상적으로 반응하는지
+
+### 이슈/메모
+- **재사용 가능한 교훈**: `AssetDatabase.CopyAsset` 직후 같은 스크립트 실행 안에서
+  `SerializedObject`로 여러 에셋을 연속 수정할 때는 **에셋마다 개별적으로
+  `AssetDatabase.SaveAssets()`를 확실히 호출**하거나, 최소한 마지막에 한 번이라도
+  호출을 빼먹지 말 것 - 이번처럼 첫 번째 에셋은 우연히 반영되고 두 번째만 안 반영되는
+  식으로 반쪽만 실패해서 알아채기 쉽지 않았음.
+- 공유 데이터 에셋(여러 적 타입이 같은 `AttackPatternData`를 참조)을 특정 적 전용으로
+  튜닝해야 할 때는 항상 "이 에셋을 다른 누가 쓰고 있는지" 먼저 확인하고, 필요하면
+  전용 복제본을 만들 것 - 이번에 `RangedAttack.asset`을 그냥 고쳤으면 일반 원거리
+  적들의 사거리까지 같이 바뀔 뻔했음.
+
+### 다음 작업
+- 유저 실플레이 최종 확인 대기.
+
+---
+
+## 2026-09-14 (25)
+
+### 진행 내용
+- (24) 수정 후 라이브 재확인 결과, 이번엔 다른 증상으로 여전히 멈춤 확인(분석만 요청받음):
+  보스 위치가 2분 넘게 완전히 고정, 거리도 정확히 6.0015(후퇴 목표 6을 이미 살짝
+  넘어선 상태)에서 정지 - 지난번(벽에 막혀 목표 거리에 못 미침)과 달리 **이미 목표
+  거리에 도달했는데도 조준/발사로 못 넘어가는** 다른 정지 케이스. `RangedKitingBehavior`
+  /`RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern` 조합의
+  다단계 상태 전환 자체가 계속 엣지 케이스에 걸리는 것으로 판단, **보스의 해당 패턴을
+  통째로 교체**하기로 결정(유저 판단, 코드 근거로 동의).
+- 유저 요청: 보스에게 "낮은 확률로 빠르게 접근해 근접 공격하는" 패턴 신설 + 기존
+  `RetreatAndShoot` 제거 + `RangedAttack`/`BurstRangedAttack`(둘 다 이미
+  `retreatTriggerRange=0`, 후퇴 로직 자체를 안 탐)으로 교체.
+- 수치 확정(유저): 발동 확률 15%, 트리거 사거리 8, 데미지 15, 쿨다운 2.5초, 돌진 후
+  0.4초 대기 뒤 히트박스+공격 애니 실행. 돌진 속도는 보스 이동속도(2.5) 확인 후
+  10으로 확정(트리거 최대 거리 8을 0.8초에 주파, 평소 굼뜬 보스가 갑자기 빠르게
+  튀어나오는 인상을 주는 선).
+- 신규 `ChargeStrikePattern`/`ChargeStrikePatternData` 구현: 돌진(호밍 아님, 트리거
+  시점 방향 고정, `MeleeAttackPattern` 컨벤션과 동일하게 접촉 여유 1.1에서 정지) →
+  정지 후 대기(기존 `windUpDuration` 필드를 "돌진 전 텔레그래프"가 아니라 "돌진 후
+  대기"로 재활용) → 대기 종료 시 사거리 1.3 안이면 데미지+`Attack` 애니 큐.
+- **확률 처리 설계의 핵심**: "매 프레임 15% 굴리기"는 사실상 즉시 발동과 다름없어서
+  (1초 안에 99%+ 누적 확률) 무의미함 → **쿨다운이 0으로 떨어지는 바로 그 순간에 딱
+  한 번만 굴리고, 실패하면 쿨다운을 통째로 다시 채워 다음 사이클까지 기다리게** 하는
+  방식으로 패턴 자체 안에서 완결 처리(`IAttackPattern`/`EnemyAttackState`는 전혀
+  안 건드림).
+- `ChargeStrike.asset` 신규 생성(range 8/cooldown 2.5/damage 15/windUpDuration 0.4/
+  dashSpeed 10/selectionChance 0.15). `BossData.asset.attackPatterns`를
+  `[ChargeStrike, RangedAttack, BurstRangedAttack]`으로 교체(`RetreatAndShoot` 제거,
+  에셋 파일 자체는 다른 곳에서 참조 안 해서 그대로 둠).
+- **버그 발견 및 즉시 수정**: 신규 EditMode 테스트 작성 중 `ChargeStrikePattern`의
+  `_cooldownRemaining`이 생성자에서 초기화 안 돼 있어 C# 기본값 0으로 시작 →
+  `Tick()`의 "이미 0 이하면 굴릴 필요 없음" 가드에 걸려 **생성 직후 첫 기회에서만
+  15% 확률 롤 자체를 건너뛰고 무조건 즉시 사용 가능**해지는 결함을 테스트가 바로
+  잡아냄. 생성자에서 `_cooldownRemaining = data.Cooldown`으로 초기화하도록 수정 -
+  첫 기회도 다른 사이클과 똑같이 쿨다운을 다 채운 뒤 롤을 거치게 됨.
+
+### 테스트 결과
+- [x] 신규 EditMode `ChargeStrikePatternTests` 3개(확률 100%면 쿨다운 후 계속
+      준비 상태 유지 / 확률 0%면 영원히 준비 안 됨(매 사이클 쿨다운 리필 확인) /
+      실제 프레임 주기(1/60초)로 잘게 틱해도 사이클당 한 번만 롤되는지) - **최초
+      실행 시 3개 전부 실패**, 위 생성자 초기화 버그가 원인이었음을 바로 특정, 수정
+      후 재실행 전부 통과
+- [x] 신규 PlayMode `ChargeStrikePatternPhysicsTests` 1개(돌진 중엔 데미지 없음 →
+      정지 후 대기 중에도 없음 → 대기(0.4초) 끝나야 데미지 15 적용 + 쿨다운 재시작) -
+      통과
+- [x] EditMode 139/139, PlayMode 43/43(이전 세션에서 반복 확인됐던 플레이키 경로탐색
+      테스트도 이번엔 통과) - 전부 회귀 없음
+
+### 이슈/메모
+- 확률 기반 선택 로직을 넣을 때는 항상 "몇 번째 프레임/틱마다 굴리는지"부터 명확히
+  정의할 것 - 프레임마다 굴리면 사실상 확률이 무의미해진다는 함정은 재사용 가능한
+  교훈.
+- **테스트가 실제로 버그를 잡아낸 사례**: `_cooldownRemaining`의 C# 기본값(0)이
+  "쿨다운 없음 = 즉시 준비됨"으로 해석되는 기존 패턴들의 공통 관례(다른 패턴들도
+  전부 이렇게 시작함, 지금까지는 의도된 동작)가, 이번처럼 "생성 시점에 아직 아무
+  것도 안 굴린 상태"를 구분해야 하는 새 패턴에서는 함정이 될 수 있음을 자동 테스트가
+  구현 직후 바로 확인시켜줌 - 라이브 플레이로만 검증했다면 "가끔 확률 무시하고 바로
+  나온다"는 식으로 훨씬 늦게, 훨씬 애매하게 발견됐을 문제.
+
+### 다음 작업
+- 유저 실플레이로 보스전에서 (1) 원거리 두 패턴이 정상적으로 로테이션되는지
+  (2) 가끔(체감상 드물게) 빠른 돌진 근접 공격이 나오는지 (3) 돌진 후 0.4초 대기가
+  자연스럽게 읽히는지 확인 필요.
+
+---
+
+## 2026-09-14 (24)
+
+### 진행 내용
+- 유저 리포트: 피격 넉백은 잘 되는데, 보스에게 맞고 넉백된 후 **보스가 이동 애니를 계속
+  재생하면서도 실제로는 움직이지 않는 상태가 계속 유지**됨. 원인만 확인 요청.
+- 진단(코드 정독, 수정 없이): `BossData.asset`의 공격 패턴은 `RetreatAndShoot`(1순위,
+  트리거 2.2/후퇴목표 6)과 `RangedAttack`(2순위, `retreatTriggerRange=0`이라 후퇴 없음)
+  둘뿐 - 근접 패턴 없음. 두 패턴 모두 공유하는 `RangedKitingBehavior.Tick()`의 후퇴
+  로직이 "플레이어와의 거리가 `retreatToRange` 이상 벌어질 때까지" 무조건 후퇴만
+  반복하는 구조였고, **그 외의 탈출 조건(타임아웃, 정체 감지)이 전혀 없었음**. 벽/방
+  구석에 막혀 거리를 더 벌릴 수 없는 위치에서 후퇴가 시작되면 `awayFromPlayer.magnitude`
+  가 영영 `retreatToRange`에 도달하지 못해 `_isRepositioning`이 계속 `true`로 남고,
+  `IsBusy`가 안 풀리니 `EnemyAttackState`가 패턴을 다시 선택하지도 못해 그 자리에서
+  무한 반복됨(코드상 원래부터 있던 구멍). 애니 쪽은 `EnemyAttackState.Tick()`이 패턴
+  최초 실행 시 1회만 `AnimationCue`를 재생하는 구조라, 실제로는 "후퇴하려고 애쓰는 중"
+  인데 화면상 사격 관련 포즈가 계속 유지되는 것처럼 보임.
+- 넉백 기능 자체와는 무관한 기존 버그지만, 플레이어가 피격 시 순간 크게 밀려나면서
+  보스의 트리거 사거리(2.2) 안으로 갑자기 들어가는 상황이 이전보다 쉽게 만들어져
+  이 기존 구멍을 밟을 확률이 올라간 것으로 추정.
+- 유저 승인 후 수정: `RangedKitingBehavior`에 정체 감지 추가 - 0.5초 간격으로 거리가
+  0.15유닛 이상 벌어졌는지 확인, 못 벌어졌으면 후퇴를 포기하고 그 자리에서 바로
+  조준/발사로 전환(`BeginWindUp`). 3개 패턴(`RangedAttackPattern`/
+  `BurstRangedAttackPattern`/`RetreatAndShootPattern`) 전부가 이 클래스를 공유하므로
+  한 곳 수정으로 전부 적용됨.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 클린(무관한 스타일 오탐 1건, 무시)
+- [x] 신규 PlayMode `RangedKitingBehaviorTests` 2개(벽에 막히면 포기하고 발사 / 열린
+      공간에서는 정상적으로 후퇴 목표 거리까지 도달) - 첫 실행부터 통과
+- [x] EditMode 136/136
+- [x] PlayMode 41/42 - 실패 1건은 `EnemyChasePathfindingTests`의 기존에 이미 확인된
+      플레이키 테스트(이번 세션 (19) 근처에서도 동일 테스트로 재현/재검증한 바로 그
+      테스트)로, 이번 변경과 무관.
+
+### 이슈/메모
+- 이번 건도 "겉보기엔 신규 기능(넉백)의 부작용처럼 보이지만, 실제로는 그 기능이
+  새로운 상황(플레이어 위치 급변)을 더 자주 만들어서 기존에 드물게만 발생하던
+  구조적 결함을 노출시킨 것"인 패턴 - 새 기능을 넣을 때는 "이게 기존 시스템이 암묵적
+  으로 가정하고 있던 조건(여기선 '후퇴할 공간이 항상 있다')을 깨뜨리지 않는지"도
+  같이 점검할 가치가 있음.
+
+### 다음 작업
+- 유저 실플레이로 보스방에서 후퇴가 막히는 상황이 더 이상 무한 대기로 안 이어지는지
+  확인.
+
+---
+
+## 2026-09-14 (23)
+
+### 진행 내용
+- 유저 요청: 플레이어 피격 반응 신규 구현 - 근접 적에게 맞으면 **적이 바라보는 방향**으로,
+  원거리 적 투사체에 맞으면 **투사체 진행 방향**으로 넉백 + 피격 애니 재생. 피격 후
+  0.3초간 밀려나고(방/벽 관통 금지), 0.4초간 조작 불가(애니는 이 0.4초에 맞춰 스케일),
+  이후 자동 복구. 넉백 중 재피격 시 기존 넉백을 버리고 최신 히트로 덮어씀.
+- 설계(A안, 유저 승인): `IDamageable.TakeDamage`에 `Vector3 knockbackDirection = default`
+  옵션 인자 추가 - 공격자가 이미 알고 있는 방향(근접은 `transform.forward`, 발사체는
+  자기 `_direction`)을 그대로 실어 보냄. 기존 `HealthComponent.AnyDamageTaken` 이벤트에
+  같은 필드 추가, 기존 구독자 2곳(`EnemyStateMachine`, `DebugOverlayController`)은
+  시그니처만 맞추고 동작 무변경(적 쪽 넉백은 기존 위치 기반 로직 그대로 유지).
+- 신규 `PlayerHitReaction` 컴포넌트(Player 루트): `AnyDamageTaken` 구독, 넉백 거리 =
+  `KnockbackMath.BaseKnockbackDistance`(적 넉백 기준값 1.5)의 70% = 1.05유닛을 0.3초
+  등속 이동(`PlayerDodgeRoll.RunDash()`와 동일하게 `Rigidbody.linearVelocity` +
+  `WallClamp.ClampDirection`으로 매 프레임 벽 클램프). 재피격 시 타이머/방향을 그 자리에서
+  즉시 리셋(별도 목표 좌표 보간이 아니라 매 스텝 "현재 위치 → 그 순간의 방향"으로
+  진행하는 구조라 덮어쓰기가 자연스럽게 처리됨). 0.4초간 `PlayerMovement.enabled=false`
+  (대시가 쓰는 것과 동일한 기존 패턴), 종료 시 `PlayerMovement.OnEnable()`이 이미
+  `_forceAnimationRefresh=true`를 세팅하므로 Idle/Run 복귀도 추가 코드 없이 자동 처리.
+  `IsHitStunned` 공개 프로퍼티를 `PlayerAim`/`PlayerCombat`/`PlayerDodgeRoll`이 각각
+  기존 `IsDodgeRolling` 체크 자리에 추가로 걸어 조준/공격/대시 입력을 동시에 차단.
+- `PlayerAnimationController`: `PlayHit()` 추가(레이어0, 전신). 지난 (21)에서 업바디
+  레이어에 적용했던 "이미 같은 state면 CrossFade가 씹히는 문제" 가드를 베이스 레이어
+  `Play()` 헬퍼로 일반화(`PlayOnLayer(stateName, layer)`로 통합) - 재피격 시 Hit 애니가
+  씹히지 않고 항상 처음부터 재생되도록. `AC_PlayerAdventurer.controller` 베이스
+  레이어에 `Hit` state 신규 추가(클립 `HitRecieve` 0.5667초 → speed 1.4167로 스케일해
+  정확히 0.4초에 맞춤, Roll과 동일한 방식).
+- `Player.prefab`에 `PlayerHitReaction` 추가(RequireComponent 체인을 통해 자동 부착됨).
+
+### 테스트 결과
+- [x] 수정/신규 파일 11개 전부 `Unity_ValidateScript` 클린(기존과 동일한 무관 스타일
+      경고만, 새 오류 없음)
+- [x] EditMode 136/136 (회귀 없음)
+- [x] PlayMode **40/40**(기존 36 + 신규 `PlayerHitReactionTests` 4개) - 최초 1회 실행에서
+      `EnemyChasePathfindingTests`의 기존에 알려진 타이밍 플레이키 테스트 1건이 실패했으나
+      해당 테스트만 재실행해 통과 확인 - 이번 변경과 무관한 기존 결함성 플레이키니스로 확정.
+      신규 4개(넉백 방향 적용/이동 정지, 0.4초 후 조작 복구, 넉백 중 재피격 덮어쓰기,
+      벽 앞에서 넉백 시 관통 안 함)는 첫 실행부터 전부 통과.
+- [ ] 실제 Play Mode 확인 필요 - 근접/원거리 각각 맞았을 때 넉백 방향·피격 애니·조작
+      잠금/복구 타이밍이 체감상 자연스러운지 확인 필요
+
+### 이슈/메모
+- `PlayerHitReactionTests`는 `PlayerMovementResidualVelocityTests`가 이미 확립해둔
+  "`PlayerInputActions`에 실제 `PlayerActions.inputactions` 에셋을 리플렉션으로 주입"
+  패턴을 그대로 재사용 - 플레이어 컴포넌트가 얽힌 PlayMode 테스트를 짤 때 표준 방법으로
+  계속 사용할 것.
+- 이번 기능은 코드 근거상 완결됐지만, "체감"(넉백 거리/조작 잠금 시간이 적절한지)은
+  자동화로 검증 불가 - 실플레이 피드백에 따라 상수(0.7배율/0.3초/0.4초) 재튜닝 여지 있음.
+
+### 다음 작업
+- 유저 실플레이 피드백 대기.
+
+---
+
+## 2026-09-14 (22)
+
+### 진행 내용
+- 유저 리포트: (21) 수정으로 공격 애니 정상 재생 확인됐으나, 시작방 플레이어 스폰
+  지점에 같은 모델의 캐릭터가 하나 더 서 있다고 보고.
+- 원인 확인: (21) 진단 중 `Gun_Shoot`/`Sword_Slash` 클립의 실제 팔 회전 폭을
+  비교하려고 `Object.Instantiate(prefab)`으로 `Adventurer.fbx`를 임시 복제해
+  `AnimationClip.SampleAnimation`으로 본 회전값을 측정하는 작업을 2회 수행했는데,
+  이걸 Play Mode가 아니라 **Edit Mode에서 실행**해 정리(`Destroy`) 없이 그대로 씬에
+  남았음(Play Mode였다면 종료 시 자동 폐기됨). 씬 루트 스캔 결과
+  `Adventurer(Clone)` 2개(둘 다 (0,0,0), Start룸/스폰 지점과 겹침) 확인.
+- 조치: 둘 다 제거, `EditorSceneManager.SaveOpenScenes()`로 씬 저장, 재스캔으로
+  잔여 없음 확인.
+
+### 테스트 결과
+- [x] 씬 루트 재스캔: `Adventurer` 관련 잔여 오브젝트 0개(Player 프리팹 인스턴스 제외)
+- [x] 씬 저장 후 dirty flag 정상 해제
+
+### 이슈/메모
+- **교훈**: Editor 스크립팅으로 진단용 임시 오브젝트를 인스턴스화할 때는 Play Mode
+  중인지 항상 먼저 확인할 것 - Edit Mode에서 `Object.Instantiate`로 만든 오브젝트는
+  Play Mode와 달리 자동 폐기되지 않고 씬에 영구히 남는다. 앞으로 이런 임시
+  인스턴스는 (a) 반드시 Play Mode 중에만 만들거나, (b) 만든 즉시 같은 명령 안에서
+  `result.DestroyObject`로 정리할 것.
+
+### 다음 작업
+- 없음(§8f 공격 애니 타이밍 버그 계열 완전히 종결).
+
+---
+
+## 2026-09-14 (21)
+
+### 진행 내용
+- 유저 재검증: (20) 수정 후에도 "캐릭터를 카메라 쪽으로 향하게 하고 양팔을 유심히
+  보면서 여러 번 공격해봤는데 공격 애니가 대부분 안 나온다"로 동일 계열 증상 재확인.
+  "애니메이션 블렌딩 결과 아니냐"는 유저 본인의 추가 의심 제기.
+- 1차로 "클립 움직임 폭이 작아서 안 보이는 것 아니냐"(Gun_Shoot vs Sword_Slash 회전량
+  비교, 약 50도 vs 180도+) 가설을 제시했으나, 유저가 직접 캐릭터를 카메라로 향하게
+  하고 정밀 관찰한 결과로 **명확히 반박** - "작아서 안 보이는 게 아니라 아예 안
+  나온다"고 재확인.
+- 라이브 Play Mode에서 `Animator.Update(deltaTime)`으로 애니메이터 평가를 직접
+  강제해 실험한 결과, **마스크/블렌딩 자체는 완전히 정상 작동함을 실측으로 증명**
+  (`UpperArm.L` 로컬 회전이 Idle 152° → Shoot t=0 143° → t=0.3s 92°로, 오프라인
+  `AnimationClip.SampleAnimation` 예측치와 정확히 일치하며 실제로 변함). 즉 애니메이터
+  내부 상태 전환과 마스크 블렌딩 파이프라인 자체는 문제가 없음이 확정됨.
+- 근본 원인 확정: `Animator.Play()`/`CrossFadeInFixedTime()` 호출 결과는 **호출된 바로
+  그 프레임에는 `GetCurrentAnimatorStateInfo()`에 반영되지 않고, 애니메이터의 다음
+  내부 평가 시점에야 반영됨**(직접 실험으로 재확인: 호출 직후 같은 프레임에서 조회하면
+  호출 전 값 그대로). `PlayerAnimationController.Update()`의 완료-감지 폴링이 입력
+  트리거와 **같은 프레임**에 걸리면, 방금 막 새로 재생을 시작했는데 아직 반영 전인
+  "직전 값"(=직전 샷이 끝나서 `normalizedTime>=1`이 된 상태)을 그대로 보고 "이미
+  끝났다"고 오판 → weight를 즉시 0으로 되돌려 **애니가 화면에 단 한 프레임도 나오지
+  못한 채 취소**됨. 발사체는 `Fire()`에서 애니와 무관하게 항상 나가므로 "발사는
+  되는데 애니만 안 보인다"는 증상과 정확히 일치. 입력 처리(Input System 콜백)와
+  `PlayerAnimationController.Update()`의 프레임 내 실행 순서가 매번 이 쪽으로 치우쳐
+  있었던 것으로 추정되며, 이 순서 자체는 쿨타임 여유와 무관하게 매 트리거마다
+  반복될 수 있는 구조적 경합이라 "대부분 안 나온다"는 빈도와 일치.
+- 수정: `PlayerAnimationController`에 `_upperBodyTriggerFrame`(트리거된
+  `Time.frameCount`) 기록 추가, `Update()`의 완료-감지 체크를 **트리거된 바로 그
+  프레임에는 건너뛰도록** 가드. 최소 한 번은 애니메이터가 실제로 갱신된 뒤에야
+  "끝났는지" 판단하게 되어 경합 자체가 구조적으로 사라짐.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 클린(기존과 같은 무관 오탐 경고 1건, 무시)
+- [x] EditMode 136/136 (`TestRunnerApi` 재실행, 회귀 없음)
+- [ ] 실제 Play Mode 확인 필요 - 유저가 다시 한번 카메라를 캐릭터 방향으로 하고
+      여러 번 연속 공격해 애니가 매번 나오는지 최종 확인 필요
+
+### 이슈/메모
+- **핵심 교훈**: `Animator.Play`/`CrossFadeInFixedTime` 호출 직후 같은 프레임에서
+  `GetCurrentAnimatorStateInfo`/`IsInTransition`을 조회하면 신뢰할 수 없다 - 최소
+  한 프레임(또는 명시적 `Animator.Update(dt)` 강제 호출) 뒤에 조회할 것. 트리거와
+  완료-감지를 같은 `Update()` 계열 폴링에 의존시킬 때는 항상 "트리거된 바로 그
+  프레임"을 배제하는 가드를 기본으로 넣을 것.
+- 이번 진단에서 유용했던 기법: `Animator.Update(0f)` / `Animator.Update(dt)`로
+  애니메이터 평가를 수동으로 강제하면, 이 자동화 환경의 고질적인 "Play Mode 진입은
+  되지만 포커스 없으면 프레임이 안 흐르는" 문제를 완전히 우회하고 라이브 애니메이터
+  상태를 결정론적으로 검증할 수 있었음 - 앞으로 비슷한 라이브 애니메이터 진단에
+  재사용할 것.
+- `AnimationClip.SampleAnimation(gameObject, time)`을 임시 인스턴스에 직접 걸어
+  본(bone) 회전값을 오프라인으로 측정하는 기법도 유효했음(Play Mode 불필요, 결정론적) -
+  클립 자체의 움직임 폭을 정량적으로 비교할 때 재사용 가능.
+- 이번 세션에서만 이 증상 하나에 3라운드(입력-발사 타이밍 동기화 → 같은 state
+  재진입 시 CrossFade 씹힘 → 같은 프레임 stale 읽기 경합)를 거쳐 근본 원인에
+  도달함 - 매 라운드 유저의 재현/반박이 정확했고, 결과적으로 서로 다른 세 가지
+  실제 결함을 각각 고친 것으로 확인됨(모두 유효한 수정, 서로 배타적이지 않음).
+
+### 다음 작업
+- 유저 실플레이 최종 확인 대기.
+
+---
+
+## 2026-09-14 (20)
+
+### 진행 내용
+- 유저 재검증 결과: (19)의 `OnFired` 동기화 적용 후에도 실플레이에서 "발사만 되고
+  상체 애니가 안 나올 때가 많고, 간혹 애니는 나오는데 그 중에 또 발사체가 안 나올
+  때도 있다"는 동일 계열 증상이 여전히 재현됨.
+- 이번 세션 자동화 환경에서 직접 Play Mode 재현을 시도했으나, `Time.frameCount`가
+  실제 80초 넘게 지나도 계속 2에 멈춰 있는 것으로 확인 - 이전에도 기록된 "에디터가
+  포커스/리페인트를 못 받으면 게임 루프가 멈추는" 환경 한계에 재차 걸려 라이브 관측은
+  불가, 코드 정밀 재검토로 진단 전환.
+- `AC_PlayerAdventurer.controller`를 직접 열어 수치 재확인: `Shoot`(`Gun_Shoot`) 클립
+  길이 **0.6초**(Loop Time 꺼짐) vs 원거리 공격 쿨타임(`rangedFireCooldown`) **0.65초** -
+  여유가 **0.05초(~3프레임)**뿐. `PlayerAnimationController.Update()`는 매 프레임
+  폴링으로 클립이 끝난 걸 감지해야 레이어1 weight를 0으로 내리는 구조라, 다음 발사가
+  이 짧은 여유 안에 들어오면 레이어가 아직 "Shoot" state인 채로 남아있는 상태에서
+  다시 같은 state로 `CrossFadeInFixedTime`이 걸림.
+- 원인 확정(코드 근거, 라이브 미검증): Unity의 `Animator.CrossFade`/`Play` 계열은
+  **레이어가 이미 그 state를 현재 state로 보고 있으면 재시작을 무시하고 씹어버리는
+  경우가 있음** - 같은 state로의 재진입이 "새로 시작"이 아니라 "이미 거기 있음"으로
+  처리되는 것으로 추정. `OnFired`(실제 `Fire()` 호출)는 매번 정확히 실행되므로 발사체는
+  항상 나가지만, 애니 트리거(`CrossFadeInFixedTime`) 호출 자체는 씹혀서 화면엔 안
+  보이는 상황이 됨 - "발사는 되는데 애니가 안 나온다"와 정확히 일치.
+- 수정: `PlayerAnimationController.PlayUpperBody()`에서 대상 state가 **이미 레이어1의
+  현재 state**(`!IsInTransition && shortNameHash 일치`)인 경우엔 `CrossFadeInFixedTime`
+  대신 `Animator.Play(hash, layer, 0f)`로 **강제 프레임 0 재시작**, 그 외(다른
+  state에서 넘어오는 경우, 예: Attack→Shoot)엔 기존처럼 `CrossFadeInFixedTime` 유지.
+  Idle/Run/Roll/Death(레이어 0, `Play()`)는 이번 증상과 무관하고 재발 사례도 없어
+  범위 밖으로 유지.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 수정 파일 클린(기존에도 있던 무관한 "Update() 문자열
+      연결" 경고 재출력 - 이 파일 `Update()`엔 문자열 연결이 없어 오탐으로 판단, 무시)
+- [x] EditMode 136/136 (`TestRunnerApi` 재실행, 회귀 없음)
+- [ ] 실제 Play Mode 확인 필요 - 이번 수정 이후에도 여전히 자동화 환경의 프레임 정지
+      한계로 라이브 검증 불가, 유저 실플레이로만 확인 가능
+
+### 이슈/메모
+- 이번 세션에서 두 번째로 확인된 자동화 환경의 "Play Mode 진입은 되지만 게임 루프
+  자체가 멈춰 있는" 현상 - `Time.frameCount`가 실제 경과시간과 무관하게 고정. 원인
+  미확정(에디터 창 포커스/리페인트 문제로 추정, 기존 기록과 동일 패턴). Play Mode
+  진입 성공 여부(`IsPlaying: true`)만으로는 게임 로직이 실제로 돌아가는지 보장 못하므로,
+  라이브 검증이 필요한 진단에서는 항상 `Time.frameCount`가 실제로 진행되는지부터
+  확인할 것 - 이번에 다시 발목 잡힘.
+- `CrossFadeInFixedTime`/`Play`의 "이미 그 state면 재시작 무시" 동작은 Unity Mecanim의
+  잘 알려진 함정 - 클립 길이와 재사용 주기(쿨타임 등)가 타이트하게 맞물리는 반복
+  트리거형 애니메이션(공격/피격 등)에서는 항상 "같은 state 재진입 시 강제 Play(hash,
+  layer, 0f)" 패턴을 기본으로 고려할 것.
+
+### 다음 작업
+- 유저 실플레이로 원거리 연속 공격 시 애니-발사체가 매번 같이 나오는지 최종 확인.
+
+---
+
+## 2026-09-14 (19)
+
+### 진행 내용
+- 유저 버그 리포트: "가만히 서서 원거리 공격을 한 발씩 끊어서 써도 상체 공격 애니가
+  안 나온다(10번까지 확인) / 1~2번은 애니 없이 발사체만 2번 나오고 3번째에 애니가
+  나오는데, 이때 발사체가 나올 때도 있고 안 나올 때도 있다 - 공격 쿨타임과 애니 실행
+  타이밍이 꼬인 것 같다."
+- 원인 확정: `PlayerCombat.OnAttackPerformed`가 **입력을 누른 시점에 무조건**
+  `PlayShoot()`/`PlayAttack()`을 호출하고 있었는데, `RangedWeapon.Attack()`은 쿨타임
+  중이면 실제 발사(`Fire()`) 없이 `InputBuffer`(창 0.15초, 슬롯 1개)에 기록만 하고
+  나중에 `Tick()`에서 쿨타임이 풀릴 때 실제로 발사함 - 즉 "버튼을 누른 시점"과 "실제
+  발사체가 나가는 시점"이 서로 다를 수 있는데 애니는 항상 전자에 묶여 있어, 근접
+  쿨타임(0.65초)보다 살짝 빠르게 누르면 애니만 먼저 재생되고 발사는 나중(또는 버퍼
+  창 0.15초를 넘기면 영영 안 나감)에 일어나는 식으로 어긋났음. 유저가 스스로 짚은
+  "쿨타임과 애니 타이밍이 꼬였다"는 진단이 정확했음.
+- 유저 승인한 해결안(A안): `IWeapon`에 `Action OnFired` 콜백 추가 - 실제
+  `Fire()`/타격이 일어나는 순간에만 호출되도록 `RangedWeapon.Fire()`·
+  `MeleeWeapon.Attack()` 맨 앞에서 `OnFired?.Invoke()` 호출. `PlayerCombat.
+  EquipWeapon()`에서 무기 장착 시 이 콜백에 애니 재생을 1회 연결하고, `OnAttackPerformed`
+  에서는 애니 호출을 제거하고 `_weapon.Attack()`만 남김. `CrossFadeInFixedTime`이
+  같은 상태라도 호출될 때마다 처음부터 재생하고, `Fire()` 자체가 이미 무기 쪽
+  쿨타임으로 막혀 있어 별도의 "끊고 재생" 로직 없이도 요구사항이 그대로 충족됨.
+- 신규 EditMode 테스트 `WeaponOnFiredTimingTests`(4개) 추가: 쿨타임 밖에서 즉시
+  발사/버퍼링 중엔 미발동/버퍼가 실제로 소모되는 순간에만 발동/버퍼 창을 넘기면
+  영영 미발동 - 4개 시나리오를 순수 로직으로 고정.
+
+### 테스트 결과
+- [x] 콘솔 에러/경고 0 (수정 파일 4개 전부 `Unity_ValidateScript` 통과)
+- [x] EditMode 136/136 (`TestRunnerApi` 실행, 신규 4개 포함 - 최초 1회는 테스트
+      자체의 시나리오 설계 실수로 1개 실패했다가, 근접 발사 직후가 아니라 쿨타임
+      막바지에 눌러 버퍼 창 안에 들어오도록 고친 뒤 재실행해 136/136 통과)
+- [ ] 실제 Play Mode 확인 필요 (정지 상태 연속 공격 / 이동 중 공격 양쪽 다 애니가
+      매번 나오는지, 원거리 연사 시 애니-발사체 타이밍 어긋남이 사라졌는지)
+
+### 이슈/메모
+- 지난 항목(§8f, 이동 중 좌클릭 공격 시 상체 애니 미실행)에서 처음 추정했던 "레이어
+  가중치 폴링 경합" 가설은 이번 근본 원인과는 별개 - 실제 증상은 이동 여부가 아니라
+  이 쿨타임/버퍼 타이밍 어긋남이 원인이었을 가능성이 높음. 이번 수정으로 그 현상도
+  같이 해소되는지 다음 실플레이 때 같이 확인할 것.
+- 이 프로젝트에서 `Action`(단일 델리게이트) 콜백은 구독자가 항상 1명(현재 장착된
+  무기 하나)뿐이라 C# `event` 대신 평범한 settable 프로퍼티로 충분 - `EquipWeapon()`이
+  호출될 때마다 덮어써지는 것도 의도된 동작(무기 교체 시 이전 콜백은 자연히 사라짐).
+
+### 다음 작업
+- 유저 실플레이로: (1) 정지 상태 원거리 연속 공격, (2) 이동 중 공격, 양쪽 다 상체
+  애니가 매번 발사체와 함께 나오는지 확인.
+
+---
+
+## 2026-09-14 (18)
+
+### 진행 내용
+- 유저 버그 리포트: "플레이 중인데 갑자기 왜 이렇게 밝아지냐?"
+- 진단(Play Mode 중 읽기 전용 조사): `RenderSettings`/`Light` 컴포넌트 전수 조회 결과
+  Directional Light가 **3개** 동시 활성 — 원래 씬 소유의 `Directional Light`(intensity 2)
+  외에 `Sun`(intensity 1)과 `Sun.001`(intensity **4.3**)이 추가로 켜져 있었음. 저장된
+  씬 파일(`Prototype.unity`)엔 `Directional Light` 하나뿐이라 이 둘은 런타임에 스폰된
+  것으로 특정.
+- 원인 확정: `Enemy_Flying_Gun.fbx`(cyberpunk_game_kit, `Enemy_BurstRanged`의 비주얼로
+  사용 중)를 직접 열어보니 **에셋 파일 자체에 Directional Light 2개(Sun, Sun.001)가
+  안 지워진 채 남아있었음** - 원작자가 Blender에서 선택 항목만이 아니라 씬 전체(조명
+  포함)를 export한 것으로 추정. 같은 계열 `Enemy_Flying.fbx`(Gun 없는 버전)는 이 문제
+  없음 - `_Gun` 버전에만 있던 문제. `Enemy_BurstRanged`가 스폰될 때마다 이 조명 2개가
+  비주얼 하위에 그대로 딸려 들어와, Directional Light는 위치 무관하게 씬 전체에 영향을
+  주므로 BurstRanged 한 마리만 나와도 화면 전체가 과다 노출됨.
+- **수정**: `Enemy_Flying_Gun.fbx`의 `ModelImporter` 설정에서 `importLights`를
+  `false`로 변경 + 재임포트 - **원본 FBX 자체가 더 이상 조명을 안 갖고 오도록** 근본
+  수정. `Enemy_BurstRanged.prefab`의 비주얼은 이 FBX를 참조하는 **중첩 프리팹
+  인스턴스**라 별도 프리팹 수정 없이 자동으로 조명 0개로 반영됨(재확인 완료).
+- 현재 진행 중이던 플레이 세션의 라이브 씬에선 마침 해당 조명이 이미 사라진 상태였음
+  (BurstRanged 개체가 죽거나 방이 바뀌며 자연 해소된 것으로 추정) - 즉시 조치는 불필요,
+  영구 수정만 적용.
+
+### 테스트 결과
+- [x] `Enemy_Flying_Gun.fbx` 재임포트 후 `GetComponentsInChildren<Light>` = 0개 확인
+- [x] `Enemy_BurstRanged.prefab` 및 그 인스턴스에서도 Light 0개로 자동 반영 확인
+- [x] EditMode 132/132
+
+### 이슈/메모
+- **교훈**: 무료 에셋 킷을 새로 들여올 때, 메시/애니메이션뿐 아니라 **Light/Camera가
+  같이 딸려 들어오지 않는지도 확인할 것** - Blender→FBX export가 "선택 항목만"이 아니라
+  씬 전체를 내보내는 실수는 흔하고, Directional Light는 위치와 무관하게 전역으로
+  영향을 줘서 다른 오브젝트들보다 훨씬 눈에 띄는 방식으로 터짐. 앞으로 새 캐릭터/적
+  모델을 프리팹에 연결하기 전에 `GetComponentsInChildren<Light>(true)`(+`Camera`도
+  마찬가지 위험) 한 번 찍어보는 걸 체크리스트에 추가.
+
+### 다음 작업
+- 유저 실플레이로 `Enemy_BurstRanged` 재등장 시 더 이상 화면이 밝아지지 않는지 확인.
+
+---
+
+## 2026-09-14 (17)
+
+### 진행 내용
+- 유저 질문 검토: "원거리 적이 사거리 안에 있어도 사거리 끝까지 가서 쏘려는 로직이
+  있는가?" → `RangedKitingBehavior.Start()`가 `DistanceToPlayer < RetreatTriggerRange`일
+  때만 `Range`(=`RetreatToRange`)까지 후퇴한 뒤 발사하는 조건부 로직임을 확인.
+  `RangedAttack.asset`/`BurstRangedAttack.asset`은 `retreatTriggerRange`를 에셋에 따로
+  안 채워놔서 코드 기본값 2.5가 쓰이고 있었음(`Range`는 둘 다 6) - 전투 중 플레이어가
+  자주 2.5 안쪽으로 들어가게 되니 "사거리 안인데도 끝까지 도망가서 쏜다"는 인상을 줬을
+  것으로 추정. 보스 패턴(`RetreatAndShoot`)은 트리거 2.2/후퇴목표 6으로 의도적으로 더
+  공격적인 카이팅 설계라 그대로 둬야 함을 확인.
+- 유저 결정: **보스 제외 일반 원거리 적(`RangedAttack`/`BurstRangedAttack`)의
+  `retreatTriggerRange`를 0으로.** `distance < 0`은 항상 거짓이므로 후퇴 자체가 아예
+  발동하지 않게 됨 - 항상 제자리에서 바로 조준·발사.
+- `RangedAttack.asset`/`BurstRangedAttack.asset`의 `retreatTriggerRange`를 2.5 → 0으로
+  변경. `RetreatAndShoot.asset`(보스)은 손대지 않음.
+
+### 테스트 결과
+- [x] `RogueLike/Validate All Game Data`: 23개 에셋 0 issue (0은 음수가 아니므로
+      `AttackPatternData.Validate()`의 "RetreatTriggerRange should not be negative"
+      체크 통과)
+- [x] EditMode 132/132
+
+### 다음 작업
+- 유저 실플레이로 일반 원거리 적이 더 이상 근거리에서 도망가지 않고 제자리에서 쏘는지 확인.
+
+---
+
+## 2026-09-14 (16)
+
+### 진행 내용
+- 유저 피드백: "다른 게임에 비해 대시 이동 거리가 살짝 짧아 보인다, 4.5유닛으로."
+- `dashDuration`(0.5초)은 그대로 두고 `dashSpeedMultiplier`만 1.2 → **1.8**로 조정
+  (5 × 1.8 × 0.5 = 4.5유닛). 지속시간이 안 바뀌었으므로 Roll 애니메이션 재생 속도
+  (2.666667, 직전 항목에서 설정)는 그대로 유효 - 추가 조정 불필요.
+- `PlayerBaseStats.json` + `GameBalance.cs` 폴백 기본값 동일하게 갱신.
+
+### 테스트 결과
+- [x] `GameBalance.Player` 로드 후 계산한 거리값이 정확히 4.5임을 확인
+
+### 다음 작업
+- 유저 실플레이로 대시 거리 체감 재확인.
+
+---
+
+## 2026-09-14 (15)
+
+### 진행 내용
+- 확인 결과 공유: 대시 중 재생되는 애니메이션은 `Roll`(Adventurer FBX `CharacterArmature|
+  Roll` 클립, 전체 길이 1.333초)인데, 실제 대시 지속시간(`dashDuration`)이 0.2초라
+  클립의 약 15%(최악의 겹침 보정 포함해도 34%)만 재생되고 잘리고 있었음.
+- 유저 결정: `dashDuration` 0.2 → **0.5초**로 확대, **대시 거리는 기존과 동일하게 유지**
+  (`dashSpeedMultiplier`를 3.0 → **1.2**로 같이 낮춤 - 5×1.2×0.5 = 5×3×0.2 = 3유닛으로
+  거리 불변, 대신 무적시간은 0.2초 → 0.5초로 늘어남 - 이 트레이드오프는 사전에 설명하고
+  유저가 확정한 것).
+- `Assets/StreamingAssets/Balance/PlayerBaseStats.json`과 `GameBalance.cs`의 내장 폴백
+  기본값(`DefaultPlayerBaseStats()`) 둘 다 갱신 - 이 프로젝트 컨벤션상 JSON이 깨졌을 때
+  폴백이 "최근 합의된 값"과 어긋나면 안 되므로 항상 같이 맞춤.
+- `AC_PlayerAdventurer.controller`의 `Roll` 상태 `Speed`를 **2.666667**(=클립길이
+  1.333초 ÷ 새 dashDuration 0.5초)로 설정 - 대시가 지속되는 0.5초 동안 Roll 클립이
+  정확히 처음부터 끝까지 다 재생되도록 배속.
+
+### 테스트 결과
+- [x] EditMode 132/132
+- [x] `GameBalance.Player.dashDuration=0.5`, `dashSpeedMultiplier=1.2` 로드 확인,
+      `AC_PlayerAdventurer.controller`의 Roll 상태 `speed=2.666667`(Idle/Run/Death는
+      그대로 1) 저장·재조회로 확인
+- [ ] 실제로 대시 0.5초 동안 구르기 동작이 자연스럽게 끝까지 보이는지, 거리 체감이
+      기존과 비슷한지는 사람 플레이로 확인 필요 - 미확인/예정
+
+### 다음 작업
+- 유저 실플레이로 대시 거리 체감(기존과 비슷한지) + Roll 애니메이션이 0.5초 동안 자연스럽게
+  완주하는지 확인.
+
+---
+
+## 2026-09-14 (14)
+
+### 진행 내용
+- 유저 요청: "대시하면 이동 방향을 바라보고, 대시 끝나면 다시 마우스 커서 방향을 보도록."
+- 기존 `PlayerAim.FixedUpdate()`는 대시 여부와 무관하게 매 물리 프레임 마우스 방향으로
+  강제 회전시키고 있었음(그래서 지금까지는 대시 중에도 계속 마우스를 보고 있었음).
+- `PlayerAim`에 `[RequireComponent(typeof(PlayerDodgeRoll))]` 추가 - `FixedUpdate()` 맨
+  앞에서 `_dodgeRoll.IsDodgeRolling`(대시 본편 + 겹침 보정 꼬리 전부 포함, 기존 프로퍼티
+  재사용)이면 그 프레임은 그냥 리턴해서 마우스 조준 회전을 건너뜀.
+- `PlayerDodgeRoll.StartDash()`에 `_rigidbody.MoveRotation(Quaternion.LookRotation(
+  _dodgeRollDirection))` 한 줄 추가 - 대시 방향은 롤 도중 안 바뀌므로 시작 시점 1회만
+  회전시키면 충분.
+- **대시 종료 후 원래대로 돌아오는 데 별도 코드 불필요**: `IsDodgeRolling`이 다시
+  `false`가 되는 순간 `PlayerAim.FixedUpdate()`가 다음 물리 프레임부터 자동으로 평소
+  로직(마우스 방향 회전)을 재개함 - 오늘 애니메이션 레이어 작업 때와 같은 "게이팅만
+  해두면 복귀는 저절로 된다" 패턴.
+
+### 테스트 결과
+- [x] EditMode 132/132
+- [x] Play Mode 진입 시 콘솔 에러/경고 없음(`RequireComponent` 순환 참조 없음,
+      `_dodgeRoll` 참조 정상 해석 확인)
+- [ ] 실제로 대시 중 이동 방향을 보고, 대시 끝나면 마우스로 복귀하는 게 눈으로 봤을 때
+      자연스러운지는 사람 플레이로 확인 필요 - 미확인/예정 (대시 트리거 자체가 Input
+      System 이벤트를 거쳐야 해서 이번 세션에서는 재현 스크립트로 대체 검증 안 함, 코드
+      리뷰로 로직 정확성만 확인)
+
+### 다음 작업
+- 유저 실플레이로 대시 중/후 회전 전환이 자연스러운지 확인.
+
+---
+
+## 2026-09-14 (13)
+
+### 진행 내용
+- **GPT 캐릭터 생성 루프 종료 결정**: `gpt_output`을 3차까지 검토(모델 스케일 100배 → "고쳤다"고
+  했지만 실제로는 몸통 자체가 여전히 4배 큼 → 몸통 크기는 진짜 고쳐졌지만 이번엔 머리가
+  몸통에서 완전히 분리되어 붕 뜨는 새 버그) - 매번 지적한 것만 정확히 고쳐지고 다른 곳이
+  깨지는 패턴이 반복됨을 확인, 유저가 이미 검증된 `man_kit` Adventurer로 확정하기로 결정.
+- 유저 버그 리포트: "공격 후 공격 애니가 끝나기 전에 계속 방향키로 움직이면 공격 끝 포즈가
+  계속 유지된다." 원인: `PlayerMovement`가 `isMoving != _wasMoving`(상태 변화 시점)에만
+  `PlayRun()`/`PlayIdle()`을 호출하는데, 공격 중에도 계속 같은 방향으로 이동 중이었다면
+  이동 상태 자체가 안 바뀌어서 공격 애니(1회성, loopTime=false) 종료 후 아무도 다시
+  `PlayRun()`을 호출하지 않아 마지막 프레임에 고정.
+- **수정 전에 유저가 먼저 요청**: "상체는 공격 애니, 하체는 걷는 애니로 블렌딩 가능한가?" →
+  Mecanim의 **Layer + Avatar Mask**(상체 마스킹, Override 블렌드)로 구현 - 표준 액션 게임
+  기법이며, 이 방식 자체가 버그도 부수적으로 해결함(아래 참고).
+- `Assets/Prefabs/PlayerAnimators/AM_UpperBody.mask` 신규 - Adventurer 리그(`CharacterArmature`
+  하위, Mixamo류 명명: Hips/Abdomen/Torso/Chest/Neck/Head, Shoulder·UpperArm·LowerArm·Wrist+
+  손가락 본, UpperLeg/LowerLeg/Foot/PT)를 코드로 순회하며 하체 본 15개(Hips, UpperLeg.L/R,
+  LowerLeg.L/R(+_end), Foot.L/R(+_end), PT.L/R(+_end))만 비활성화, 나머지(복부 위+양팔)는
+  활성 상태로 남김.
+- `AC_PlayerAdventurer.controller` 레이어 2개로 재구성:
+  - Layer 0(Base, 전신, 마스크 없음): Idle/Run/Roll/Death만 유지
+  - Layer 1("UpperBody", `AM_UpperBody.mask` 적용, Blending=Override, defaultWeight=0):
+    Attack(Sword_Slash)/Shoot(Gun_Shoot)만 여기로 이동
+- `PlayerAnimationController` 재작성: `PlayAttack()`/`PlayShoot()`가 이제
+  `SetLayerWeight(1, 1f)` + 레이어 1에 `CrossFadeInFixedTime`. 매 프레임 `Update()`에서
+  레이어 1이 활성 상태일 때 `GetCurrentAnimatorStateInfo(1).normalizedTime >= 1f`(전환 중이
+  아닐 때)를 감지하면 가중치를 다시 0으로 내림 - **호출부(`PlayerCombat` 등)는 전혀 안
+  바뀜**, 메서드 이름만 그대로 재사용.
+- **버그가 저절로 해결되는 이유**: 이제 공격은 레이어 0(하체+이동 상태)을 전혀 건드리지
+  않음 - `PlayerMovement`는 계속 정상적으로 Run/Idle을 레이어 0에 유지하고 있고, 공격이
+  끝나면 그냥 레이어 1 가중치가 0으로 내려가면서 "원래부터 맞게 재생되고 있던" 레이어 0이
+  그대로 드러남. "공격 후 걷기 재개"를 위한 별도 로직이 필요 없어짐 - 레이어링 자체가
+  구조적으로 이 버그 클래스를 없앰.
+
+### 테스트 결과
+- [x] EditMode 132/132 (2회 확인)
+- [x] Play Mode 진입 후 `Animator.layerCount=2`, `layer[0]=Base Layer weight=1`,
+      `layer[1]=UpperBody weight=0`(기본값) 확인. `PlayAttack()` 호출 직후 레이어 1
+      가중치가 1로 전환되는 것도 확인.
+- [ ] "공격 애니 종료 후 가중치가 다시 0으로 내려가는지"는 **이 세션에서 `Time.time`이
+      아예 진행되지 않는 상태**(이전에도 몇 차례 겪은 자동화 환경의 한계, 이번엔 재현성
+      있게 다시 발생)라 실시간 재현 확인은 못함 - `PlayerAnimationController.Update()`의
+      조건식 자체는 코드 리뷰로 정확함을 확인(표준적인 "1회성 애니메이션 종료 감지" 패턴).
+      Play Mode 진입 자체가 이번엔 약 9분 걸렸는데(콘솔 에러 없음, 이전 EditMode 테스트
+      러너의 내부 정리 작업과 Play Mode 진입 요청이 겹치며 생긴 무관한 TestRunner 예외
+      8건만 발생 - 게임 코드 에러 아님), 최초 진입 지연과 이번 Time 정지가 관련 있는지는
+      불명확.
+
+### 이슈/메모
+- Mecanim에서 "1회성 애니메이션이 끝났는지" 감지하는 표준 패턴을 처음 도입:
+  `!animator.IsInTransition(layer) && animator.GetCurrentAnimatorStateInfo(layer)
+  .normalizedTime >= 1f`. Exit Time 기반 전이 대신 이 폴링 방식을 쓴 이유는, 레이어
+  가중치 제어(0↔1)는 애니메이션 상태 그래프 밖의 관심사라 C# 쪽에서 다루는 게 더
+  명확하다고 판단해서.
+- 이 자동화 세션에서 `Time.time`이 진행되는 경우와 멈춰있는 경우가 실행마다 달라
+  보이는 현상이 계속 관찰됨 - 정확한 트리거 조건은 아직 특정 못함(에디터 포커스,
+  백그라운드 작업 유무 등으로 추정). 실시간 애니메이션 타이밍 검증이 필요한 작업은
+  앞으로도 사람 플레이에 의존해야 할 가능성이 높음을 감안할 것.
+
+### 다음 작업
+- 유저 실플레이로 (1) 공격 중 계속 이동 시 하체는 계속 걷고 상체만 공격 모션인지,
+  (2) 공격 종료 후 더 이상 마지막 프레임에 고정되지 않는지 확인.
+
+---
+
+## 2026-09-14 (12)
+
+### 진행 내용
+- 유저 버그 리포트: "대시하고 내 캐릭터가 기본 애니 상태로 굳었다, 에러 로그도 나왔다."
+- 콘솔 확인 결과 원인 즉시 특정:
+  ```
+  UnassignedReferenceException: The variable playerRenderers of RoomTransitionController
+  has not been assigned.
+    at RoomTransitionController.SetPlayerVisible (...)
+    at RoomTransitionController+<TransitionRoutine>d__14.MoveNext ()
+  ```
+- **근본 원인**: 2026-09-14 (11)에서 Player 프리팹 비주얼을 교체하며 루트의 캡슐
+  `MeshRenderer`를 삭제했는데, `Assets/Scenes/Prototype.unity`의 `RoomTransitionController`가
+  인스펙터에서 그 정확한 컴포넌트 인스턴스를 `playerRenderers` 배열(1칸)에 참조하고
+  있었음 - 삭제되면서 그 슬롯이 끊어진 참조(`{fileID: 0}`)로 남음. 이건 Player.prefab
+  에셋 자체가 아니라 **씬에 박혀 있던 참조**라 프리팹만 봐서는 안 보였던 문제.
+- **증상 연쇄**: `TransitionRoutine` 코루틴이 `playerInputActions.enabled = false;` →
+  `SetPlayerVisible(false);`(여기서 예외 발생) 순서로 실행되는데, 코루틴 안에서 처리
+  안 된 예외가 나면 그 지점에서 코루틴이 완전히 멈춤 - 즉 `playerInputActions.enabled`가
+  `false`로 설정된 뒤 다시는 `true`로 복구되지 못함. 그래서 대시 도중 문을 통과하며
+  방 전환이 걸리면 그 순간부터 모든 입력(이동/공격/대시)이 죽고, 대시 애니메이션
+  (`Roll`)이 마지막으로 재생되던 포즈에서 그대로 멈춰 "기본 애니 상태로 굳었다"로
+  보였던 것 - 별개의 애니메이션 버그가 아니라 이 예외 하나의 결과.
+- **수정**: `RoomTransitionController`가 이미 참조 중인 `player` Transform 아래에서
+  `GetComponentsInChildren<Renderer>(true)`로 실제 렌더러를 다시 수집(Adventurer 모델의
+  `Adventurer_Body`/`Adventurer_Feet`/`Adventurer_Head`/`Adventurer_Legs`/`Backpack` -
+  총 5개 SkinnedMeshRenderer)해서 `playerRenderers` 배열을 `SerializedObject`로 재할당,
+  씬 저장.
+
+### 테스트 결과
+- [x] EditMode 132/132
+- [x] Play Mode 진입 직후 콘솔 에러/경고 없음 확인
+- [x] 실제 문 트리거 재현 시도: 씬의 연결된 문(`Door_West_0`, `TargetRoom=Room_Base`)
+      위치로 플레이어를 순간이동시켜 물리 트리거가 걸리도록 유도 - 이 시도 자체에서는
+      콘솔 에러 없음을 확인했으나, 이 세션에서 `Time.time`이 호출 사이에 진행되지 않는
+      경우가 있어(2026-08-18에 이미 기록된 자동화 환경 한계) 전환 코루틴이 실제로 끝까지
+      실행되는 것(0.6초짜리 전환 완료 후 렌더러/입력 복구)까지는 자동으로 확인 못함 -
+      다만 원인이 정확히 특정된 null 참조를 실제 존재하는 컴포넌트로 교체한 것이라 수정
+      자체의 정확성에는 의심의 여지가 낮음
+- [ ] 유저 실플레이로 문 통과 시 더 이상 에러 없이 전환되고 캐릭터가 계속 조작되는지
+      최종 확인 필요
+
+### 이슈/메모
+- **교훈**: 프리팹의 컴포넌트를 삭제/재구성할 때, 그 프리팹 에셋 자체만 봐서는 안 되고
+  **씬에 박힌 참조도 같이 확인해야 함** - `RoomTransitionController`처럼 매니저 컴포넌트가
+  프리팹 인스턴스의 특정 하위 컴포넌트를 인스펙터에서 직접 드래그해 참조해두는 패턴이
+  이 프로젝트에 존재. 다음에 유사한 비주얼 교체 작업을 할 때는 대상 컴포넌트를
+  참조하는 다른 스크립트가 씬에 있는지 먼저 검색할 것.
+- Player.prefab의 씬 인스턴스에 예전 캡슐 시절 컴포넌트를 가리키던 프리팹 오버라이드
+  잔재(`m_Mesh`, `m_Materials`, 콜라이더 `m_Material` 등, 전부 이제 존재하지 않는
+  fileID를 가리킴)가 남아있음 - Unity가 알아서 무시하므로 기능상 무해하지만, 씬 파일
+  청소 차원에서 나중에 "Player 프리팹 오버라이드 Revert" 한 번 해주면 깔끔해짐(급하지 않음).
+
+### 다음 작업
+- 유저 실플레이로 문 통과 시나리오 최종 확인.
+
+---
+
+## 2026-09-14 (11)
+
+### 진행 내용
+- **플레이어 캐릭터 비주얼 교체.** 유저가 처음엔 "붕괴 스타레일 개척자와 비슷한 SD 캐릭터"를
+  AI로 생성해달라고 요청 → (1) 특정 상업 IP 캐릭터 흉내는 유사도를 낮춰도(30% 등) 동일한
+  문제라 거절, (2) 프로젝트의 Unity AI 생성 기능 자체가 계정에 구독이 없어 `GenerateMesh`
+  호출 시 "A model must be selected" 에러로 완전히 막혀있음을 실제 호출로 확인 → 유저가
+  `Assets/Art/Props/man_kit`(Quaternius "Ultimate Modular Males", **CC0 퍼블릭 도메인**)를
+  직접 추가, 그중 하나를 골라 적용하는 것으로 방향 전환.
+- `man_kit/Individual Characters/FBX/Adventurer.fbx` 채택 — 실측 결과 키 1.88유닛(발이
+  원점)으로 플레이어 캡슐(높이 2)에 스케일 조정 없이 거의 그대로 맞음(로봇 적들이 2.8배
+  키워야 했던 것과 대조적). 클립 24개 중 게임 상태와 매칭:
+  Idle/Run/Roll(대시)/Sword_Slash(근접)/Gun_Shoot(원거리)/Death, 덤으로 HitRecieve(피격
+  경직 - 아직 미사용, 향후 스턴 연출에 활용 가능).
+- `PlayerAnimationController` 신규(`EnemyAnimationController`와 동일 패턴) - 차이점은
+  `Awake()`에서 `Animator.updateMode = UnscaledTime`로 강제 설정: 사망 시
+  `PauseState.RequestPause`가 `Time.timeScale`을 0으로 만드는데, 일반 Animator는 그 순간
+  같이 얼어붙어서 Death 클립이 재생되다 말기 때문 - 기존에 있던 "언스케일드 타임으로 도는
+  스크립트 캡슐 쓰러뜨리기"가 이미 이 문제를 인지하고 우회했던 것과 같은 이유.
+- 연결 지점:
+  - `PlayerMovement`: 이동 시작/정지 전환에서만(매 프레임 아님) `PlayRun()`/`PlayIdle()`
+    호출. `OnEnable()`에서 강제 리프레시 플래그를 세워, 대시 종료 후 `PlayerDodgeRoll`이
+    이 컴포넌트를 재활성화할 때 이동 상태가 안 바뀌어도 Roll의 마지막 프레임에 멈춰있던
+    문제(로봇 적 Run 애니메이션 때 겪었던 것과 같은 종류)를 방지.
+  - `PlayerDodgeRoll.StartDash()`: `PlayRoll()`.
+  - `PlayerCombat.OnAttackPerformed()`: 장착 무기 타입(`RangedWeaponData`/
+    `MeleeWeaponData`)에 따라 `PlayShoot()`/`PlayAttack()`.
+  - `RoomFlowManager.HandlePlayerDied()`: 기존 "플레이스홀더 캡슐 쓰러뜨리기"
+    코루틴(`PlayerFallOverRoutine`, 클래스 주석에 "Revisit once real character art/animation
+    replaces it"라고 미리 적혀 있던 부분)을 완전히 제거하고 `PlayDeath()` + Rigidbody
+    kinematic 전환 + 콜라이더 비활성화로 교체.
+- `Assets/Art/Props/man_kit/Individual Characters/FBX/Adventurer.fbx`도 로봇 때와 동일한
+  Loop Time 버그 확인 → Idle/Run만 loopTime=true로 재임포트(Roll/Attack/Shoot/Death는
+  원래도 1회성이 맞아서 그대로 둠).
+- `Assets/Prefabs/PlayerAnimators/AC_PlayerAdventurer.controller` 신규(Idle/Run/Roll/
+  Attack/Shoot/Death 6개 상태, 전이 없이 코드가 `CrossFadeInFixedTime`으로 직접 상태
+  지정 - 로봇 적들과 동일한 방식). `Player.prefab` 루트의 캡슐 `MeshFilter`/`MeshRenderer`
+  제거 → `Visual` 자식으로 Adventurer 모델 + Animator + `PlayerAnimationController` 추가.
+
+### 테스트 결과
+- [x] EditMode 132/132 (3회 반복 확인)
+- [x] PlayMode 36/36 - 중간에 두 종류의 기존 플레이키 테스트(`ChaseState_
+      SlowEnemyAcrossManyRepathCycles_...`, `Chase_SearchTimesOut_GivesUpToPatrol_
+      WhenLastKnownSpotUnreachable`)가 각각 한 번씩 따로 실패했으나 둘 다 이전 세션에
+      이미 "스위트 순서 민감 플레이키" 기존 사례로 기록된 것들이고 플레이어 코드와 전혀
+      무관 - 최종 재실행 36/36 클린
+- [x] Play Mode 실제 검증: 플레이어 스폰 확인(`PlayerAnimationController`/`Animator`/
+      컨트롤러 전부 정상 연결), 치사량 데미지 → `Rigidbody.isKinematic=true`,
+      콜라이더 비활성화, `Health.IsDead=true`, `Time.timeScale=0`까지 전부 확인, 콘솔
+      경고/에러 없음(처음엔 속도 초기화 순서 문제로 "kinematic body에 velocity 설정 불가"
+      경고가 떴다가, `isKinematic=true` 설정을 velocity 초기화 뒤로 옮겨서 해결)
+- [ ] 실제 이동/공격/대시 중 애니메이션 전환이 눈으로 봤을 때 자연스러운지는 사람이 직접
+      플레이해서 확인 필요 - 미확인/예정
+
+### 이슈/메모
+- Adventurer 클립도 로봇 때와 똑같이 전부 Loop Time이 꺼진 채 임포트됨 - 이 게임에서 쓰는
+  무료 캐릭터 킷들의 공통 특성으로 보임. **앞으로 이 종류의 킷을 새로 추가할 때마다
+  Idle/Walk/Run 계열 클립의 Loop Time부터 확인하는 걸 체크리스트로 삼을 것.**
+- 무기(야구 방망이/깃펜 또는 Sword.fbx/Pistol.fbx 프롭)를 캐릭터 손에 쥐여주는 작업은
+  이번 범위에서 제외 - 본体+애니메이션 교체까지만 진행. 본에 프롭을 붙이려면 손 뼈대를
+  찾아 부착하는 별도 작업이 필요.
+- `HitRecieve`/`HitRecieve_2` 클립은 있지만 아직 아무 상태에도 연결 안 함 - 플레이어
+  피격 경직 연출을 나중에 추가하고 싶다면 여기 활용 가능.
+
+### 다음 작업
+- 유저 실플레이로 이동/공격/대시/사망 애니메이션 체감 확인.
+- 무기 프롭 부착, 피격 경직 연출은 원하면 후속 작업으로.
+
+---
+
+## 2026-09-14 (10)
+
+### 진행 내용
+- 유저 버그 리포트: "죽는 애니 실행 중에도 이전 상태에서 남은 회전이 계속된다."
+- 원인: `EnemyDeadState.Enter()`가 `Body.linearVelocity`는 0으로 초기화했지만
+  `Body.angularVelocity`는 그대로 뒀음. 적 Rigidbody의 constraints(84 =
+  FreezePositionY + FreezeRotationX + FreezeRotationZ)를 보면 **Y축 회전(방향 전환)은
+  얼려져 있지 않아서**, Chase/Attack 상태가 `Body.MoveRotation`으로 플레이어를 바라보게
+  하던 회전이나 충돌로 생긴 각속도가 죽는 순간 그대로 남아 죽는 애니메이션 내내 계속
+  회전하는 것처럼 보였음.
+- 수정: `EnemyDeadState.Enter()`에 `_machine.Body.angularVelocity = Vector3.zero;` 추가.
+  콜라이더를 같은 시점에 꺼두기 때문에(이전 세션에서 추가) 이후 어떤 충돌도 새로 각속도를
+  줄 수 없어, 진입 시 한 번만 0으로 만들면 충분함(매 프레임 클리어할 필요 없음).
+
+### 테스트 결과
+- [x] EditMode 132/132
+- [x] Play Mode 실제 재현 검증: 스폰한 적의 `Rigidbody.angularVelocity`를 (0,5,0)으로
+      강제로 주입해 버그 상황을 재현한 뒤 치사량 데미지 → 사망 직후 `angularVelocity`가
+      정확히 (0,0,0)으로 초기화됨을 확인
+
+### 다음 작업
+- 유저 실플레이로 죽는 애니메이션 중 더 이상 회전하지 않는지 최종 확인.
+
+---
+
+## 2026-09-14 (9)
+
+### 진행 내용
+- 유저 요청: "모든 적의 죽는 상태를 추가하자, 죽는 애니를 활용해야 하니까." — 지난 세션에서
+  의도적으로 범위 밖으로 뺐던 Death 애니메이션을 이번에 구현.
+- 근본 문제: `HealthComponent.HandleDied()`가 `Health.Died` 이벤트 콜백 안에서 그 자리에서
+  바로 `pooledObject.ReturnToPool()`/`Destroy()`를 호출해, 죽음 연출을 보여줄 유예 시간이
+  전혀 없었음(같은 이벤트를 구독하는 `EnemyStateMachine.HandleDied()`가 `DeadState`로
+  전환은 하지만, 그 시점엔 이미 오브젝트가 풀로 반환/파괴된 뒤라 의미 없음).
+- `HealthComponent`에 `deathDelay`(초, 기본값 0) 필드 추가 - 0보다 크면 `Invoke(FinishDeath,
+  deathDelay)`로 실제 반환/파괴를 지연, 0이면 기존과 완전히 동일하게 즉시 처리. 플레이어
+  프리팹은 값을 안 건드려 기본 0 유지 → 기존 게임오버 흐름 무변화(플레이어는 애초에
+  `destroyOnDeath=0`이라 이 흐름과 무관).
+- `EnemyDeadState`를 다른 상태들과 같은 패턴(`EnemyStateMachine` 참조를 생성자로 받음)으로
+  변경, `Enter()`에서 `Animation?.PlayDeath()` + 캡슐 콜라이더 비활성화(시체가 플레이어/
+  투사체를 계속 막지 않도록) + 속도 0으로 정지. `EnemyStateMachine.OnEnable()`에서 매
+  활성화(최초 스폰 + 풀 재사용 전부)마다 콜라이더를 다시 켜서, 죽었던 인스턴스가 풀에서
+  재사용될 때 콜라이더가 꺼진 채로 나오지 않도록 함.
+- `EnemyAnimationController.PlayDeath()` 신규.
+- 애니메이션 상태 이름 정리: 기존에 만든 5개 `AnimatorController`가 모델별로 클립 이름이
+  달라(`Death` vs `Dead`) 상태 이름도 제각각이었음 → 빌드 스크립트를 "Death"/"Dead" 클립
+  모두 동일하게 "Death"라는 하나의 상태 이름으로 정규화하도록 고쳐서 5개 컨트롤러 전부
+  재생성(상태만 다시 채움, 다른 상태들은 그대로) - `EnemyAnimationController`가 모델
+  종류와 무관하게 항상 `PlayDeath() → CrossFade("Death")` 하나만 알면 되도록.
+- 각 프리팹의 `HealthComponent.deathDelay`를 실제 모델의 Death/Dead 클립 길이 + 0.1초
+  여유로 설정: 2Legs 계열(`Enemy_Basic`/`Enemy_RelentlessMelee`/`Enemy_Ranged`) 0.89초,
+  Flying 계열(`Enemy_ErraticMelee`/`Enemy_BurstRanged`) 0.47초, `Boss_Basic`(Large_Gun)
+  0.73초.
+
+### 테스트 결과
+- [x] EditMode 132/132, PlayMode 36/36 (플레이어 프리팹은 deathDelay 기본값 0 유지라
+      기존 회귀 테스트 전부 무영향 확인)
+- [x] Play Mode 실사용 검증: `Enemy_Basic`을 씬에 직접 스폰(풀 미경유) → 치사량 데미지 →
+      즉시 콜라이더 `false`, `Health.IsDead` `true` 확인. 이후 여러 툴 호출 사이에 실제로
+      38초 정도 Play Mode 시간이 흐른 뒤 재조회하니 오브젝트가 씬에서 사라져 있음을 확인 -
+      죽는 즉시 사라지지 않고 지연 후 정리되는 흐름이 실제로 동작함을 확인. (이전 세션에서
+      "자동화 환경은 Time이 안 흐른다"고 기록했던 건 Play Mode 진입 직후 찰나의 관측
+      이었을 뿐, 실제로는 툴 호출 간 왕복 시간만큼 Play Mode 시간도 정상적으로 흐른다는
+      것을 이번에 재확인 - 향후 세션을 위해 정정)
+- [ ] Death 애니메이션 자체가 시각적으로 자연스럽게 재생되는지(포즈, 타이밍)는 사람이
+      직접 보고 확인 필요 - 미확인/예정
+
+### 다음 작업
+- 유저 실플레이로 Death 연출 확인, 필요하면 각 프리팹의 `deathDelay` 값 조정.
+- Stunned(피격 경직) 애니메이션은 대응 클립 자체가 없어 여전히 별도 과제로 남음.
+
+---
+
+## 2026-09-14 (8)
+
+### 진행 내용
+- 유저 실플레이 피드백: "근접 적이 Chase 상태일 때 다리가 걷는 게 아니라 스케이트 타듯
+  다리를 뻗은 자세로 고정돼 있다."
+- 원인 확인: `Enemy_2Legs` 등 5개 FBX 전부 `AnimationClipSettings.loopTime = false`
+  (Unity 기본 FBX 임포트 값)로 들어와 있었음 - `Idle`/`Walk`/`Run`처럼 계속 반복돼야 하는
+  이동 클립까지 전부 "한 번 재생하고 마지막 프레임에서 정지"하는 설정이었던 것.
+  `EnemyAnimationController`가 `CrossFadeInFixedTime`으로 상태에 진입시키는 시점엔 정상
+  재생되지만, Run 클립(0.63초)이 다리를 뻗은 중간 프레임에서 끝나버리면서 그 자세로 굳어
+  보였던 것 - "스케이트" 표현이 정확히 이 증상과 일치.
+- 수정: `ModelImporter.defaultClipAnimations`를 읽어 이름이 `Idle`/`Walk`/`Run`으로 끝나는
+  클립만 `loopTime = true`로 바꾼 뒤 `clipAnimations`에 재할당 + `SaveAndReimport()` -
+  5개 FBX(`Enemy_2Legs`/`Enemy_2Legs_Gun`/`Enemy_Large_Gun`/`Enemy_Flying`/
+  `Enemy_Flying_Gun`) 전부 적용. `Attack`/`Shoot`/`Death`/`Jump`는 코드가 매번 명시적으로
+  재트리거하는 1회성 동작이라 의도적으로 그대로(loopTime=false) 둠. `AnimatorController`
+  자산은 클립을 참조만 하고 있어 재생성 불필요 - 임포트 설정만 바꾸면 바로 반영됨.
+
+### 테스트 결과
+- [x] `AnimationUtility.GetAnimationClipSettings`로 5개 FBX 전부 Idle/Walk/Run=true,
+      Attack/Shoot/Death/Jump=false 확정 확인
+- [x] EditMode 132/132 (변경 없음 확인용 재실행)
+- [ ] 실제로 Chase 상태에서 다리가 반복해서 걷는 것처럼 보이는지는 **이 자동화 환경의
+      기존 한계로 확인 불가** - Play Mode에 진입해 적을 플레이어 근처에 스폰해도
+      `Time.time`이 0에서 멈춰 진행되지 않음(2026-08-18에 이미 기록된 "에디터가 포커스를
+      못 받는 자동화 환경에서 Time.frameCount가 안 움직이는" 문제와 동일 패턴) - 사람이
+      직접 플레이해서 확인 필요
+
+### 다음 작업
+- 유저 실플레이로 Chase 애니메이션이 실제로 반복 재생되는지 확인.
+
+---
+
+## 2026-09-14 (7)
+
+### 진행 내용
+- **Phase 4(아트 리소스 적용) 착수 — 적 6종 비주얼을 캡슐 프리미티브에서 `cyberpunk_game_kit`
+  로봇 모델 + 애니메이션으로 교체.**
+- 사전 조사: `Art/Props/cyberpunk_game_kit/Enemies/`의 6개 FBX(`Enemy_2Legs`,
+  `Enemy_2Legs_Gun`, `Enemy_Large`, `Enemy_Large_Gun`, `Enemy_Flying`, `Enemy_Flying_Gun`)를
+  Unity RunCommand로 직접 검사 - 파일 목록만으로는 `.anim` 에셋이 안 보여 정적 목업인 줄
+  알았으나, 실제로는 SkinnedMeshRenderer + Generic 리그 + FBX 내장 애니메이션 클립
+  (Idle/Walk/Run/Attack/Shoot/Jump/Death 등 12~16개)이 있는 걸 확인. 유저에게 미리보기
+  스크린샷을 보여준 결과 "2족 보행 인간형"이 아니라 둥근 몸통 + 다리형 소형 드론이라는
+  실제 형태를 확인(이름과 실제 실루엣이 다름) - 여기서 색 틴트 계획을 재검토하게 됨.
+- 유저 결정: (1) 비율은 임의 판단에 맡김, (2) 원래 안 쓰기로 했던 `Enemy_Flying`/
+  `Enemy_Flying_Gun`도 "공중 적이 전혀 없었다"는 이유로 포함시켜 종류를 더 채우기로 함.
+- **매핑 확정**(근접/원거리/보스 스타일과 테마 적합성 기준):
+  - `Enemy_Basic`, `Enemy_RelentlessMelee` → `Enemy_2Legs` (지상)
+  - `Enemy_ErraticMelee` → `Enemy_Flying` (호버링 — "erratic 흔들림"과 "떠다니는 드론"
+    테마가 잘 맞음)
+  - `Enemy_Ranged` → `Enemy_2Legs_Gun` (지상)
+  - `Enemy_BurstRanged` → `Enemy_Flying_Gun` (호버링 — "burst 연사 드론" 테마)
+  - `Boss_Basic` → `Enemy_Large_Gun` (지상, 덩치 큰 실루엣)
+- 스케일/피벗 보정: `AnimationClip.SampleAnimation`으로 Idle 포즈를 직접 샘플링해 각 모델의
+  실제 서 있는 높이/발 위치(로컬 y=0)를 측정 → 전 모델 공통 배율 2.8x, 지상형은 루트(캡슐
+  중심) 기준 y=-1(캡슐 바닥에 발이 닿음), 호버형은 y=-0.5(바닥에서 0.5유닛 띄움)로 결정.
+  `SceneView_CaptureMultiAngleSceneView`로 실제 렌더링 결과를 반복 확인하며 결정(순수 치수
+  계산만으로는 실제 실루엣이 예상과 달라 신뢰 불가했음 - 폭이 키보다 넓게 나오는 등).
+- 코드 변경:
+  - `EnemyAnimationCue`(enum: Attack/Shoot) 신규 - `IAttackPattern`에
+    `AnimationCue { get; }` 추가, `MeleeAttackPattern`(Attack) /
+    `RangedAttackPattern`/`BurstRangedAttackPattern`/`RetreatAndShootPattern`(모두 Shoot)
+    구현.
+  - `EnemyAnimationController`(MonoBehaviour) 신규 - `Animator.CrossFadeInFixedTime`으로
+    상태 이름("Idle"/"Walk"/"Run"/"Attack"/"Shoot")만 알고 실제 클립/컨트롤러는 모델별로
+    다르게 주입되는 얇은 브리지. `EnemyStateMachine.Animation`(nullable, 비주얼 없는 테스트
+    더미는 자동으로 no-op)으로 노출.
+  - `EnemyIdleState`/`EnemyPatrolState`/`EnemyChaseState`의 `Enter()`에
+    PlayIdle/PlayWalk/PlayRun 각각 추가, `EnemyAttackState.Tick()`의 `selected.Execute()`
+    직후 `Play(selected.AnimationCue)` 추가.
+  - **의도적으로 범위 밖으로 뺀 것**: Stunned(경직) 애니메이션(대응 클립 자체가 없음),
+    Death 애니메이션(`HealthComponent.HandleDied()`가 `Health.Died` 이벤트 한 프레임 안에
+    바로 `ReturnToPool()`/`Destroy()`를 호출해 죽음 연출용 유예시간이 아예 없음 - 이건
+    플레이어와 공유하는 `HealthComponent`의 사망 흐름 자체를 건드리는 별도 설계 작업이라
+    이번 세션 범위 밖으로 명시적으로 분리).
+- 에셋 작업(전부 `Unity_RunCommand` 스크립트로 처리, 수작업 없음):
+  - `Assets/Prefabs/EnemyAnimators/`에 `AnimatorController` 5개 신규 생성
+    (`AC_Enemy2Legs`/`AC_Enemy2LegsGun`/`AC_EnemyLargeGun`/`AC_EnemyFlying`/
+    `AC_EnemyFlyingGun`) - 각 FBX에 내장된 클립을 이름 매칭으로 상태에 연결, 전이(transition)
+    없이 이름 상태만 등록(코드가 `CrossFadeInFixedTime`으로 직접 상태를 지정하는 방식이라
+    파라미터/전이 그래프 자체가 불필요).
+  - 적 프리팹 6개(`Enemy_Basic`/`Enemy_ErraticMelee`/`Enemy_RelentlessMelee`/`Enemy_Ranged`/
+    `Enemy_BurstRanged`/`Boss_Basic`) 전부 `PrefabUtility.LoadPrefabContents`로 열어
+    루트의 `MeshFilter`/`MeshRenderer`(캡슐 프리미티브) 제거 → 해당 로봇 FBX를 중첩 프리팹으로
+    자식 `Visual`에 추가(`Animator`+위 컨트롤러+`EnemyAnimationController` 포함) →
+    `SaveAsPrefabAsset`. `CapsuleCollider`/`Rigidbody`/`EnemyStateMachine`/`HealthComponent`
+    등 루트의 게임플레이 컴포넌트는 전혀 안 건드림.
+
+### 테스트 결과
+- [x] 컴파일 에러 없음 (매 단계 `Unity_ReadConsole`로 확인)
+- [x] EditMode 132/132
+- [x] PlayMode 36/36 - 1차 실행은 최초 진입 시 신규 머티리얼/셰이더 컴파일로 추정되는
+      지연(약 10분, 이 시간 동안 RunCommand/ReadConsole 호출이 같이 멈춰 있었으나 콘솔에
+      에러는 없었음)이 있었고 그 안에서 무관한 기존 플레이키 테스트
+      (`ChaseState_SlowEnemyAcrossManyRepathCycles_...`) 1건만 실패, 캐시가 워밍업된 2차
+      실행은 정상 속도로 36/36 클린
+- [x] 실제 Play Mode 진입 → `Enemy_Basic` 프리팹을 룸 안에 스폰 → 콘솔 에러 없이 바닥
+      타일 위에 정상 렌더링 + HP 바 부착 + Idle 애니메이션 재생 확인 (`SceneView_
+      CaptureMultiAngleSceneView` 스크린샷으로 확인)
+- [ ] 6종 각각의 Walk/Run/Attack/Shoot 전환이 실제 추격/공격 상황에서 자연스럽게 보이는지,
+      호버형 2종의 "떠 있는" 느낌이 실제로 잘 읽히는지는 실플레이로 확인 필요 - 미확인/예정
+- [ ] 스케일(2.8x)이 실제 플레이 화면에서 너무 작거나 크지 않은지 - 유저가 "일단 자연스러운
+      걸로" 위임했으므로 실플레이 후 조정 여지 있음
+
+### 이슈/메모
+- 로봇 이름("2Legs")과 실제 형태(다리 여러 개인 둥근 드론)가 다름 - 스크린샷 없이 이름과
+  치수만으로 판단했다면 완전히 다른(그리고 부적절한) 스케일/배치를 선택했을 것. Idle 클립의
+  frame 0을 그대로 측정하면 무게중심이 한쪽으로 쏠린 과도기 포즈라 오해를 살 수 있어,
+  `SampleAnimation(clip.length * 0.5f)`처럼 클립 중간 지점을 측정하는 편이 더 대표성 있는
+  실루엣을 준다는 것도 확인.
+- Play Mode 최초 진입 시 RunCommand/ReadConsole이 모두 수 분간 "실행 중"으로 걸린 현상 -
+  콘솔에 에러가 없었고 재실행 시 정상 속도였던 것으로 보아 신규 텍스처/머티리얼의 최초
+  셰이더 컴파일 비용으로 추정(진짜 무한루프/행이었다면 재실행도 똑같이 느렸을 것). 앞으로
+  아트 에셋을 대량으로 처음 사용할 때 첫 Play Mode 진입은 오래 걸릴 수 있음을 감안할 것.
+
+### 다음 작업
+- 실플레이로 6종 애니메이션 전환 체감 + 스케일 확인, 필요하면 `Scale`/`GroundY`/`HoverY`
+  상수(현재 적용 스크립트에만 존재 - 필요시 프리팹 재실행) 조정.
+- Stunned/Death 애니메이션은 각각 별도 과제(클립 신규 제작 여부, `HealthComponent`
+  사망 유예시간 설계)로 남겨둠.
+- 플레이어 캐릭터 비주얼(`Character.fbx`, 클립 44개 보유)도 같은 방식으로 다음에 진행 가능.
+
+---
+
+## 2026-09-14 (6)
+
+### 진행 내용
+- 유저 피드백: "문제 있는 에셋을 콘솔/리스트에서 찾아서 Project 창으로 점프 → 거기서 다시
+  더블클릭해서 인스펙터 열기"는 여전히 번거롭다, 애초에 원했던 건 **에셋 데이터 수정
+  기능 자체를 커스텀 에디터 하나에 몰아넣는 것**이었다는 정정 → `DataValidationWindow`를
+  "이슈 리스트 + Select 버튼" 구조에서 **좌측 에셋 목록 + 우측 인라인 편집기** 구조로
+  전면 재작성. Project 창 왕복이 아예 사라짐.
+- `DataValidationScanner.cs`에 `FindAllValidatableAssets()` 신규 - 이슈 유무와 무관하게
+  프로젝트의 `IValidatable` 에셋 전부를 열거(기존 `Scan()`은 이제 이 메서드 위에서 이슈만
+  걸러내는 얇은 래퍼로 리팩터, 스캔 루프가 두 곳에 따로 존재하지 않도록 유지).
+- `DataValidationWindow.cs` 재작성:
+  - 좌측: 타입별로 그룹핑된 에셋 이름 버튼 목록(검색어 필터 지원), 이슈 있는 항목은
+    "⚠ 이름"으로 표시
+  - 우측: 좌측에서 클릭한 에셋을 `UnityEditor.Editor.CreateEditor(asset)` +
+    `editor.OnInspectorGUI()`로 그 자리에서 바로 렌더링 - Unity 기본 인스펙터가 쓰는
+    바로 그 필드 그리기/Undo/직렬화 로직을 그대로 재사용하는 것이라 커스텀 필드 UI를
+    타입별로 새로 짤 필요가 없음. 값을 바꾸면 그 자리에서 즉시 저장되고 `OnValidate()`도
+    정상 발동.
+  - 선택된 에셋의 실시간 검증 메시지(`DataValidation.CollectIssues`)를 인라인 편집기
+    위에 경고 박스로 표시 - 필드를 고치면 다음 리페인트에 바로 사라짐(전체 리스캔 불필요).
+  - 창을 닫거나 다른 에셋을 선택할 때 이전 `Editor` 인스턴스를 `DestroyImmediate`로 정리.
+- 콘솔 커맨드(`RogueLike/Validate All Game Data`, `DataValidationMenu.cs`)는 손대지
+  않고 그대로 유지 - "빠르게 한 번 전체 스윕"이 필요할 때는 여전히 유효.
+
+### 테스트 결과
+- [x] EditMode 132/132 (이번 변경도 Editor 전용 코드만 건드려서 런타임/테스트 대상 로직
+      변경 없음)
+- [x] 메뉴로 창 열기 → `Rescan()` 자동 실행 → 콘솔 에러/경고 없음 (RunCommand로 재현),
+      창 닫기 정상 동작
+- [ ] 좌측 목록에서 실제로 에셋을 클릭했을 때 우측에 인스펙터가 렌더링되고 필드 수정이
+      실제로 저장되는지 - 미확인/예정. RunCommand 동적 어셈블리는 `internal` 타입
+      (`DataValidationScanner`)을 볼 수 없고 `System.Reflection`도 차단돼 있어, 버튼
+      클릭을 자동으로 재현할 방법이 없었음(GUI 이벤트 시뮬레이션 자체가 이 환경의
+      한계) - 사람이 직접 클릭해서 확인 필요.
+
+### 다음 작업
+- 유저가 직접 `RogueLike > Data Validation Window`에서 아무 에셋이나 클릭해 우측에
+  필드가 뜨는지, 값을 바꾸면 저장되는지, 검증 경고가 실시간으로 뜨고 사라지는지 확인.
+
+### 추가 - 좌측 목록 그룹 기준을 타입 알파벳순 → 도메인별로 변경
+유저가 실제로 써보고 "타입 이름순 말고 플레이어 관련/적 관련으로 묶어달라"고 요청.
+- `Assets/Editor/DataValidationCategories.cs` 신규 - SO 타입을 Player/Enemy/Items/Room/
+  Other 5개 버킷으로 분류하는 순수 매핑(`Categorize(ScriptableObject)`). 런타임 타입에
+  카테고리 개념을 넣지 않고 에디터 전용 코드에만 둠 - 게임플레이 데이터 클래스가 "내가
+  인스펙터에서 어떻게 묶여 보일지"를 알 필요는 없다고 판단.
+  - Player: `WeaponData`/`CharacterArchetypeData`
+  - Enemy: `EnemyData`/`AttackPatternData`(+4개 서브클래스)
+  - Items: `ItemData`(+Passive/Grenade/EnhancedShot/Flamethrower)
+  - Room: `RoomTileSet`/`RoomObstacleSet`
+- `DataValidationWindow.DrawAssetList()`를 "카테고리 → 타입 → 에셋" 2단 그룹으로 재작성
+  (기존 "타입 → 에셋" 1단에서 카테고리 레벨 추가, `EditorGUI.indentLevel`로 들여쓰기).
+  표시 순서는 알파벳순이 아니라 `DataValidationCategories.Order`(Player→Enemy→Items→
+  Room→Other) 고정 - 기획자가 시스템을 떠올리는 순서에 맞춤.
+
+### 테스트 결과 (추가분)
+- [x] EditMode 132/132 (역시 Editor 전용 코드만 변경)
+- [x] 메뉴로 창 재실행 → 콘솔 에러/경고 없음
+- [ ] 실제 좌측 목록이 Player/Enemy/Items/Room 순으로 접혀 보이는지는 사람이 직접 확인 필요
+
+---
+
+## 2026-09-14 (4)
+
+### 진행 내용
+- §5(커스텀 에디터 툴링 — SO 검증 패스) 착수. 하이브리드 방식(인스펙터 즉시 경고 + 프로젝트
+  전체 스캔 메뉴, 둘 다 같은 순수 로직 재사용)으로 유저 승인 받고 진행.
+- `Assets/Scripts/Core/IValidatable.cs` 신규 — `void Validate(List<string> errors)` 하나뿐인
+  인터페이스. UnityEditor 의존성이 전혀 없는 순수 로직이라 EditMode 유닛테스트로 직접
+  검증 가능.
+- `Assets/Scripts/Core/DataValidation.cs` 신규 — `LogIssues(asset, validatable)`(각 에셋의
+  `OnValidate()`에서 호출, 인스펙터에 즉시 경고) / `CollectIssues(validatable)`(에디터 메뉴
+  스캔이 사용) 두 헬퍼. 둘 다 같은 `Validate()`를 재사용하므로 검사 로직은 한 곳에만 존재.
+- `IValidatable` 적용 대상 7개 SO 타입: `WeaponData`(+`RangedWeaponData`), `ItemData`,
+  `AttackPatternData`(+`Ranged`/`Melee`/`BurstRanged`/`RetreatAndShoot` 4개 서브클래스),
+  `EnemyData`, `RoomTileSet`, `RoomObstacleSet`, `CharacterArchetypeData`. 각각
+  `public virtual/override void Validate(List<string> errors)` + `private void OnValidate()
+  => DataValidation.LogIssues(this, this)` 추가. 참조 누락(프리팹/무기/공격 패턴 null 또는
+  빈 배열)과 수치 불변식(속도/범위/쿨다운이 0 이하, `EnemyData.LeashRange < DetectionRange`
+  같은 앞뒤가 안 맞는 조합)을 검사. `MeleeWeaponData`/`PassiveItemData`/액티브 아이템
+  데이터 3종(Grenade/EnhancedShot/Flamethrower)은 검사할 만한 자기 필드가 없어(전부
+  GameBalance JSON 소유) 베이스 클래스 검사만 상속받고 오버라이드 없음.
+- `Assets/Editor/DataValidationMenu.cs` 신규 — 프로젝트에 처음 생기는 Editor 전용 코드
+  (매직 폴더, 별도 asmdef 불필요). 메뉴 `RogueLike/Validate All Game Data`가
+  `AssetDatabase.FindAssets("t:ScriptableObject")`로 전체를 훑어 `IValidatable`인 것만
+  같은 `Validate()`로 검사하고 콘솔에 한 번에 리포트 - 인터페이스 기반이라 나중에 SO
+  타입이 늘어도 스캐너 코드는 안 건드려도 됨. 실행 결과: 기존 23개 에셋 전부 0 issue(현재
+  프로젝트 데이터가 이미 깨끗하다는 뜻 - 새 버그를 못 잡은 게 아니라 예방 도구가 정상
+  동작함을 확인한 것).
+- `Assets/Tests/EditMode/DataValidationTests.cs` 신규 11개 - `EnemyData`(정상값/빈 배열/
+  null 요소/LeashRange<DetectionRange), `RoomTileSet`(누락 4종/전부 할당), `RoomObstacleSet`
+  (누락/배열 내 null), `CharacterArchetypeData`(이름·무기 누락), `RangedWeaponData`(스폰
+  거리 0 이하), `AttackPatternData` 베이스+서브클래스 동시 검사(쿨다운 음수 + lungeSpeed
+  음수 둘 다 잡히는지). 리플렉션 기반 `SetField` 헬퍼는 `Assets/Tests/PlayMode/
+  TestHelpers.cs`의 `SetPrivateField`와 동일한 패턴(베이스 클래스 private 필드까지
+  타입 계층을 걸어 올라가며 탐색)을 EditMode 쪽에 맞게 새로 작성(테스트 asmdef가 달라
+  기존 걸 그대로 재사용은 못 함).
+- 로드맵에 있던 "여유 시" 항목인 층 그래프 비주얼라이저(EditorWindow)는 이번 세션 범위에서
+  제외 - 유저와 사전 합의된 대로 별도 세션으로 이월.
+
+### 테스트 결과
+- [x] EditMode 132/132 (기존 121 + 신규 `DataValidationTests` 11)
+- [x] PlayMode 36/36 클린 (재실행 없이 1회 통과)
+- [x] `RogueLike/Validate All Game Data` 메뉴 실행 확인: "checked 23 asset(s), found 0
+      issue(s)" - 스캐너 자체가 정상적으로 전체 에셋을 순회하고 있음을 확인
+
+### 이슈/메모
+- `OnValidate()`는 에디터 전용 콜백이라 그냥 정의만 해두면 되고 `#if UNITY_EDITOR` 가드가
+  필요 없음(빌드에선 아예 호출되지 않음) - 실제로 UnityEditor 네임스페이스를 쓰는 코드는
+  `Validate()`/`OnValidate()`가 아니라 `Assets/Editor/`의 스캐너 쪽뿐이라 메인 어셈블리는
+  깨끗하게 유지됨.
+- `knockbackResistance`([Range(0,1)])처럼 이미 Unity 어트리뷰트가 인스펙터 단에서 막아주는
+  필드는 중복 검사를 추가하지 않음 - 검사 대상은 "인스펙터 슬라이더/필드로는 못 막는" 참조
+  누락과 크로스필드 불변식으로 한정.
+
+### 다음 작업
+- 여유 있을 때 §5의 나머지 절반(층 그래프 비주얼라이저, EditorWindow) 검토.
+- 로드맵 §6(세이브/로드)로 넘어갈지, Phase 4(아트 리소스)를 먼저 병행할지 결정 필요.
+
+---
+
+## 2026-09-14 (3)
+
+### 진행 내용
+- 대시 중 일반 공격(근접/원거리)·액티브 아이템 스킬을 실행할 수 없고, 대시(+겹침 보정 꼬리)가
+  완전히 끝나야 다시 가능하도록 제한 추가. 유저가 먼저 "공격 중 대시 불가/대시 중 공격 불가"
+  상호 차단이 있는지 물어와 검토한 결과 둘 다 없음을 확인(근접/원거리 공격은 지속시간 있는
+  모션 자체가 없어 "공격 중"이라는 상태가 존재하지 않아 반대 방향은 구조적으로 성립 불가) →
+  유저가 "대시 → 공격/스킬 차단" 단방향만 요청.
+- `PlayerDodgeRoll`에 `IsDodgeRolling`(`_isDodgeRolling || _isCorrectingOverlap`) 공개
+  프로퍼티 신규. `PlayerCombat`/`ActiveItemController`가 `[RequireComponent(typeof(
+  PlayerDodgeRoll))]`로 같은 GameObject의 이 컴포넌트를 직접 참조(기존에 `PlayerDodgeRoll`이
+  `PlayerMovement.enabled`를 직접 토글하는 것과 동일한 형제-컴포넌트 참조 패턴)해서
+  `OnAttackPerformed`/`OnActivatePressed` 진입 시점에 차단.
+- 차단된 입력은 버퍼링하지 않고 그냥 버림(직전에 만든 `InputBuffer`는 재사용하지 않음) -
+  쿨다운 타이밍 실수를 구제하는 성격과 달리 "대시 중엔 원천 차단"이라는 의도적 규칙이라,
+  자동 발동시키면 오히려 안 누른 입력이 뒤늦게 나가는 위화감이 생길 수 있다고 판단해 유저
+  승인 하에 이 방향으로 결정. `OnActivateReleased`는 차단하지 않음(대시 시작 전에 이미
+  활성화된 화염방사기가 대시 중에도 정상적으로 해제될 수 있어야 함).
+- `IWeapon`/`IActiveItem` 구현체(`RangedWeapon`/`MeleeWeapon`/`GrenadeActiveItem`/
+  `EnhancedShotActiveItem`/`FlamethrowerActiveItem`)는 전혀 수정하지 않음 - 차단 지점을
+  플레이어 레벨 컨트롤러(`PlayerCombat`/`ActiveItemController`)에 둬서 무기/스킬 종류와
+  무관하게 한 곳씩만 고치면 되도록 함.
+
+### 테스트 결과
+- [x] EditMode 121/121
+- [x] PlayMode 36/36 - 중간에 `ChaseState_SlowEnemyAcrossManyRepathCycles_MakesSteadyProgress
+      InsteadOfOscillating`이 스위트 전체 실행 중 2회 연속 실패했으나, 이 테스트만 단독
+      필터링해 실행하면 통과(1/1) - `MakePlayer` 테스트 헬퍼는 컴포넌트가 하나도 없는 빈
+      GameObject라 이번 변경(`RequireComponent`)과 인과관계가 있을 수 없음을 코드로 확인,
+      2026-09-14 (1)에서 이미 기록한 "스위트 순서 민감 플레이키니스" 네 번째 사례로 확정.
+      최종 재실행 36/36 클린.
+- [ ] 실제 Play Mode에서 대시 중 공격/스킬 버튼이 먹통이 되는지, 대시가 끝나자마자 바로
+      다시 가능해지는지 체감 확인 - 미확인/예정
+
+### 다음 작업
+- 실플레이로 대시 중 차단 체감 확인. "그냥 버림" 대신 버퍼링이 더 나아 보이면 전환 검토.
+- §4b(프레임레이트 독립성)는 아직 미착수.
+
+---
+
+## 2026-09-14 (2)
+
+### 진행 내용
+- §4 입력 버퍼링(로드맵 확정 순번 4번) 착수. 대시/원거리 공격/액티브 아이템(강화탄·수류탄·
+  화염방사기) 5곳에, 쿨다운으로 막힌 입력을 짧은 시간(0.15초) 동안 기억해뒀다가 조건이
+  풀리면 자동 실행하는 방식을 적용.
+- `Assets/Scripts/Core/InputBuffer.cs` 신규 — countdown 기반 순수 struct(Record/Tick/
+  TryConsume). 기존 `_cooldownRemaining -= deltaTime` 패턴과 같은 스타일이라 각 호출부의
+  기존 Tick()에 그대로 얹음.
+- 적용 지점: `PlayerDodgeRoll`(대시, `OnDodgeRollPerformed`→`StartDash` 분리),
+  `RangedWeapon`(`Attack`→`Fire` 분리), `EnhancedShotActiveItem`, `GrenadeActiveItem`
+  (장전 시도만 - 이미 든 수류탄을 던지는 쪽은 게이트가 없어 버퍼링 대상 아님),
+  `FlamethrowerActiveItem`(`OnActivatePressed`→`StartActivation` 분리).
+- `MeleeWeapon`은 쿨다운 게이트 자체가 없어(항상 즉시 성립) 버퍼링 대상에서 제외.
+- 버퍼 윈도우 값은 0.15초(150ms) — 격투 게임 커맨드 윈도우(60fps 기준 약 3~10프레임,
+  ~50~166ms), 플랫포머 점프 버퍼(보통 4~6프레임, ~66~100ms) 등 액션 게임에서 흔히 쓰이는
+  100~200ms 구간의 중간값으로 유저 승인 하에 임의 결정. `InputBuffer.DefaultWindowSeconds`
+  한 곳만 고치면 5곳 전부에 반영되므로, 실플레이 체감으로 조정 예정.
+- `Assets/Tests/EditMode/InputBufferTests.cs` 신규 6개(미대기/Record/즉시 소비/윈도우 내
+  유지/윈도우 만료/기본값 범위 검증).
+
+### 테스트 결과
+- [x] EditMode 121/121 (`TestRunnerApi` 실행 - 기존 115 + 신규 6)
+- [x] PlayMode 36/36 (`TestRunnerApi` 실행 2회 - 1회차에서
+      `ChaseState_SlowEnemyAcrossManyRepathCycles_MakesSteadyProgressInsteadOfOscillating`
+      1건 실패했으나 이번 변경은 Enemy/경로탐색 쪽 파일을 전혀 건드리지 않았고, 바로 위
+      2026-09-14 (1) 세션에서 이미 "스위트 전체를 순서대로 돌릴 때만 발생하는 타이밍 민감
+      플레이키" 3번째 사례로 기록된 것과 동일 테스트 → 재실행해 2회차 36/36 클린 확인)
+- [ ] 실제 Play Mode에서 대시/원거리 공격/액티브 아이템 각각 쿨다운이 막 끝나기 직전에
+      입력했을 때 자동으로 나가는지 체감 확인 - 미확인/예정(유저 실플레이 필요, 0.15초
+      값 튜닝 대상)
+
+### 이슈/메모
+- 버퍼링 대상은 "쿨다운/재사용 대기"로 한정하고, 대시 중(`_isDodgeRolling`)·수류탄 보유
+  중(`IsBusy`)·화염방사 중(`_isActive`) 같은 "동작 진행 중" 상태는 별도로 구분하지 않고
+  같은 가드에 얹음 - 버퍼 윈도우(0.15초)가 이런 진행 상태의 지속시간보다 훨씬 짧아
+  실질적으로는 쿨다운 케이스만 구제하므로 단순화해도 무방하다고 판단.
+
+### 다음 작업
+- 유저 실플레이로 0.15초 체감 확인 후 필요하면 `InputBuffer.DefaultWindowSeconds` 조정.
+- §4 잔여 절반(프레임레이트 독립성)을 별도로 볼지, 아니면 §5 커스텀 에디터 툴링으로
+  넘어갈지 결정.
+
+---
+
 ## 2026-09-14
 
 ### 진행 내용

@@ -6,12 +6,17 @@ public class HealthComponent : MonoBehaviour, IDamageable
     [SerializeField] private float maxHealth = 100f;
     [SerializeField] private bool destroyOnDeath = true;
 
+    // Seconds to hold the corpse in place (state/AI already stopped, see EnemyDeadState) before
+    // actually pooling/destroying it - long enough for a death animation to read. 0 (the default,
+    // and what the Player prefab uses) keeps the original instant behavior.
+    [SerializeField] private float deathDelay = 0f;
+
     // Fires whenever damage actually lands (not blocked by invulnerability/
     // death/a non-positive amount) on ANY HealthComponent in the scene -
     // static so debug/observability tooling (DebugOverlayController) can
     // subscribe once regardless of when enemies spawn or which pool they
     // come from, instead of subscribing per-instance.
-    public static event Action<HealthComponent, float, Transform> AnyDamageTaken;
+    public static event Action<HealthComponent, float, Transform, Vector3> AnyDamageTaken;
 
     private Health _health;
 
@@ -38,7 +43,7 @@ public class HealthComponent : MonoBehaviour, IDamageable
         Health.Died -= HandleDied;
     }
 
-    public void TakeDamage(float amount, Transform source)
+    public void TakeDamage(float amount, Transform source, Vector3 knockbackDirection = default)
     {
         // F2 dev switch: rewrite the final amount for any non-player target, blowing away
         // whatever the weapon/skill computed. Placed first so the log, the AnyDamageTaken
@@ -52,7 +57,7 @@ public class HealthComponent : MonoBehaviour, IDamageable
 
         if (amount > 0f && !Health.IsDead && !Health.IsInvulnerable)
         {
-            AnyDamageTaken?.Invoke(this, amount, source);
+            AnyDamageTaken?.Invoke(this, amount, source, knockbackDirection);
         }
 
         Health.TakeDamage(amount);
@@ -62,6 +67,17 @@ public class HealthComponent : MonoBehaviour, IDamageable
     {
         Debug.Log($"{name} died.");
 
+        if (deathDelay > 0f)
+        {
+            Invoke(nameof(FinishDeath), deathDelay);
+            return;
+        }
+
+        FinishDeath();
+    }
+
+    private void FinishDeath()
+    {
         if (TryGetComponent<PooledObject>(out var pooledObject))
         {
             pooledObject.ReturnToPool();

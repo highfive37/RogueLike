@@ -11,6 +11,7 @@ public class EnemyStateMachine : MonoBehaviour
     private Transform _player;
     private IDamageable _playerDamageable;
     private Rigidbody _playerRigidbody;
+    private Collider _playerCollider;
     private IEnemyState _currentState;
     private IAttackPattern[] _attackPatterns;
     private float _maxAttackRange;
@@ -20,8 +21,23 @@ public class EnemyStateMachine : MonoBehaviour
     public EnemyData Data => data;
     public Rigidbody Body { get; private set; }
     public CapsuleCollider Capsule { get; private set; }
+
+    // Null when this enemy has no visual wired (e.g. a bare test double) - every state's Enter()
+    // reads this through a null-conditional call rather than assuming it exists.
+    public EnemyAnimationController Animation { get; private set; }
+    // Null on every enemy except the boss, which carries one as an authored-inactive child for
+    // ChargeStrikePattern to arm/disarm - null-conditional everywhere it's used, same convention
+    // as Animation above.
+    public EnemyChargeHitbox ChargeHitbox { get; private set; }
     public Transform Player => _player;
     public IDamageable PlayerDamageable => _playerDamageable;
+    // Null if the player has no Collider (e.g. a bare stand-in in a test). ChargeStrikePattern
+    // uses this to narrowly ignore collision between just this enemy's own capsule and the
+    // player's during a dash, instead of a layer-wide Physics.IgnoreLayerCollision - the player's
+    // own dash uses the layer-wide version, but that would also blind ranged attacks here (the
+    // player capsule and its projectiles share the same Default layer), which a single-pair
+    // ignore avoids entirely.
+    public Collider PlayerCollider => _playerCollider;
     // Zero if the player has no Rigidbody (e.g. a bare stand-in in a test) - EnemyChaseState's
     // search uses this to extrapolate a bit past the last-seen position instead of freezing
     // exactly on it.
@@ -50,6 +66,10 @@ public class EnemyStateMachine : MonoBehaviour
             _bodyRadius = capsule.radius;
             Capsule = capsule;
         }
+        Animation = GetComponentInChildren<EnemyAnimationController>();
+        // includeInactive: true - the hitbox's GameObject is authored inactive by default (only
+        // armed for the duration of a dash), which GetComponentInChildren skips by default.
+        ChargeHitbox = GetComponentInChildren<EnemyChargeHitbox>(true);
         WobblePhaseSeed = EnemyMovementFlavor.RandomPhaseSeed();
 
         IdleState = new EnemyIdleState(this);
@@ -57,7 +77,7 @@ public class EnemyStateMachine : MonoBehaviour
         ChaseState = new EnemyChaseState(this);
         AttackState = new EnemyAttackState(this);
         StunnedState = new EnemyStunnedState(this);
-        DeadState = new EnemyDeadState();
+        DeadState = new EnemyDeadState(this);
     }
 
     // Pool-spawned instances need their scene-only projectilePool reference
@@ -140,6 +160,7 @@ public class EnemyStateMachine : MonoBehaviour
             _player = playerObject.transform;
             playerObject.TryGetComponent(out _playerDamageable);
             playerObject.TryGetComponent(out _playerRigidbody);
+            playerObject.TryGetComponent(out _playerCollider);
         }
     }
 
@@ -147,6 +168,15 @@ public class EnemyStateMachine : MonoBehaviour
     {
         _healthComponent.Health.Died += HandleDied;
         HealthComponent.AnyDamageTaken += HandleDamageTaken;
+
+        // Undoes EnemyDeadState.Enter()'s collider disable - runs on every fresh activation
+        // (initial spawn and every pool reuse), since Awake (where Capsule is cached) only runs
+        // once for a pooled instance.
+        if (Capsule != null)
+        {
+            Capsule.enabled = true;
+        }
+
         ChangeState(IdleState);
     }
 
@@ -218,7 +248,7 @@ public class EnemyStateMachine : MonoBehaviour
 
     // AnyDamageTaken is static and fires for every HealthComponent in the scene (player
     // included), so this must filter to its own instance before reacting.
-    private void HandleDamageTaken(HealthComponent sender, float amount, Transform source)
+    private void HandleDamageTaken(HealthComponent sender, float amount, Transform source, Vector3 knockbackDirection)
     {
         if (sender != _healthComponent || _currentState == DeadState)
         {

@@ -1,7 +1,8 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "EnemyData", menuName = "RogueLike/Enemies/Enemy Data")]
-public class EnemyData : ScriptableObject
+public class EnemyData : ScriptableObject, IValidatable
 {
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 3f;
@@ -57,4 +58,67 @@ public class EnemyData : ScriptableObject
     public AttackPatternData[] AttackPatterns => attackPatterns;
     public float StunDuration => stunDuration;
     public float KnockbackResistance => knockbackResistance;
+
+    public void Validate(List<string> errors)
+    {
+        if (moveSpeed <= 0f)
+        {
+            errors.Add($"Move Speed should be positive (currently {moveSpeed}).");
+        }
+
+        if (patrolSpeed <= 0f)
+        {
+            errors.Add($"Patrol Speed should be positive (currently {patrolSpeed}).");
+        }
+
+        if (patrolRadius < 0f)
+        {
+            errors.Add($"Patrol Radius should not be negative (currently {patrolRadius}).");
+        }
+
+        if (idleDuration < 0f)
+        {
+            errors.Add($"Idle Duration should not be negative (currently {idleDuration}).");
+        }
+
+        if (detectionRange <= 0f)
+        {
+            errors.Add($"Detection Range should be positive (currently {detectionRange}).");
+        }
+
+        if (leashRange < detectionRange)
+        {
+            errors.Add($"Leash Range ({leashRange}) should be at least Detection Range ({detectionRange}), or the enemy gives up chasing before it can even see the player.");
+        }
+
+        if (searchDuration < 0f)
+        {
+            errors.Add($"Search Duration should not be negative (currently {searchDuration}).");
+        }
+
+        if (stunDuration < 0f)
+        {
+            errors.Add($"Stun Duration should not be negative (currently {stunDuration}).");
+        }
+
+        if (attackPatterns == null || attackPatterns.Length == 0)
+        {
+            errors.Add("Attack Patterns is empty - this enemy will never attack.");
+        }
+        else
+        {
+            for (int i = 0; i < attackPatterns.Length; i++)
+            {
+                if (attackPatterns[i] == null)
+                {
+                    errors.Add($"Attack Patterns[{i}] is not assigned.");
+                }
+            }
+        }
+    }
+
+    private void OnValidate()
+    {
+        DataValidation.LogIssues(this, this);
+    }
 }

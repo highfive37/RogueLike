@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "BurstRangedAttackPatternData", menuName = "RogueLike/Enemies/Attack Patterns/Burst Ranged")]
@@ -19,5 +20,30 @@ public class BurstRangedAttackPatternData : AttackPatternData
     public override IAttackPattern CreatePattern(EnemyAttackContext context)
     {
         return new BurstRangedAttackPattern(this, context.ProjectilePool);
+    }
+
+    public override void Validate(List<string> errors)
+    {
+        base.Validate(errors);
+
+        if (projectileSpawnDistance <= 0f)
+        {
+            errors.Add($"Projectile Spawn Distance should be positive (currently {projectileSpawnDistance}).");
+        }
+
+        if (burstCount < 1)
+        {
+            errors.Add($"Burst Count should be at least 1 (currently {burstCount}).");
+        }
+
+        if (burstInterval < 0f)
+        {
+            errors.Add($"Burst Interval should not be negative (currently {burstInterval}).");
+        }
+
+        if (retreatTriggerRange < 0f)
+        {
+            errors.Add($"Retreat Trigger Range should not be negative (currently {retreatTriggerRange}).");
+        }
     }
 }

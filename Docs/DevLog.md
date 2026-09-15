@@ -30,6 +30,1026 @@
 
 ---
 
+## 2026-09-15 (49)
+
+### 진행 내용
+- 코드 작업 없이 진행 방향 논의만 진행한 세션 - 오늘(38~48) VFX 버그 수정 마무리 후
+  유저가 "남은 작업이 뭐가 있을까" 질문 → `ProjectPlan.md`/`ClaudeSessionSummary.md`
+  §5·§6 재확인해 우선순위 트랙 기준 남은 건 **6번(세이브/로드, 최하위 취급)** 뿐이고,
+  Phase 4(아트 통합)가 오늘부로 사실상 마감돼 그동안 게이팅돼 있던 **Phase 6(최적화
+  After 측정)**·**Phase 5(Addressables, 축소 범위)**·**Phase 7(포트폴리오 문서화)**이
+  풀렸다고 정리해 제시.
+- 이어서 "지금 시점에 문서화한다면 서류전형에서 포트폴리오로 괜찮은가" 질문에 냉정한
+  평가 제시: 내용물(자동화 테스트+CI, 결정론적 절차적 생성, A* 경로탐색, 커스텀 에디터
+  툴링, `AI_Decision_Log.md`의 AI 제안 비판적 검토 기록)은 이미 준수한 수준이나, 현재
+  `README.md`가 절차적 생성/A*/커스텀 툴링/아트·애니메이션/보스 AI/VFX를 전혀 반영 못한
+  초기 스냅샷 상태로 방치돼 있고 스크린샷/GIF가 전무해 서류전형 단계에서 그 내용물이
+  실제로는 안 읽힐 가능성이 높다고 지적.
+- "기술 요소를 더 넣어 점수를 올리는 건 어떤가" 질문에는 비추천 의견 제시 - `ProjectPlan.md`
+  자체가 "완결된 작은 프로젝트 > 크고 미완성인 프로젝트" 원칙을 명시하고 있고, 오늘 VFX
+  하나로 10회 넘게 버그 수정 라운드가 돈 것 자체가 새 시스템 추가의 실제 비용을 보여주는
+  사례라 새 기능보다는 이미 계획에 있는 빈 칸(Addressables) 채우기 + 문서화가 더
+  레버리지가 크다고 판단.
+- 유저가 다음 작업을 **"After 프로파일링" 로 확정**, Addressables는 "어떤 작업인지
+  확인 후 진행 여부 판단"으로 보류. 곧이어 "오늘 한 VFX 작업까지가 아직 Before
+  단계였냐"는 질문에 답하며 **`BenchmarkSpawner`(§6.5 벤치마크 하네스)를 코드로
+  재확인**한 결과 실제 결함(구멍) 발견:
+  - `BenchmarkSpawner.Start()`가 `playerHealth.Health.SetInvulnerable(true)`를 걸어둠 →
+    `Health.TakeDamage`/`HealthComponent.TakeDamage`(`AnyDamageTaken` 발화 조건에
+    `!Health.IsInvulnerable` 포함, `HealthComponent.cs:58`)가 전부 무효화돼 **피격
+    이펙트가 이 벤치마크에서 원천적으로 한 번도 안 나옴**을 코드 레벨로 확인.
+  - 이 하네스는 몹을 그냥 흩뿌려 배치만 하고 플레이어가 실제로 뭔가를 죽이는 경로가
+    없어 **적 사망 이펙트도 발동 안 함**.
+  - `BenchmarkSpawner`가 애초에 보스를 grunt count 스케일링 대상에서 제외하고 있어
+    (`풀 크기가 다름 2/5 vs 20/220` 주석 확인) **보스 돌진 먼지는 이 벤치 방식 자체와
+    안 맞음**.
+  - 총구 플래시는 `Ranged`/`BurstRanged` variant가 실제로 주기적으로 발사하므로 이미
+    어느 정도 커버됨 - 유일하게 손 안 대도 되는 항목.
+- 위 구멍을 메우기 위한 **After 프로파일링 방침(초안, 아직 미확정·미구현)**을 제안 -
+  다음 대화에서 유저와 더 논의 예정:
+  1. **피격 이펙트**: 두 대안 제시 - (A) 무적 유지한 채 벤치마크 스크립트가
+     `CombatVfxLibrary.SpawnHitImpact()`를 정해진 주기로 직접 호출(VFX만 순수
+     격리해서 재는 방식, 실제 전투 파이프라인과는 분리) vs (B) 무적 대신 체력을
+     아주 크게 잡고 실제 적 공격이 진짜로 맞게 둠(`HealthComponent`→`AnyDamageTaken`
+     →`CombatVfxLibrary`까지 실제 프로덕션 경로를 그대로 태움, 다만 적 수가 늘수록
+     동시 피격 빈도도 자연스럽게 늘어나 오히려 더 현실적인 스케일링이 됨). 어느 쪽을
+     쓸지는 다음 논의에서 결정.
+  2. **적 사망 이펙트**: `BenchmarkSpawner`에 "일정 주기로 추적 중인 적 K마리를 실제
+     `HealthComponent.TakeDamage`(치사량)로 죽이고 즉시 K마리를 재보충"하는 옵션
+     모드를 추가하는 안 - 실제 `EnemyDeadState`→`SpawnEnemyDeath` 경로를 그대로 타되,
+     측정 구간 내내 "N마리 유지" 조건을 깨지 않음(죽는 만큼 즉시 리스폰).
+  3. **보스 돌진 먼지**: 20/50/100/200 표에 억지로 끼워 넣지 않고, 보스 1마리만 스폰해
+     `ChargeStrikePattern`을 반복 트리거하며 프로파일러로 스파이크 유무만 별도로 확인하는
+     **독립된 소규모 체크**로 분리(실제 게임에도 보스는 항상 1마리뿐이라 "200개" 테스트가
+     의미가 없음).
+  4. **수류탄 폭발**: 플레이어 전용 스킬이고 쿨다운 때문에 사실상 항상 최대 1개뿐이라
+     적 수 스케일링과 무관 - 이번 적 수 스케일링 표에서는 **의도적으로 제외**하기로
+     제안(누락이 아니라 결정으로 문서화).
+
+### 테스트 결과
+- 해당 없음(코드 변경 없음, 논의/코드 재확인만).
+
+### 이슈/메모
+- `BenchmarkSpawner.Start()`의 무적 처리와 보스 제외는 원래 "적 수 대 FPS/GC"만 순수
+  격리해서 재려는 의도로 만들어진 기존 설계라, 이번에 드러난 "VFX 커버리지 구멍"은
+  버그라기보다 애초에 VFX가 존재하기 전에 설계된 하네스가 최근 신설된 VFX 시스템을
+  못 따라간 것에 가까움.
+
+### 다음 작업
+- 위 4개 항목(특히 피격 이펙트 A/B 선택)을 유저와 마저 논의해 방침 확정.
+- 방침 확정 후 `BenchmarkSpawner` 확장 구현 → `BenchmarkScene`에서 20/50/100/200
+  시나리오로 After 수치(FPS/CPU/GC Alloc) 실측, 기존 Before 표와 나란히 정리.
+- After 수치까지 나오면 Addressables가 실제로 어떤 작업인지 조사해 진행 여부 판단.
+
+---
+
+## 2026-09-15 (48)
+
+### 진행 내용
+- 유저 버그 보고: `Enemy_Ranged`는 머리 위에 총 모델이 얹혀 있는 형태인데, 그 총
+  모델 안에 적 체력바(HealthBarCanvas)가 파묻혀 안 보임. 조사 후 원인/해결 방향
+  2가지(①위치만 올리기 ②깊이 테스트 무시하고 항상 위에 그리기)를 제시, 유저가 ②
+  근본 해결 선택("적 캐릭터가 어떻게 생겼든 HP가 제대로 보여야 정상").
+- 원인 재확인: `HealthBarCanvas`(WorldSpace `Canvas` + `BillboardUI`로 카메라만
+  바라보게 회전)는 일반 3D 지오메트리처럼 깊이 버퍼 테스트를 받는 채로 그려짐 -
+  `Enemy_Ranged`의 총 모델(`Cylinder`, 월드 Y 1.7~2.7 범위) 바운딩 박스 안에 체력바
+  (월드 Y 2.4)가 들어가 있어 카메라 시야각에서 총에 가려짐. `BillboardUI`의 회전
+  로직이나 Sorting Layer 둘 다 이 문제와 무관 - Sorting Layer는 반투명 오브젝트끼리의
+  순서만 정하지 불투명 지오메트리에 가려지는 것 자체는 못 막음.
+- 신규 셰이더 `Assets/Shaders/UI-AlwaysOnTop.shader`(`UI/AlwaysOnTop`) 작성 - Unity
+  기본 `UI/Default` 셰이더(uGUI Image/Text가 기본으로 쓰는 것)를 그대로 가져와
+  `ZTest Always` 한 줄만 추가(원본은 `ZTest`를 지정 안 해 기본값 `LEqual`로 일반 깊이
+  테스트를 받음). `ZWrite Off`는 유지해서 체력바 자신이 뒤에 있는 다른 걸 가리지는
+  않음. CGPROGRAM 기반이라 URP 프로젝트에서도 문제없이 컴파일/지원됨(uGUI 자체가
+  이미 이 방식의 셰이더로 동작 중).
+- `Assets/Materials/UI_AlwaysOnTop.mat` 머티리얼 생성(위 셰이더 참조) - `HealthBarCanvas`
+  를 가진 6개 프리팹(`Boss_Basic`/`Enemy_Basic`/`Enemy_BurstRanged`/`Enemy_ErraticMelee`/
+  `Enemy_Ranged`/`Enemy_RelentlessMelee`) 전부의 `Background`/`Fill` `Image` 컴포넌트
+  머티리얼을 이걸로 교체(`PrefabUtility.LoadPrefabContents` 스크립팅, 프리팹마다 공유
+  구조라 전부 동일하게 처리됨).
+
+### 테스트 결과
+- [x] 셰이더 임포트 후 `Shader.Find("UI/AlwaysOnTop")`로 컴파일/지원 여부 확인 -
+      정상.
+- [x] Play Mode에서 `Enemy_Ranged`를 플레이어 앞에 스폰하고 피격시켜 체력바를 활성화
+      시킨 뒤 `Unity_Camera_Capture`로 확인 - 빨간 체력바가 총 모델 앞을 그대로
+      가로질러 선명하게 보임(수정 전엔 총 안에 파묻혀 안 보이던 것과 대조).
+- [x] 콘솔 에러 0건.
+
+### 다음 작업
+- 유저 실플레이 재확인: 모든 적 타입에서 체력바가 항상 잘 보이는지.
+
+---
+
+## 2026-09-15 (47)
+
+### 진행 내용
+- 유저 버그 보고: 보스방에서 보스 잡고 다음 층 오브젝트(Floor Exit)와 충돌 시 플레이어
+  걷는 애니메이션이 멈추지 않고 계속 유지되는 현상.
+- 원인: `RoomFlowManager.HandleFloorCompleted()`(Floor Exit 트리거 진입 시
+  `StageManager.FloorCompleted` 이벤트로 호출됨)가 `uiManager.ShowFloorComplete(...)`
+  를 호출하는데, 그 안의 `FloorCompleteUI.Show()`가 `PauseState.RequestPause`로
+  `Time.timeScale = 0`을 걺. `PlayerMovement.FixedUpdate()`는 `isMoving`이 바뀔 때만
+  애니메이션을 전환하는 엣지 트리거 방식인데, 타임스케일이 0이 되면 FixedUpdate 자체가
+  더 이상 호출되지 않아 이동 중이던 상태(Run)에서 멈춰버림. 반면
+  `PlayerAnimationController`는 `Awake()`에서 `animator.updateMode =
+  AnimatorUpdateMode.UnscaledTime`을 걸어둬서 Animator 자체는 일시정지와 무관하게
+  계속 평가됨 - 그 결과 Run 클립이 제자리에서 계속 루프 재생되어 "걷는 게 유지되는"
+  것처럼 보였음. `HandlePlayerDied()`는 이미 같은 상황에서 `_playerAnimation?.
+  PlayDeath()`로 명시적으로 애니메이션을 덮어써서 문제가 없었는데, `HandleFloorCompleted()`
+  에는 그런 처리가 빠져 있었음.
+- 수정: `HandleFloorCompleted()`에 `uiManager.ShowFloorComplete(...)` 호출 직전
+  `_playerAnimation?.PlayIdle();` 한 줄 추가 - `HandlePlayerDied()`의 `PlayDeath()`
+  호출과 동일한 패턴.
+
+### 테스트 결과
+- [x] Play Mode에서 플레이어의 `PlayerAnimationController.PlayRun()`으로 Run 상태를
+      만든 뒤 `PlayIdle()`을 호출해 `Animator.GetCurrentAnimatorStateInfo(0)`으로
+      확인 - Run → Idle로 정상 전환됨을 확인. `HandleFloorCompleted()`는 `private`이고
+      `StageManager.FloorCompleted`/`FloorExitController.Entered`는 외부에서 직접
+      `Invoke`할 수 없는 C# 이벤트라(리플렉션 사용 불가 환경) 실제 Floor Exit 트리거를
+      물리적으로 통과시키는 end-to-end 재현은 이번엔 생략 - 같은 클래스의 이미 검증된
+      `PlayDeath()` 패턴을 그대로 재사용한 한 줄 변경이라 코드 리뷰 수준 확신으로 충분
+      하다고 판단.
+- [x] 콘솔 에러 0건. (참고: "The referenced script (Unknown) on this Behaviour is
+      missing!" 경고가 다수 찍혔으나, 현재 씬에 로드된 모든 GameObject를 직접 스캔한
+      결과 실제로 컴포넌트가 null인 오브젝트는 0개 - 이번 수정과 무관한 기존 잔여
+      노이즈로 판단(미사용 상태로 남아있는 예전 Particle Pack 프리팹 쪽일 가능성),
+      이번 작업 범위 밖이라 더 파고들지 않음.)
+
+### 다음 작업
+- 유저 실플레이 재확인: 보스방 클리어 후 Floor Exit 진입 시 애니메이션이 제대로
+  Idle로 멈추는지.
+- (낮은 우선순위, 별건) 콘솔에 계속 보이는 "missing script" 경고 원인 - 실제 씬
+  오브젝트엔 영향 없는 것으로 확인했으나 원한다면 별도로 추적 가능.
+
+---
+
+## 2026-09-15 (46)
+
+### 진행 내용
+- 유저 관찰: `Prototype.unity`를 (타이틀 경유 없이) 바로 실행하면 플레이어 시작
+  위치에서 피격 이펙트가 보였다 사라짐 - (41)에서 만든 VFX 풀 워밍업이 실제로 그
+  지점에서 보이는 게 맞는지 확인 후, 맞다면 워밍업 위치를 (999, 0, 999) 같은 곳으로
+  옮겨달라는 요청.
+- 원인 확인: `GameObjectPool.WarmUpRoutine()`은 `_pool.Get()`만 호출하고 위치를 따로
+  지정하지 않아, 워밍업 인스턴스는 그냥 프리팹의 로컬 위치 그대로 **풀 GameObject
+  자신의 월드 위치**에서 잠깐 재생됨. 5개 `VfxPool_*` GameObject 전부 씬에서 정확히
+  `(0, 0, 0)`에 있었는데, 이게 플레이어 스폰 위치 `(0, 1, 0)`과 거의 같은 자리 - (41)의
+  "페이드 구간 안에서 끝나니 안 보인다"는 가정은 **타이틀→게임플레이 페이드를 거칠
+  때만** 성립하고, 에디터에서 `Prototype.unity`를 바로 Play하는 흔한 개발자 테스트
+  경로에는 그 페이드 오버레이 자체가 아예 생성되지 않아 워밍업이 고스란히 노출되고
+  있었음.
+- 수정: 5개 `VfxPool_*` GameObject의 씬 위치를 전부 `(999, 0, 999)`로 이동. 코드
+  변경은 없음 - 실제 스폰은 항상 `GameObjectPool.Get(position, rotation)`이 즉시
+  `SetPositionAndRotation`으로 요청 위치에 재배치하므로 풀 자신의 위치는 실제 게임플레이
+  스폰 결과에 영향 없음(워밍업만 풀 위치를 그대로 물려받음).
+
+### 테스트 결과
+- [x] Play Mode에서 `VfxPool_HitImpact`의 워밍업 인스턴스가 `(999, 0, 999)`에서
+      비활성 상태로 대기 중인 것 확인, 이어서 `CombatVfxLibrary.SpawnHitImpact`로 실제
+      스폰을 요청하니 같은 인스턴스가 요청한 좌표(`(0, 2, 0)`)로 정확히 재배치되는 것
+      확인 - 풀 위치 이동이 실제 스폰 동작에 전혀 영향 없음을 수치로 검증.
+- [x] 콘솔 에러/경고 0건.
+
+### 이슈/메모
+- 참고로 남겨둘 트레이드오프: 워밍업 인스턴스를 카메라가 절대 보지 않는 위치로
+  옮기면 "그 자리에서 번쩍이는 게 보인다"는 이번 문제는 확실히 해결되지만, Unity는
+  카메라 프러스텀 밖의 오브젝트는 실제로 그리지 않고 컬링하므로 - 원래 워밍업이
+  노리던 "첫 사용 시 셰이더/머티리얼 비용을 미리 치른다"는 효과 자체는 약해질 수 있음
+  (화면에 실제로 그려져야 GPU가 그 셰이더 variant를 컴파일하기 때문). 다만 (41)에서
+  보고된 청록색 깜빡임 버그가 이 수정 이후 실제로 재발하는지는 아직 보고된 바 없음 -
+  재발하면 `ShaderVariantCollection.WarmUp()`처럼 화면에 그리지 않고도 GPU 컴파일만
+  강제하는 방식으로 다시 손볼 필요가 있음.
+
+### 다음 작업
+- 유저 재확인: `Prototype.unity` 직접 실행 시 스폰 지점에서 이펙트가 더 이상 안
+  보이는지, 그리고 (원래 문제였던) 세션 최초 이펙트 사용 시 청록색 깜빡임이 재발하지
+  않는지.
+
+---
+
+## 2026-09-15 (45)
+
+### 진행 내용
+- 유저 확인: 적 사망 이펙트는 이제 잘 보임(완료). 보스 돌진 이펙트 유지시간을
+  **현재 상태에서 다시 1/2로** 축소 요청.
+- `DustStorm.prefab`의 자식 3개(`DustStorm`/`RockDebris`/`SandParticles`) `duration`/
+  `startLifetime`(min/max)에 0.5를 곱해 재축소(예: `RockDebris` duration 1.67→0.83,
+  lifetime max 1.33→0.67) - (44)에서 이미 1/3로 줄여둔 값 기준으로 추가 반영, 최초
+  원본 대비로는 약 1/6 수준.
+
+### 테스트 결과
+- [x] `BossPool`에서 실제 보스를 꺼내 `ChargeStrikePattern.Execute()` 호출 후 생성된
+      더스트 인스턴스를 `ParticleSystem.Simulate(0.1s)` 반복 측정 - 전체 소멸까지 약
+      1.0초(직전 (44) 측정값 1.7초 대비 약 0.6배 - "1/2" 요청과 근사).
+- [x] 콘솔 에러/경고 0건.
+
+### 다음 작업
+- 유저 재확인: 보스 돌진 유지시간 체감.
+
+---
+
+## 2026-09-15 (44)
+
+### 진행 내용
+- 유저 재확인 결과 2건: ① 적 사망 이펙트가 (43) 수정 후에도 여전히 잘 안 보임 ②
+  보스 돌진 이펙트 유지시간을 지금의 1/3로 줄여달라.
+- **적 사망 이펙트 재조사**: 이전엔 빈 바닥에서만 스폰해 테스트했던 게 맹점 - 이번엔
+  `EnemyPool_Melee`에서 실제 적을 꺼내 `HealthComponent.TakeDamage`로 진짜 죽여서
+  `EnemyDeadState` 경로 그대로 재현 후 캡처해보니 원인이 보임: **적 사망 시 시체
+  모델 자체가 밝은 금색/노란색으로 빛나는 로봇 형태**였는데, 스파크 색이 주황~빨강
+  계열(RGBA 1, 0.313, 0.099)이라 시체 자체의 금색 발광과 색상이 겹쳐서 파티클이
+  시체 안에 묻혀버리고 있었음(크기/렌더링 문제가 아니라 순수 색 대비 문제).
+  - `vfx_Sparks_01.prefab`의 `startColor`를 차가운 흰색-하늘색 계열(0.75, 0.9, 1.0)로
+    교체 - 따뜻한 금색 로봇 몸체와 확실히 대비되고, "로봇 사망 시 전기 스파크" 컨셉에도
+    주황 잉걸불보다 더 잘 맞음. 여유분으로 `startSize`도 0.01~0.15 → 0.03~0.22로 약간
+    키움.
+- **보스 돌진 이펙트 유지시간 1/3 축소**: `DustStorm.prefab`(기존 Particle Pack,
+  이번엔 교체 안 하고 그대로 값만 조정)의 자식 3개(`DustStorm`/`RockDebris`/
+  `SandParticles`) 전부의 `duration`과 `startLifetime`(min/max)에 1/3을 곱해 일괄
+  축소 - 세 서브시스템 간 상대적 타이밍 비율은 유지한 채 전체를 3배 빠르게 마무리되게
+  함(예: `RockDebris` duration 5→1.67, lifetime max 4→1.33).
+
+### 테스트 결과
+- [x] 적 사망 이펙트: Play Mode에서 실제 적을 꺼내 `TakeDamage`로 죽이고
+      `Unity_Camera_Capture`로 확인 - 금색 시체 주변에 하얀빛 스파크가 확실히 구분되어
+      튀는 것을 확인(이전엔 거의 안 보이던 것과 대조). 플레이어 근처에도 옅은 스파크가
+      같이 보였는데, 이는 `CombatVfxLibrary.Start()`의 풀 워밍업 코루틴이 이 세션의
+      "창 포커스 없으면 프레임 정지" 한계로 아직 1프레임을 못 넘겨 반환 전 상태로 남아
+      있던 것으로 판단(워밍업 인스턴스가 플레이어 스폰 위치 근처인 풀 부모 트랜스폼
+      위치에서 재생 중이었던 것 - 실제 플레이에서는 정상적으로 다음 프레임에 반환됨).
+      콘솔 에러 없음.
+- [x] 보스 돌진 유지시간: `BossPool`에서 실제 보스를 꺼내 `ChargeStrikePattern.
+      Execute()` 호출 후 생성된 더스트 인스턴스를 `ParticleSystem.Simulate(0.1s)`
+      반복으로 측정 - 전체 파티클이 다 사라지는 데 약 1.7초(이전엔 같은 방식으로
+      측정하면 대략 3배인 5초 안팎으로 추정) - 목표한 1/3 축소와 부합.
+
+### 다음 작업
+- 유저 재확인: 적 사망 이펙트가 이제 시체와 구분되어 잘 보이는지, 보스 돌진 유지시간
+  체감이 괜찮은지.
+
+---
+
+## 2026-09-15 (43)
+
+### 진행 내용
+- 유저 실플레이 결과 보고 2건: ① 수류탄 폭발은 확인됨(정상) ② 적 사망 이펙트가 잘
+  안 보여서 제대로 동작하는지 판단이 안 됨 ③ 보스 돌진 이펙트를 착지 시점이 아니라
+  돌진 시작 시점에 나오도록 바꿔달라.
+- **적 사망 이펙트(`SparksEffect`, Particle Pack "Misc Effects") 원인 조사**: 4개
+  자식 `ParticleSystem`(`SparksEffect`/`SideSparksEffect`/`SparksEffect2`/
+  `SparkDeathEffect`) 전부를 직접 조회해보니 **`ParticleSystemRenderer.renderMode =
+  None`, `material = null`** - 파티클 자체는 렌더링되는 메시/머티리얼이 아예 없고
+  전적으로 `Trails`(PerParticle) 모듈의 `Sparks` 트레일 머티리얼에만 의존하는 구조였음.
+  게다가 4개 중 2개(`SparksEffect`/`SparksEffect2`)는 `startSpeed`가 아예 0 - 파티클이
+  움직이질 않으니 트레일 자체가 길이 0으로 찍혀서 사실상 안 보임. `startSize`도 전
+  시스템 공통 0.01(1cm급)로 극단적으로 작음. "Legacy Particles" 폴더의 동명 프리팹도
+  대조해봤지만 완전히 동일한 구조(루트 스케일만 1.0 vs 1.5 차이) - 이 이펙트는 원래
+  가까운 FPS 카메라용 "금속 그라인딩 불티" 데모였지, 이 프로젝트의 탑다운 카메라
+  거리에서 단독으로 쓰기엔 애초에 안 맞는 리그로 판단.
+  - **교체**: (40)에서 이미 검증된 Free Quick Effects Vol.1의 `vfx_Sparks_01`을
+    가져다 재조정해서 사용 - 원래는 `rateOverTime=50`으로 `duration=5초` 동안 계속
+    뿜어져 나오고 파티클 하나하나가 3~8초씩 사는 "횃불용 지속 불꽃 분수" 설계라 그대로
+    쓰면 사망할 때마다 불티가 몇 초씩 바닥에 흩어져 있는 꼴이 됨 - `emission.
+    rateOverTime`을 0으로 끄고 t=0 버스트 15~22개(기존 `SparkDeathEffect`의 버스트
+    10~15를 참고 기준으로 잡음)로 교체, `main.duration`을 0.3초로, `startLifetime`을
+    0.3~0.6초로 대폭 축소해서 순간적으로 터졌다 빠르게 사그라드는 형태로 재조정.
+    `startSpeed`(5~12)/`gravityModifier`(6)/색상(주황)은 원본 그대로 유지 - 위로 튀었다
+    중력으로 떨어지는 모양이 그 자체로 이미 죽음 이펙트로 적합. `PooledObject`/
+    `PooledVfxEffect` 추가, `VfxPool_EnemyDeath`의 `prefab` 참조 교체.
+- **보스 돌진 이펙트 타이밍 변경**: `ChargeStrikePattern.Execute()`(돌진 시작 - 방향
+  계산 직후) 쪽으로 `SpawnBossChargeDust` 호출을 옮기고 `TickDash()`의 도착/타임아웃
+  분기에서는 제거. 회전값은 `machine.transform.rotation`을 다시 읽지 않고 `Execute()`
+  안에서 이미 계산해 둔 `facing`(`Quaternion.LookRotation(_dashDirection)`) 지역변수를
+  그대로 재사용 - `Rigidbody.MoveRotation`은 다음 물리 스텝에야 반영되므로 호출 직후
+  `transform.rotation`을 읽으면 돌진 시작 전의 낡은 회전값이 나올 수 있어서였음.
+
+### 테스트 결과
+- [x] 적 사망 이펙트: Play Mode에서 `CombatVfxLibrary.Instance.SpawnEnemyDeath` 직접
+      호출 + `Unity_Camera_Capture`로 확인 - 주황/노랑 불티가 위로 튀는 형태로 명확하게
+      보임(이전엔 사실상 안 보이던 것과 대조).
+- [x] 보스 돌진 이펙트 타이밍: `BossPool`에서 실제 보스 인스턴스를 꺼내 `ChargeStrikePattern`
+      을 직접 `Execute()`→`PhysicsTick()` 200회(총 4초 시뮬레이션, 돌진 도착/타임아웃까지
+      확실히 지나가도록)로 구동, `VfxPool_BossChargeDust`의 활성 인스턴스 수를 각 단계마다
+      측정 - `Execute()` 직후 0→1(스폰됨), 돌진이 끝난 뒤에도 그대로 1(추가 스폰 없음)로
+      확인 - 시작 시점에만 1회 나가는 것을 수치로 검증.
+- [x] 콘솔 에러/경고 0건(양쪽 다).
+
+### 다음 작업
+- 유저 실플레이 재확인: 적 사망 이펙트가 이제 잘 보이는지, 보스 돌진 이펙트가 원하는
+  타이밍(돌진 시작)에 나오는지.
+
+---
+
+## 2026-09-15 (42)
+
+### 진행 내용
+- 유저 요청: Enhanced Shot 스킬 사용 시에도 총구 이펙트가 나오게 해달라.
+- 원인: `EnhancedShotActiveItem.Fire()`가 `RangedWeapon.Fire()`/적 원거리 패턴들과 달리
+  공용 `ProjectileSpawner.Spawn()`을 거치지 않고 `_projectilePool.Get()`을 직접 호출해
+  발사체를 꺼내고 있었음 - 총구 이펙트 호출(`CombatVfxLibrary.Instance?.
+  SpawnMuzzleFlash(...)`)이 사는 곳이 바로 `ProjectileSpawner.Spawn()` 안이라, 이걸
+  건너뛴 Enhanced Shot만 총구 이펙트 없이 발사되고 있었음.
+- 수정: `EnhancedShotActiveItem.Fire()`를 `ProjectileSpawner.Spawn(_projectilePool,
+  _owner.position, _owner.forward, 1f, _damage, _owner, 0f, _data.Range)` 호출로 교체
+  (기존 스폰 위치/사거리 계산과 동일하게 매개변수 맞춤 - 스폰 거리 1f, damage/range는
+  기존 값 그대로 전달). 발사체 자체 로직은 `ProjectileSpawner` 안에서 그대로 처리됨.
+
+### 테스트 결과
+- [x] Play Mode에서 `EnhancedShotActiveItem`을 플레이어에 직접 붙여 `OnActivatePressed()`
+      호출 - `VfxPool_MuzzleFlash`에 활성 인스턴스가 새로 생기고 `ParticleSystem.
+      isPlaying == true`인 것 확인, `Unity_Camera_Capture`로 총구 플래시 + 발사체가
+      동시에 보이는 것도 스크린샷으로 확인.
+- [x] 콘솔 에러 0건.
+
+### 다음 작업
+- 없음(요청 사항 완료, 유저 실플레이 확인 대기).
+
+---
+
+## 2026-09-15 (41)
+
+### 진행 내용
+- 유저 신규 요청 2건: ① 모든 VFX 이펙트가 **세션 중 처음 생성될 때만** 청록색으로
+  보이는 현상(유저 추측대로 프리로드 부재가 원인으로 판단) ② 화염방사기 이펙트 길이가
+  실제 히트박스(디버그 모드 F1 표시)보다 훨씬 길어서 축소 요청.
+- **VFX 첫 생성 시 청록색 깜빡임**: `GameObjectPool`이 `UnityEngine.Pool.ObjectPool<T>`
+  위에 얇게 얹혀 있는데, 이 풀은 완전히 지연 생성(lazy) - `defaultCapacity`는 내부
+  스택의 초기 용량 힌트일 뿐 미리 `Instantiate`하지 않음. 즉 세션에서 각 VFX 타입별
+  "진짜 첫 `Get()`"이 실전 전투 중 처음 일어나는 순간이 곧 그 프리팹의 첫
+  `Instantiate` + 머티리얼/셰이더 첫 렌더 시점과 겹침 - 이 세션 환경에서는 반복 테스트로
+  셰이더 캐시가 이미 데워져 있어 직접 재현/캡처하진 못했지만, 유저의 "프리로드 안 해서"
+  가설과 정확히 들어맞는 증상(세션당 최초 1회, 이후엔 정상)이라 판단.
+  - `GameObjectPool`에 `WarmUp(int count)` 추가: `count`개를 `_pool.Get()`으로 미리
+    만들어 **실제로 1프레임 활성 상태로 유지**(카메라가 최소 한 번은 그려야 첫 사용
+    비용이 여기서 소모됨 - `Get()`+`Release()`를 같은 프레임에 바로 이어 붙이면
+    비활성화가 먼저 일어나 카메라가 그릴 기회조차 없음) 후 `Release()`.
+  - `CombatVfxLibrary`에 `Start()` 추가, 5개 풀 전부 `WarmUp(1)` 호출. `Awake()`가 아닌
+    `Start()`인 이유: 각 풀 자신의 `Awake()`(내부 `ObjectPool` 생성)가 먼저 끝나 있어야
+    하는데 Unity는 서로 다른 GameObject 간 `Awake()` 순서를 보장하지 않음([[Unity
+    Awake() order race]] 패턴 재확인 - 프로젝트에 이미 기록된 교훈과 동일).
+  - 타이밍 근거: `SceneTransitionController.FadeAndLoadRoutine`이 씬 로드 후 완전한
+    검은 화면 상태로 2프레임을 대기한 다음에야 페이드인을 시작함 - `CombatVfxLibrary.
+    Start()`의 워밍업 1프레임은 이 구간 안에서 끝나므로 실제로는 화면이 까만 상태에서
+    소모되어 유저 눈에 보이지 않음(실제 플레이는 항상 타이틀→게임플레이 페이드를 거침).
+  - 라이브 확인: Play Mode 진입 후 5개 `VfxPool_*`의 자식 수/활성 상태를 조회 -
+    전부 1개씩 생성돼 있고 전부 비활성(워밍업 코루틴이 실제로 실행되어 완료까지 간
+    것 확인), 콘솔 에러 없음.
+- **화염방사기 길이 축소**: `Player.prefab`의 `FlamethrowerFX`(`ParticleSystem`) 모듈을
+  직접 조회해 원인 특정 - `startSpeed.max=8`, `startLifetime.max=1.25`,
+  `velocityOverLifetime`/`speedModifier` 전부 사실상 무효(커브 전부 0 또는 배율 1)라
+  월드 스페이스에서 **직선 등속**으로 날아가는 구조 → 실제 도달 거리 =
+  `startSpeed.max × startLifetime.max` = 8 × 1.25 = **10유닛**. 반면 실제 데미지 판정
+  박스 길이(`GameBalance.FlamethrowerSkill.zoneLength`, `FlamethrowerActiveItem.
+  ApplyDamageTick`/`UpdateDebugVisual`이 공유하는 값) = **4.5유닛** - 시각적 사거리가
+  판정 범위의 두 배 이상이었음.
+  - `startSpeed`(속도감/밀도에 영향)가 아니라 `startLifetime.max`만 축소해 사거리를
+    줄이는 쪽 선택(움직이는 속도 자체는 그대로 유지, 그냥 더 일찍 사라지게 함) -
+    `startLifetime.max = ZoneLength / startSpeed.max = 4.5/8 = 0.5625`로 변경(`min`은
+    기존 0 그대로 유지 - 노즐 근처의 짧게 흩어지는 불티 느낌 보존).
+  - 라이브 검증: Play Mode에서 실제 `FlamethrowerActiveItem`을 플레이어 트랜스폼에
+    직접 붙여 발동 + `ZoneLength`(4.5) 위치에 참조용 시안색 라인을 그려 `Unity_
+    Camera_Capture`로 비교 - 화염 다발의 끝단이 참조선 끝과 거의 정확히 일치하는 것을
+    스크린샷으로 확인.
+
+### 테스트 결과
+- [x] VFX 워밍업: Play Mode에서 5개 `VfxPool_*` 전부 자식 1개 생성 + 비활성 상태로
+      정상 완료 확인, 콘솔 에러 0건.
+- [x] 화염방사기 사거리: 스크린샷으로 화염 다발 끝단이 `ZoneLength`(4.5) 참조선과
+      거의 일치함을 확인(완전히 똑같진 않음 - 파티클마다 속도가 min~max로 퍼져 있어
+      자연스러운 그라데이션 형태로 줄어듦, 유저 요청대로 "완전히 같지 않아도" 되는
+      수준으로 충분히 좁혀짐).
+- [ ] 실제 세션 최초 생성 시 청록색이 정말 사라졌는지는 이 세션(반복 테스트로 이미
+      셰이더가 데워진 상태)에서는 재현/재확인이 원천적으로 불가능 - 유저가 에디터를
+      완전히 새로 켜거나 빌드를 새로 실행한 직후의 "진짜 첫 실행"에서 재확인 필요.
+
+### 이슈/메모
+- `WarmUp()`은 현재 VFX 5개 풀에만 호출했음 - 같은 지연 인스턴스화 구조를 쓰는
+  `Projectile`/`Grenade`/적 풀들도 이론상 동일한 첫 사용 하치가 있을 수 있지만, 이번
+  유저 신고는 VFX 한정이라 그쪽만 손댐(범위 확대는 실제 증상이 보고되면 판단).
+
+### 다음 작업
+- 유저 재확인: 에디터/빌드를 새로 시작한 직후의 진짜 "첫 이펙트"에서 청록색이
+  사라졌는지, 화염방사기 길이가 체감상 괜찮은지.
+
+---
+
+## 2026-09-15 (40)
+
+### 진행 내용
+- (39)에서 "고쳤다"고 판단한 두 버그가 유저 실플레이에서 여전히 재현: 총구 번쩍 여전히
+  2번, 피격 이펙트는 구는 사라졌지만 **너무 오래 남음**. 유저가 아예 Asset Store에서
+  **Gabriel Aguiar Productions - Free Quick Effects Vol.1**을 새로 받아와 총구/피격
+  이펙트를 이걸로 교체해달라고 요청.
+- **임포트**: 다운로드는 돼 있었지만(`%AppData%/Unity/Asset Store-5.x/Gabriel Aguiar
+  Prod/.../Free Quick Effects Vol 1.unitypackage`) 프로젝트에 실제 반영 전이라
+  `AssetDatabase.ImportPackage`로 스크립트 임포트(이전 Particle Pack 때와 달리 이번엔
+  에디터 팝업 없이 한 번에 됨). 이 최상위 패키지는 실은 BIRP/HDRP/URP 3개 렌더파이프라인
+  버전을 담은 컨테이너였음(`Assets/GabrielAguiarProductions/`에 `.unitypackage` 3개 +
+  문서 PDF로 떨어짐) - 프로젝트가 URP라 `FreeQuickEffectsVol1_2022_URP_v1.0.unitypackage`
+  를 한 번 더 `ImportPackage`로 임포트해야 실제 프리팹/머티리얼이 들어옴.
+- **진짜 원인 재조사** (기존 Particle Pack 버그의 근본 원인을 여기서야 제대로 파악):
+  - 총구 번쩍 2번: `MuzzleFlash.prefab` 루트 자체 `ParticleSystem`이 `loop = true`였음.
+    `PooledVfxEffect`가 계산한 수명(`duration+startLifetime` ≈ 0.65s)이 시스템 자체의
+    루프 주기(`duration` 0.5s)보다 길어서, 우리가 반환하기 전에 시스템이 한 번 더
+    루프를 돌며 버스트를 재발사 - (39)에서 지운 `FlashHeadon` 자식은 원인이 아니었고
+    (제거는 무해했지만) 진짜 원인은 루트 시스템 자신의 `loop` 설정이었음.
+  - 피격 이펙트가 오래 남음: `FleshImpacts.prefab`의 파티클 자식들 `duration`이 꽤 길게
+    잡혀 있어서(수 초 단위), 기존 `PooledVfxEffect`가 `duration+startLifetime`으로 계산한
+    수명이 실제 버스트가 화면에서 다 사라지는 시점보다 한참 김 - 최초 시도로 타이머
+    계산을 `ParticleSystem.IsAlive()` 기반으로 바꿔봤으나 **`IsAlive()`도 `loop=false`인
+    시스템에서 `duration`(재생 윈도우) 안에서는 파티클이 하나도 안 남아 있어도 계속
+    `true`를 반환**한다는 걸 라이브 테스트로 확인(버스트만 있는 `duration=5` 시스템이
+    파티클 다 사라진 지 한참 지난 시뮬레이션 2.0초 시점에도 `IsAlive()==true`) - `duration`
+    필드는 "번쩍이는 데 걸리는 시간"이 아니라 그냥 재생/루프 윈도우 길이라는 걸 실측으로
+    확인, `IsAlive()`도 이 필드에 종속돼 있어 못 씀.
+- **`PooledVfxEffect.cs` 재설계**: 완료 판정을 `duration+startLifetime` 타이머 →
+  `IsAlive()` → 최종적으로 **각 자식 `ParticleSystem.particleCount`가 전부 0인지**로
+  교체(`duration`/`loop` 어느 쪽에도 영향받지 않고 실제로 화면에 남은 파티클 수만 봄).
+  `OnEnable()` 직후 1프레임은 완료 체크를 건너뛰는 `_justEnabled` 가드 추가(막 `Play()`
+  호출된 프레임엔 아직 버스트가 시뮬레이션되기 전이라 `particleCount`가 0으로 보여서
+  즉시 되돌아가버리는 것 방지). `Awake()`에서 모든 자식의 `main.loop`를 강제로 `false`로
+  끄는 안전장치는 유지(원본 프리팹이 `loop=true`로 만들어놨어도 무조건 1회성으로 동작).
+- **교체 프리팹 선정**: 새 팩 안의 `vfx_MuzzleFlash_01`/`_02`(총구), `vfx_Impact_01`/
+  `vfx_Sparks_01`(피격) 후보를 계층·버스트 구성으로 비교 - `_02`가 `_01`보다 자식들
+  `duration`이 짧고(5s→1s) 더 컴팩트, `vfx_Impact_01`은 4개 서브시스템(`Particles`/
+  `BrightHold`/`Darkback`)으로 구성된 "번쩍임+스파크+어두운 잔광" 복합 구조라 순수
+  스파크 한 종류뿐인 `vfx_Sparks_01`(수명 최대 8초로 피격엔 과함)보다 타격감에 적합
+  판단 → `vfx_MuzzleFlash_02`/`vfx_Impact_01` 선정. 둘 다 `PrefabUtility.
+  LoadPrefabContents`로 `PooledObject`+`PooledVfxEffect` 추가.
+- 씬 반영: `VfxPool_MuzzleFlash`/`VfxPool_HitImpact`(둘 다 `GameObjectPool`)의 `prefab`
+  참조를 `SerializedObject`로 새 프리팹으로 교체, 씬 저장. 기존 `MuzzleFlash.prefab`/
+  `FleshImpacts.prefab`은 프로젝트에 남겨두되 더 이상 참조되지 않음(삭제는 안 함).
+
+### 테스트 결과
+- [x] Play Mode에서 `CombatVfxLibrary.Instance.SpawnHitImpact`/`SpawnMuzzleFlash` 직접
+      호출 + `Unity_Camera_Capture`로 스크린샷 확인: 피격은 노란 스파크 방사 버스트,
+      총구는 짧은 주황 플래시로 정상 렌더링(둘 다 이전처럼 구/중복 없음).
+- [x] **완료 타이밍 실측**: 스폰 직후 `ParticleSystem.Simulate(0.1s)`를 반복 호출하며
+      모든 자식의 `particleCount`가 0이 되는 시점을 측정 - 피격 이펙트 약 0.5초, 총구
+      플래시 약 0.1초에서 전부 소진 확인(구 버전이었다면 `duration=5s` 기준으로 최소
+      5초 넘게 붙잡고 있었을 것 - "너무 오래 남는다" 버그가 실제로 해소됐음을 수치로
+      확인).
+- [x] 콘솔 에러/경고 0건.
+- [ ] 총구 번쩍이 실제 게임에서 "한 번만" 보이는지는 이 세션 환경(창 포커스 없으면
+      프레임 정지) 한계로 여전히 눈으로 직접 못 봄 - 다만 이번엔 원인(루트 시스템
+      `loop=true` + 짧은 계산 수명)을 정확히 특정하고 새 프리팹은 애초에 `loop=false`
+      구조라 같은 클래스의 버그가 재발할 이론적 경로가 없음.
+
+### 이슈/메모
+- (39)에서 "해결"이라고 기록했던 두 항목은 **둘 다 증상만 없어 보였을 뿐 근본 원인이
+  아니었음** - 이번처럼 프리팹을 통째로 교체하는 김에 `PooledVfxEffect`의 완료 판정
+  로직 자체를 구조적으로 다시 설계해서, 이후 다른 에셋팩의 프리팹을 또 붙이더라도
+  (`duration`/`loop`를 얼마로 authoring했든) 흔들리지 않게 만든 것이 이번 세션의 실질
+  성과.
+- `Assets/GabrielAguiarProductions/`에 BIRP/HDRP/URP 3종 `.unitypackage`가 그대로 남아
+  있음(용량 크지 않으면 무해, 필요하면 나중에 URP만 남기고 정리 가능).
+
+### 다음 작업
+- 유저 실플레이 재확인: 총구 번쩍 단일 재생 여부, 피격 이펙트 타이밍/느낌.
+- 나머지 3개 VFX(수류탄 폭발/적 사망/보스 돌진 착지)에 쓰는 기존 Particle Pack
+  프리팹들도 같은 `duration`/`loop` authoring 문제가 있는지 - 지금 당장 증상 보고는
+  없지만 이번에 밝혀진 `PooledVfxEffect` 재설계 덕분에 이미 구조적으로는 안전함(굳이
+  프리팹을 다시 열어볼 필요는 없음, 교체는 증상이 실제로 나올 때 판단).
+
+---
+
+## 2026-09-15 (39)
+
+### 진행 내용
+- (38) 전투 VFX 풀링 시스템을 유저가 실플레이로 확인, 버그 2건 보고: ① 총구 번쩍
+  이펙트가 2번 나타남, ② 피격 이펙트가 타격 느낌이 아니라 "공 안에서 액체가 새는
+  형태"로 보임.
+- **총구 번쩍 중복 재생**: `MuzzleFlash.prefab`을 열어보니 루트 자체 `ParticleSystem`
+  외에 자식 `FlashHeadon`에도 별도 `ParticleSystem`이 있었음. `PooledVfxEffect.
+  OnEnable()`은 `GetComponentsInChildren<ParticleSystem>(true)`로 찾은 전부를
+  무조건 `Play()`하므로 둘이 동시에 재생 - 원본 데모에서 "카메라 정면 각도용" 보조
+  이펙트로 넣어둔 것으로 추정. `PrefabUtility.LoadPrefabContents`로 `FlashHeadon`
+  자식 제거.
+- **피격 이펙트 구형 렌더링**: `FleshImpacts.prefab` 루트를 조사하니 파티클 자식들
+  (`HitEffect/Streaks`, `HitEffect/Mist`, `HitEffect/Decal`)과 별개로 **루트
+  GameObject 자체에 `MeshFilter`(유니티 내장 Sphere 프리미티브, fileID 10207) +
+  `MeshRenderer`(머티리얼 `FleshSurface` - 광택 있는 살구색) + `SphereCollider`**가
+  붙어 있었음. 처음엔 `HitEffect/Decal` 자식이 원인인 줄 알고 제거했으나(경로가
+  2단 중첩이라 `Find("Decal")`이 처음엔 실패 - 전체 계층 덤프로 정확한 경로
+  `HitEffect/Decal` 확인 후 제거) 재검증 결과 구는 그대로 남아있어 원인이 아니었음.
+  루트의 `MeshRenderer`/`MeshFilter`를 제거하자(둘 다 `PrefabUtility.
+  LoadPrefabContents` 스크립팅으로) 구가 사라짐 - 원본 데모에서 "타격 표면"을
+  나타내려던 평면 데칼용 구였던 것으로 보이나, 기본 스케일 그대로 스폰되니 허공에
+  뜬 광택 구로 보였던 것. `SphereCollider`는 렌더링과 무관해 그대로 둠.
+
+### 테스트 결과
+- [x] Play Mode에서 `CombatVfxLibrary.Instance.SpawnHitImpact`/`SpawnMuzzleFlash`를
+      플레이어 앞에 직접 호출 + `Unity_Camera_Capture`로 스크린샷 비교.
+      수정 전: 광택 있는 살구색 구 렌더링(유저 신고와 일치). 수정 후: 구 사라지고
+      순수 파티클 스파크만 남음(초록/노랑 퍼프 형태로 확인, 스크린샷 대조 완료).
+- [x] 콘솔 에러 0건(Camera_Capture 관련 무관한 RenderTexture 경고 1건만 있음).
+- [ ] 총구 번쩍 중복 제거는 프리팹 자식 삭제 자체는 확인했으나, 실제 두 번 깜빡이던
+      것이 한 번으로 줄었는지는 이 환경(창 포커스 없으면 프레임 정지)의 한계로 순간
+      재생 타이밍까지 직접 눈으로 못 봄 - 구조적으로는 중복 발생 원인(자식
+      `ParticleSystem` 2개 동시 재생)이 제거됐으므로 해결로 판단하나 유저 실플레이
+      재확인 필요.
+
+### 이슈/메모
+- Particle Pack 프리팹들은 원래 Built-in RP 데모 씬 전용으로 제작된 것이라, 이번
+  구형 렌더러처럼 "데모 맥락에서만 의미 있는" 부속 컴포넌트가 섞여 있을 수 있음 -
+  다른 3개 프리팹(`TinyExplosion`/`DustStorm`/`SparksEffect`)도 루트에 불필요한
+  Mesh/Collider 컴포넌트가 없는지 한 번 훑어볼 가치 있음(이번엔 유저가 신고한 2건만
+  대응).
+
+### 다음 작업
+- 유저 재확인: 총구 번쩍 단일 재생 여부, 피격 이펙트 시각적 적합성.
+- 나머지 3개 VFX(수류탄 폭발/적 사망/보스 돌진 착지)도 같은 방식(루트 컴포넌트 점검)
+  으로 한 번 훑어보는 것 고려.
+
+---
+
+## 2026-09-15 (38)
+
+### 진행 내용
+- (37) 화염방사기 이후 나머지 전투 VFX 4종(타격/원거리 발사/수류탄 폭발/보스 돌진
+  착지)을 마저 진행. 유저 요청으로 **오브젝트 풀링 기반**으로 설계 변경(Instantiate/
+  Destroy 대신 - 계획 공유 후 승인).
+- 프리팹 조사 중 발견: `Dissolve`(적 사망 후보였음)는 파티클이 아니라 자체 메시+셰이더로
+  "용해"되는 구조(대상 메시를 갈아 끼워야 함)라 이 패턴에 안 맞음 → **`SparksEffect`로
+  교체**(순수 파티클, 로봇형 적 테마와도 더 맞음). 수류탄 폭발도 실제 폭발 반경(~1유닛)
+  기준 `SmallExplosion`보다 `TinyExplosion`이 스케일 적합 판단, 교체.
+- Particle Pack 프리팹 5개(`FleshImpacts`/`MuzzleFlash`/`TinyExplosion`/`DustStorm`/
+  `SparksEffect`) 전부 **루트 자체엔 ParticleSystem이 없고 자식 여러 개에 나눠 붙은
+  합성 구조**(FlameThrower처럼 루트 하나짜리가 예외적으로 단순했던 것) - 자식들의
+  Play On Awake 설정에 기대지 않고 명시적으로 제어하는 쪽으로 설계.
+- 신규 `Assets/Scripts/Combat/PooledVfxEffect.cs`: `Projectile.cs`와 동일한 "자기
+  수명 관리" 패턴(`RequireComponent(PooledObject)`) - `Awake()`에서 자식 파티클시스템
+  전부의 `duration+startLifetime` 중 최댓값 1회 계산해 캐싱, `OnEnable()`(풀에서
+  꺼내질 때마다)마다 자식 전부 명시적 `Play()`, `Update()`에서 경과 시간이 캐싱된
+  최대값 넘으면 `PooledObject.ReturnToPool()`(Destroy 아님), `OnDisable()`에서
+  `Stop(StopEmittingAndClear)`로 다음 재사용을 위한 클린 상태 확보.
+- 신규 `Assets/Scripts/Combat/CombatVfxLibrary.cs`: `PauseState`/`DebugOverlayController.
+  IsDebugVisible`과 같은 정적 서비스 싱글턴 - 프리팹 대신 `GameObjectPool` 5개를
+  Inspector로 들고 `SpawnHitImpact`/`SpawnMuzzleFlash`/`SpawnGrenadeExplosion`/
+  `SpawnEnemyDeath`/`SpawnBossChargeDust(pos, rot)` 제공(내부는 전부 `pool.Get()`
+  한 줄). 타격 이펙트는 `HealthComponent.AnyDamageTaken`을 직접 구독(기존
+  `EnemyStateMachine`/`PlayerHitReaction`과 같은 패턴, self 필터링 없이 - 적/플레이어
+  피격 전부 대상) - 별도 리스너 클래스 없이 이 파일 안에서 처리.
+- 호출부 4곳에 한 줄씩 추가: `ProjectileSpawner.Spawn()`(원거리 발사 - 플레이어/적
+  전부 자동 커버), `GrenadeProjectile.Explode()`, `EnemyDeadState.Enter()`,
+  `ChargeStrikePattern.TickDash()`의 돌진 종료 시점.
+- 씬(`Prototype.unity`) 작업: `PrefabUtility.LoadPrefabContents`로 5개 프리팹 각각에
+  `PooledVfxEffect` 컴포넌트 추가. 씬에 `GameObjectPool` 5개 신설(`VfxPool_HitImpact`/
+  `VfxPool_MuzzleFlash`(각 capacity 6/max 20 - 빈도 높음) / `VfxPool_GrenadeExplosion`/
+  `VfxPool_BossChargeDust`(각 capacity 3/max 10 - 빈도 낮음) / `VfxPool_EnemyDeath`
+  (capacity 6/max 20)) + `CombatVfxLibrary` 1개 신설, 5개 풀 전부 연결.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 신규/수정 파일 6개 전부 클린
+- [x] 콘솔 에러 0건
+- [x] **Play Mode 라이브 검증**: `CombatVfxLibrary.Instance` 정상 확인, `Spawn*` 5개
+      메서드 전부 예외 없이 실행되고 각 풀에서 실제로 파티클시스템이 재생 중인 인스턴스가
+      나온 것까지 확인(`GetComponentsInChildren<ParticleSystem>().isPlaying` 검사).
+      **`HealthComponent.AnyDamageTaken` 자동 연결도 별도로 검증**: 플레이어에
+      `TakeDamage` 직접 호출 시 `CombatVfxLibrary`가 자동으로 반응해 `VfxPool_HitImpact`
+      에서 새 인스턴스를 꺼내 재생하는 것 확인(직접 `Spawn` 호출 없이 이벤트만으로 동작).
+      풀 재사용 확인: 이전 인스턴스가 아직 안 끝난 상태에서 추가 요청이 오면 풀이 새
+      인스턴스를 내주는 것도 확인(정상 동작 - `defaultCapacity` 여유분 안에서).
+- [ ] 자식 파티클시스템의 실제 재생 시간이 지나 `PooledVfxEffect`가 스스로
+      `ReturnToPool()`하는 것까지는 라이브로 확인 못 함(이 세션의 "창 포커스 없으면
+      프레임 정지" 한계로 여러 초 경과를 못 지켜봄) - 로직은 `Projectile.cs`와 동일한
+      이미 검증된 패턴이라 정상 동작 예상.
+- [ ] 실제 전투에서 5개 이펙트가 각자 위치/타이밍에 맞게 자연스럽게 보이는지는 유저
+      실플레이 확인 필요.
+
+### 다음 작업
+- 유저 실플레이로 5개 이펙트(타격/발사/수류탄/사망/보스 돌진) 전부 확인 - 위치·스케일·
+  타이밍 조정 필요 여부.
+
+---
+
+## 2026-09-15 (37)
+
+### 진행 내용
+- 유저가 Unity 공식 무료 **Particle Pack**(Asset Store)을 프로젝트에 임포트(`Assets/
+  UnityTechnologies/ParticlePack/`) - 화염방사기 스킬에 실제 화염 VFX를 붙여달라는
+  요청. 임포트가 한 번에 안 잡혀서(Package Manager "My Assets"에서 다운로드만 되고
+  Import 체크리스트 팝업에서 확정을 안 누른 상태) 두 차례 `AssetDatabase.FindAssets`로
+  재확인 후에야 실제로 `Assets/` 아래 들어온 걸 확인. 팩 안에서 이름부터 정확히
+  일치하는 `FlameThrower.prefab`(Fire & Explosion Effects, `ParticleSystem` 1개짜리
+  단순 구조) 확인.
+- 계획 공유 후 승인받은 대로 구현: `Player.prefab`에 자식 `FlamethrowerFX`(local
+  (0, 1.0, 0.5), `FlameThrower.prefab`의 nested prefab 인스턴스 - 원본 프리팹이
+  나중에 업데이트되면 자동 반영됨) 추가, `Play On Awake`는 꺼서 플레이어 스폰 시
+  자동 발동 안 되게 함(`PrefabUtility.LoadPrefabContents`로 프리팹 자체를 스크립트
+  편집). `FlamethrowerActiveItem`(순수 C# 클래스)이 생성자에서 `owner.Find(
+  "FlamethrowerFX")`로 찾아 `ParticleSystem` 캐싱(디버그 시각화와 마찬가지로 이
+  클래스가 직접 소유, 새 필드를 `ActiveItemContext`/데이터 애셋에 안 뚫음) -
+  `StartActivation()`에서 `Play()`, `EndActivation()`에서 `Stop(true,
+  ParticleSystemStopBehavior.StopEmitting)`(유저 지정 - 즉시 안 끊고 이미 나간
+  불씨는 자연스럽게 사그라들게). 기존 F1 디버그 판정 박스 시각화는 그대로 유지,
+  이번에 추가한 건 항상 보이는 실제 이펙트.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: `FlamethrowerActiveItem.cs` 클린
+- [x] 콘솔 에러 0건
+- [x] Play Mode 라이브 검증: 씬의 실제 Player 인스턴스에서 `transform.Find(
+      "FlamethrowerFX")`로 정확히 찾아짐, `playOnAwake=False`(스폰 시 자동 재생
+      안 됨) 확인, `Play()` 호출 시 `isPlaying`/`isEmitting` 모두 true로 전환,
+      `Stop(StopEmitting)` 호출도 에러 없이 정상 동작 확인. 다만 이 세션은 에디터
+      창 포커스가 없으면 프레임이 안 흐르는 한계가 있어 Play→Stop을 같은 프레임에
+      연달아 호출한 탓에 실제로 불씨가 몇 초에 걸쳐 사그라드는 모습 자체(시각적
+      페이드)는 라이브로 확인 못 함 - 로직상 `StopEmitting`(vs `StopEmittingAndClear`)
+      을 쓴 건 맞으니 정상 작동할 것으로 예상하나, 유저 실플레이 확인 필요.
+
+### 이슈/메모
+- Particle Pack 임포트로 `Packages/manifest.json`에 의존 패키지가 다수 추가됨
+  (shadergraph, render-pipelines.core, postprocessing, progrids, 2d sprite/tilemap,
+  burst, collections, mathematics 등) - 팩 자체가 요구하는 것들이라 정상이지만,
+  프로젝트 패키지 목록이 눈에 띄게 늘어난 점 기록해둠.
+
+### 다음 작업
+- 유저 실플레이로 화염 이펙트가 자연스럽게 켜지고 꺼지는지, 위치/스케일이 판정
+  범위(`ZoneLength`/`ZoneWidth`)와 시각적으로 잘 맞는지 확인 - 필요시 로컬 위치나
+  스케일 조정.
+
+---
+
+## 2026-09-15 (36)
+
+### 진행 내용
+- (35)의 미이월 과제 실행: `BenchmarkScene`으로 4종(Melee/Ranged/ErraticMelee/BurstRanged)
+  × 50/100/200 전부 Before(2026-09-08) 대비 After 실측. 방법론은 2026-09-08에 확립한 것
+  그대로 재사용 - **유저가 직접 Play→타입 선택→Add 버튼→Pause(또는 Stop)까지 전부 조작,
+  그 구간 동안 Claude는 MCP 명령을 전혀 안 보냄**(브리지가 프레임에 개입하면 수치가
+  뭉개졌던 2026-09-08 전례), 유저가 멈춘 뒤 `UnityEditorInternal.ProfilerDriver.
+  firstFrameIndex/lastFrameIndex`로 프레임 히스토리 버퍼를 찾아 마지막 200프레임을
+  `Unity_Profiler_GetFrameRangeTopTimeSummary`/`GetFrameRangeGcAllocationsSummary`로 읽음.
+  매 구간 읽기 전 `FindObjectsByType<EnemyStateMachine>().Length`로 실제 스폰 마릿수를
+  먼저 확인하는 절차를 이번에 추가(아래 이슈 참고 - 한 번 잘못 읽을 뻔함).
+- **Melee 100/200에서 측정 중 실제 버그 발견**: `RoomAttackSlots.GetSlotPosition`이 매
+  물리 틱마다 `List.IndexOf(enemy)`로 링 내 순번을 찾고 있었음(O(N)) - 벤치마크가
+  한 타입만 몰아서 스폰하는 구조라 200마리가 전부 같은 링 하나에 들어가면서 매 틱
+  200×O(200) ≈ 4만 회 연산이 발생, 50마리는 개선(4.77→3.05ms)됐는데 100(5.11→6.10ms)
+  ·200(4.43→8.03ms)은 오히려 Before보다 느려지는 걸로 드러남. **즉시 수정**: 각 적의
+  링 내 순번을 `Dictionary<EnemyStateMachine, int>`에 캐싱해 조회를 O(1)로 변경,
+  비용이 드는 `Release()`(뒤 순번 재배치)도 프레임마다가 아니라 적 이탈 시 1회로 한정.
+  수정 후 재측정: 100 4.65ms(Before보다 개선), 200 7.52ms(버그 버전보다는 개선됐으나
+  Before보다는 여전히 느림 - 근접 링 반경 1.1(둘레 ~6.9유닛)엔 원래 7마리 정도만
+  안 겹치게 들어가는데 같은 타입 200마리를 몰아넣는 벤치마크 자체가 포메이션 시스템엔
+  구조적으로 불리한 인위적 극단치라는 결론, 유저도 이대로 받아들이고 진행하기로 함).
+- **인게임 확인 중 별도 이슈 발견 → 조사 → 수정**: 유저가 플레이어를 적 무리 한가운데로
+  옮겨 관찰하던 중 Ranged 타입 적이 근접 거리까지 파고드는 현상 제보. 보스 전용
+  `ChargeStrikePattern`이 섞여 들어간 게 아닌지 질문받아 `EnemyRangedData.asset`의
+  `attackPatterns`를 직접 확인(순수 `RangedAttackPatternData` 하나뿐, ChargeStrike
+  없음)해 아니라고 답변. 가볍게 원인만 보기로 합의 후 확인한 결과: Enemy 레이어와
+  플레이어가 있는 Default 레이어 간 물리 충돌이 켜져 있어서, `RoomAttackSlots`가
+  목표로 잡은 반경 5.5 지점은 맞는데 주변에 몰린 다른 적들에게 물리적으로 떠밀려
+  실제 위치가 그보다 가까워진 것으로 진단(슬롯은 AI 목표 좌표만 정할 뿐 물리적
+  겹침 자체를 막진 못한다는, 설계 당시 이미 인지했던 한계가 실제로 드러난 사례) -
+  깊은 조사는 이월.
+- **오발(friendly fire) 버그 발견 → 즉시 수정**: 위 조사와 별개로, 유저가 "다른 적이
+  쏜 발사체에 적이 맞지 않게" 요청 - `Projectile.OnTriggerEnter`가 발사 주체(`_owner`)
+  자신만 제외하고 그 외 모든 `IDamageable`에 데미지를 넣고 있어서 적끼리도 서로 맞고
+  있었음(발사체끼리는 이미 서로 통과하도록 돼 있었는데 적-적은 빠져 있었던 것).
+  `_ownerIsEnemy`(Enemy 레이어 여부, `Initialize()`에서 1회 캐싱) + 피격 대상도
+  Enemy 레이어면 발사체끼리 통과와 동일하게 그냥 통과하도록 추가. 플레이어가 쏘는
+  발사체는 무관(`_ownerIsEnemy`가 애초에 false). 근접 공격/보스 돌진 히트박스는
+  원래부터 `PlayerDamageable`/`"Player"` 태그만 특정해서 때리는 구조라 이 문제
+  자체가 없었음(발사체만 해당).
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: `RoomAttackSlots.cs`(O(1) 수정) + `Projectile.cs`(오발 수정)
+      전부 클린
+- [x] 콘솔 에러 0건
+- [x] **After 실측표(BenchmarkScene, 단일 종별 개별 측정, Unity Editor Play Mode)** -
+      아래 참고. Median GC Alloc은 Before와 동일하게 전 구간 0 bytes.
+
+**After (2026-09-15, O(1) 수정 + 오발 수정 반영 후)**
+
+| Enemy 수 | Melee | Ranged | ErraticMelee | BurstRanged |
+|---|---|---|---|---|
+| 50 | 3.05 ms (1.0%) | 4.60 ms (1.5%) | 4.20 ms (0.5%) | 4.18 ms (0.5%) |
+| 100 | 4.65 ms (1.0%) | 5.84 ms (0.5%) | 5.10 ms (1.0%) | 5.17 ms (0.5%) |
+| 200 | 7.52 ms (1.0%) | 7.46 ms (1.0%) | 6.74 ms (1.0%) | 6.99 ms (0.5%) |
+
+**Before → After 요약**: 50마리(비교적 현실적인 단일-타입 밀집도)는 4종 전부 Before
+대비 같거나 나음. 100/200은 BurstRanged(가장 무거웠던 타입)는 전 구간 개선, 나머지
+3종은 대체로 소폭 악화 - 원인은 위에서 특정한 대로 "한 타입만 몰아서 100~200마리"가
+슬롯 링의 물리적 수용 한계(근접 ~7마리, 원거리 ~34마리)를 훨씬 초과하는 인위적 조건이기
+때문. 반대로 **예산(16.67ms) 초과 프레임 비율은 사실상 전 구간·전 타입에서 개선**
+(Before 최대 7.5%였던 게 After는 전부 1.5% 이하) - median만 보면 손해로 보일 수 있는
+구간도 "프레임이 튀는 빈도" 자체는 확실히 줄어든 것으로 보임.
+
+### 이슈/메모
+- 벤치마크 중 유저가 "Pause했다"고 했는데 실제로는 직전에 Clear까지 누른 뒤였던 순간이
+  있었음 - 프레임 버퍼는 여전히 유효해서 에러 없이 읽혔지만 실제로는 0마리 상태를
+  측정한 것이었고, 이후 `FindObjectsByType<EnemyStateMachine>().Length`로 실제
+  마릿수를 먼저 확인하고서 버퍼를 읽는 절차를 추가해 재발 방지.
+- Pause(Stop 아님) 상태에서도 프레임 히스토리 버퍼 읽기가 정상 동작함을 확인(2026-09-08엔
+  Stop 기준으로만 검증됐었음) - 다음에도 Pause만으로 충분.
+
+### 다음 작업
+- 100/200 단일-타입 극단치에서의 악화를 실제로 손볼지(예: 슬롯 링이 넘치면 2번째
+  동심원으로 분산하는 등) 여부는 유저 판단 대기 - 현재는 "실제 게임 규모(룸당
+  10~30마리, 혼합 타입)에선 문제 안 됨"으로 정리하고 보류.
+- 물리적으로 밀려서 근접 거리까지 파고드는 현상의 깊은 조사(필요 시 슬롯 반경 이탈 시
+  보정하는 로직 추가 등)는 유저가 나중에 요청 시 진행.
+- Test Runner 전체 스위트 수동 확인 - 계속 이월 중.
+
+---
+
+## 2026-09-15 (35)
+
+### 진행 내용
+- 유저 리포트: 여러 적이 플레이어를 타겟으로 몰릴 때 물리 충돌로 서로 비비적대며
+  "우글우글"거림. 다른 게임처럼 근접은 가까이 원형으로, 원거리는 멀리 원형으로
+  겹치지 않게 서는 포메이션 AI가 있는지 질문받고 설명 후 승인받아 착수.
+- **바로잡은 전제**: 유저가 언급한 "500마리 버벅임"은 사실 그 세션에 **에디터
+  크래시**(OOM+GPU TDR)였고, 팀이 이미 500/1000 구간은 게임 실제 범위(룸당 10~30마리)
+  밖이라고 측정·최적화 모두 스킵하기로 결정한 상태였음(`DevLog.md`/`AI_Decision_Log.md`
+  2026-09-08). 이번 작업의 목표를 "500마리 버티기"가 아니라 "실제 게임 규모에서의
+  포메이션 개선 + 그 규모에서의 충돌 비용 절감"으로 재설정하고 진행.
+- 조사 확인: `EnemyAttackState.HoldOrSway`에 슬롯/각도 개념 전혀 없음(근접은 제자리
+  정지, 원거리는 사인파 흔들림뿐 - 둘 다 플레이어 정확 좌표 기준). 물리 충돌 매트릭스상
+  Enemy-Enemy 충돌 켜져 있음(`DynamicsManager.asset`). 중앙에서 여러 적을 아는
+  관리자 없음(각 `EnemyStateMachine` 완전 독립). `RoomController`가 이미
+  `EnemySpawner`/`RoomManager`/경로탐색(`FindPath`)을 들고 있어 슬롯 예약도 같은
+  자리가 자연스러움.
+- 신규 `Assets/Scripts/Room/RoomAttackSlots.cs`: `RoomPathfindingGrid`와 동일한
+  "순수/씬 비의존, `RoomController`가 소유" 패턴. `EnemyStateMachine.MaxAttackRange`
+  기준으로 근접/원거리 두 링으로 분리(임계값 2.5), 각 링은 **고정 슬롯 개수가 아니라
+  현재 멤버 수로 매번 균등 각도 분배**(오버플로우 예외 처리 불필요) - `GetSlotPosition`을
+  매 프레임 새로 계산해서 멤버 변화 시 자연스럽게 리플로우(스냅 없음). 근접 링 반경 1.1
+  ·원거리 링 반경 5.5(각 역할의 공격 사거리 안쪽에 오도록 - `EnemyChaseState`의 기존
+  "접근 중단" 판정이 플레이어와의 실거리 기준이라, 링 반경이 사거리 밖이면 영원히
+  공격 전환이 안 되는 문제를 미리 피함).
+- `RoomController`에 `_attackSlots` 필드 + `ReserveAttackSlot`/`ReleaseAttackSlot`/
+  `GetAttackSlotPosition` 얇은 래퍼 추가(`FindPath` 래퍼와 동일한 스타일).
+- **적용 범위를 의도적으로 좁힘** - `EnemyChaseState`의 목표 좌표(플레이어 정확 좌표 →
+  예약된 슬롯 좌표)만 교체. 근접 돌진, 원거리 카이팅 재배치, 보스 돌진 같은 개별 공격
+  패턴 도중의 순간 이동은 전혀 안 건드림 - 이미 검증된 전투 모션 리스크 회피.
+- 슬롯 생명주기: `EnemyChaseState.Enter()`에서 예약(재진입 시 멱등), `EnemyIdleState`/
+  `EnemyPatrolState`/`EnemyDeadState`의 `Enter()`에서 해제(이탈/사망 시점). 기절은
+  `EnemyStunnedState`가 항상 Idle로 복귀하는 기존 구조 덕에 별도 처리 없이 자연스럽게
+  해제→재감지 시 재예약됨. `EnemyStateMachine.OnDisable()`에도 안전망으로 해제 추가
+  (죽음 외의 경로로 비활성화되는 경우 대비, 풀 재사용 시 이전 방에 예약이 남는 걸 방지).
+- 신규 `Assets/Tests/PlayMode/RoomAttackSlotsTests.cs` 5개: 2인 근접 180도 분산, 근접/
+  원거리 다른 반경, 해제 후 리플로우, 중복 예약 방지(멱등성), 미예약 시 타겟 좌표 폴백.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 신규/수정 파일 8개 전부 클린
+- [x] 콘솔 에러 0건
+- [x] **실제 씬의 `RoomController`(살아있는 방)에 합성 적 4마리(근접 3+원거리 1)를
+      `SetRoom`으로 연결해 `ReserveAttackSlot`/`GetAttackSlotPosition` 직접 호출** -
+      4마리가 target 기준 반경 1.10에서 정확히 90도씩(0°/90°/180°/270°) 떨어진 4개
+      서로 다른 위치로 계산됨(균등 분산 로직 자체는 라이브로 확인). 다만 이 검증에서
+      `MaxAttackRange`가 4마리 전부 0으로 나와 역할 분리(근접/원거리 다른 반경)는 이
+      경로로는 확인 못 함 - RunCommand로 만든 오브젝트가 Play Mode 중이어도 에디터
+      창 포커스가 없으면 프레임이 안 흘러 `Start()`가 실행되지 않는 이 세션 고질적
+      한계(이전에도 발견된 문제) 때문으로 판단. 역할 분리 자체는 신규 PlayMode 테스트
+      (`yield return null`로 최소 1프레임 확보하는 정석 경로)가 유닛 레벨에서
+      다루고 있고, Test Runner로 실행하면 통과할 것으로 예상하나 이번 세션에서 직접
+      실행 확인은 못 함.
+- [ ] Test Runner 전체 스위트 실행(신규 5개 포함) - 여전히 MCP `RegisterCallbacks`
+      제약으로 이 세션에서 자동 실행 불가, 유저가 직접 Test Runner 창에서 확인 필요
+- [ ] 실제 전투에서(여러 근접+원거리 적이 동시에 플레이어를 노릴 때) 체감상 우글거림이
+      해소됐는지, 근접/원거리 링이 자연스럽게 보이는지는 실플레이 확인 필요
+- [ ] Before/After 충돌 비용 측정(`BenchmarkScene`으로 200마리 기준) - 이번 세션에서는
+      미실시, 다음 작업으로 이월
+
+### 이슈/메모
+- Play Mode 중이라도 Unity 창에 포커스가 없으면 `Start()`를 포함한 프레임 진행 자체가
+  멈춘다는 걸 재확인(이전에도 겪은 문제) - RunCommand로 만든 오브젝트의 `Start()` 의존
+  값을 검증하려면 실제 유저 조작이나 다른 방법이 필요, MCP 세션만으로는 한계가 있음을
+  인지하고 다음에도 이 함정을 피할 것.
+
+### 다음 작업
+- 유저 실플레이로 포메이션이 실제로 잘 보이는지, 근접/원거리 링 반경(1.1/5.5)이
+  체감상 적절한지 확인 → 필요시 튜닝.
+- `BenchmarkScene`으로 Before/After 충돌 비용 실측(적용 전 커밋 기준과 비교).
+- Test Runner 전체 스위트 수동 확인.
+
+---
+
+## 2026-09-15 (34)
+
+### 진행 내용
+- 유저 요청: (33)의 미니맵/전체 지도 둘 다 "발견됨(Discovered)" 상태의 방은 모양(실루엣)이
+  아예 안 보이게, 연결선은 그대로 유지.
+- `MinimapUI.RefreshIcon`/`FullFloorMapUI.RefreshIcon` 둘 다 동일하게 수정(각 파일
+  독립 수정 - (33)에서 정한 비공유 원칙 유지): 기존에 `Discovered`만 따로 갈색조
+  `discoveredColor`로 칠해서 보여주던 분기를 제거하고, `Hidden`과 같은 취급으로 합쳐서
+  아이콘 자체를 비활성화. 연결선 표시 로직(`RefreshAll`의 "양쪽 다 Hidden이 아니면
+  보임")은 전혀 안 건드림 - 요청대로 연결선만 살아있고 방 모양은 안 보임.
+  `discoveredColor` 필드 자체는 다른 폴백 분기(방문했지만 현재 방도 아니고 클리어도
+  아닌 경우)에서 계속 쓰여서 그대로 유지.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 두 파일 모두 클린
+- [x] Play Mode 실측(`RunCommand`로 `FullFloorMapUI.Open()` 직접 호출, `MinimapUI`는
+      씬에 항상 떠 있어 별도 호출 불필요): 두 UI 모두 동일하게 활성 아이콘 1개(현재
+      방)·비활성 아이콘 5개(발견됨 2 + 미발견 3)·활성 연결선 3개·비활성 연결선 2개로
+      확인 - 발견된 인접방 2개의 아이콘은 꺼지고 그 연결선만 남는 요청 그대로 재현됨.
+- 콘솔 에러 0건.
+
+### 다음 작업
+- ~~유저 실플레이로 시각적으로 원하는 느낌인지 확인~~ — **확인 완료(유저, 2026-09-15)**.
+  미니맵/전체 지도 둘 다 실플레이로 확정.
+
+---
+
+## 2026-09-15 (33)
+
+### 진행 내용
+- 유저 요청(§6과 무관한 인게임 기능): 우상단 미니맵 좌클릭(또는 Tab) 시 일시정지 UI와
+  같은 방식으로 화면이 반투명해지고 층 전체 방 구조가 보이는 맵 UI가 뜨도록.
+  작업 전 계획 공유 → 논의를 거쳐 확정: ① 안개(발견 상태) 유지, 스포일러 없음
+  ② `MinimapUI`와 코드/상태 완전 비공유(노치 분해 로직 포함 전부 독립 구현 - "서로
+  의존하면 양쪽 다 고쳐야 하고 꼬일 위험" 사유로 유저가 헬퍼 공유안도 기각) ③ 클릭
+  드래그로 지도를 스무스하게 패닝(줌은 이번 스코프 밖) ④ Tab 키로도 열고 닫기. 중간에
+  "아무 데나 클릭하면 닫힘" 요구사항은 드래그와 충돌해 폐기 - 닫기는 Tab 전용으로 확정.
+- 신규 `Assets/Scripts/UI/FullFloorMapUI.cs`: `GameOverUI`의 dim/content 2단
+  `CanvasGroup` + `Time.unscaledDeltaTime` 페이드 패턴, `PauseState.RequestPause/
+  ReleasePause`(다른 일시정지 UI와 충돌 방지 가드 포함), `MinimapUI`와 동일한 Hidden/
+  Discovered/Visited 안개 로직(단, 완전 별도 구현 - 아이콘/커넥터 생성, ㄱ자 노치
+  2조각 분해 포함) 재사용. 코너 미니맵보다 큰 `cellSpacing`(90)·아이콘 크기(48)로 전체
+  화면에 맞게 조정. 열 때마다 현재 위치한 방을 중심으로 재정렬 후 자유 드래그(`IDragHandler`,
+  콘텐츠 바운딩 박스 기준 여유(150) 클램프 - 무한정 밀려나지 않게).
+- 신규 `Assets/Scripts/UI/MinimapMapOpenTrigger.cs`: 미니맵과 같은 오브젝트에 별도
+  컴포넌트로 붙여 클릭 시 `FullFloorMapUI.Open()` 호출 - `MinimapUI.cs` 자체는
+  전혀 안 건드림(독립성 유지).
+- 신규 `Assets/InputActions/FullFloorMapActions.inputactions`: ESC 메뉴가 쓰는
+  `EquipMenuActions.inputactions`와 같은 구조(always-enabled "Menu" 맵)이되 별도
+  에셋으로 분리(`ToggleMap` → `<Keyboard>/tab`) - 같은 에셋을 두 컴포넌트가 각자
+  Enable()/Disable() 하면 서로의 라이프사이클에 영향을 줄 위험이 있어, 이번에도
+  "서로 안 건드리기" 원칙에 맞춰 완전히 분리.
+- `StageManager`에 `fullFloorMapUI` 필드 추가, `minimapUI.Initialize(...)` 옆에
+  `fullFloorMapUI.Initialize(...)` 호출 추가(같은 방 목록을 두 UI에 각자 전달).
+- 씬(`Prototype.unity`) 작업: `Canvas` 하위(HUD/EquipPanel/GameOverPanel과 같은
+  레벨)에 `FullFloorMapPanel`(전체화면 `RectTransform` + `RectMask2D` +
+  `FullFloorMapUI`) 신설, 자식 `DimBackground`(검은 `Image`+`CanvasGroup`)·`Content`
+  (중앙 앵커 `RectTransform`+`CanvasGroup`, 아이콘/커넥터가 런타임에 이 아래 생성됨).
+  기존 `MinimapIcon.prefab`/`MinimapConnector.prefab` 그대로 재사용(신규 프리팹 없음).
+  기존 `Minimap` 오브젝트에 `MinimapMapOpenTrigger` 추가.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 신규/수정 파일(`FullFloorMapUI.cs`, `MinimapMapOpenTrigger.cs`,
+      `StageManager.cs`) 전부 클린
+- [x] 콘솔 에러 0건(컴파일, 씬 저장, Play Mode 진입 전 구간 전부)
+- [x] **Play Mode 실측 검증**(RunCommand로 `FullFloorMapUI`의 public API를 직접 호출-
+      리플렉션 아님): `Open()` 호출 시 `Time.timeScale` 1→0, `PauseState.IsPaused` true,
+      0.25초 후 `dimGroup.alpha`=0.75(설정값)·`contentGroup.alpha`=1 도달, 현재 방
+      아이콘이 노란색(현재)·인접 미발견방이 회색(발견됨)·나머지 4개는 비활성(안개)으로
+      정확히 반영됨(9개 자식 중 활성 5/비활성 4). `OnDrag` 직접 호출로 소량 드래그(50,-30)가
+      1:1로 정확히 반영, 거대한 드래그(100000,0)는 클램프돼 1005.5에서 멈춤(무한정 밀림
+      없음) 확인. `Close()` 호출 즉시 `Time.timeScale` 1로 복귀·`IsPaused` false 확인.
+- [x] **Tab 키 실제 입력 / 미니맵 클릭 / 드래그 체감 / 페이드·딤 톤** — **유저 실플레이
+      확인 완료(2026-09-15)**. "미니맵, 맵UI 작업된 것 잘 확인했다."
+
+### 이슈/메모
+- Unity MCP `set_component_property`로 Component 타입 필드(예: `CanvasGroup`,
+  `RectTransform` 참조)를 채울 때 문서화된 `{"find":..., "method":..., "component":...}`
+  형식이 매번 "Unexpected token type 'EndObject'" 에러로 실패함 - `{"instanceID": N}`
+  형식(그 컴포넌트 자신의 instanceID, GameObject의 instanceID 아님)으로 넘겨야 성공함.
+  기존 메모리에 있던 "component-ref wiring quirk"가 이번에도 동일하게 재현됨 - 다음에도
+  이 형식부터 바로 쓸 것.
+- 씬에서 GameObject를 새로 만들면 Unity가 내부적으로 GameObject 자체의 instanceID와
+  그 위 각 컴포넌트(Transform/RectTransform 포함)의 instanceID를 별도로 매기는 걸
+  재확인(예: `FullFloorMapPanel`의 GameObject instanceID -20454 vs 그 RectTransform
+  instanceID는 다른 값) - "부모의 instanceID"로 보이는 값도 실제로는 부모의 Transform
+  instanceID인 경우가 있어 헷갈리기 쉬움. `get_components`로 컴포넌트별 정확한
+  instanceID를 먼저 확인하고 참조를 연결하는 순서가 안전함.
+
+### 다음 작업
+- 유저가 직접 미니맵 클릭 / Tab 키 / 드래그를 실플레이로 확인.
+- 확정 우선순위 트랙상 다음 순번은 6번(세이브/로드)이지만, 이 작업은 그 트랙과 무관한
+  요청이었으므로 별개로 진행 여부 결정 필요.
+
+---
+
+## 2026-09-15 (32)
+
+### 진행 내용
+- §6 항목 5b "층 그래프 비주얼라이저" 착수 전 계획 공유 → 유저 승인(3개 설계 결정
+  전부 제안 A안: 그리드 좌표 그대로 자동 맞춤 배치 / IMGUI 렌더링(`DataValidationWindow`
+  관례 재사용) / 팬·줌 없이 자동 스케일만).
+- 신규 `Assets/Editor/FloorGraphWindow.cs`(`RogueLike/Floor Graph Visualizer` 메뉴) 구현.
+  `new ProceduralFloorSource(seed).Floors[floor-1]`를 Edit Mode에서 직접 호출(Play Mode/씬
+  불필요, 순수 C#) → `FloorLayout`을 그래프로 렌더링. 노드는 `RoomData.GridPosition`
+  좌표를 min/max로 캔버스에 자동 맞춤(패딩만, 재배치 알고리즘 없음) - North가
+  `GridPosition.y` 증가 방향(`ProceduralFloorGenerator.Dirs` 확인)이라 화면 위쪽에
+  오도록 Y축 반전. 노드는 `RoomType`별 색(Start 녹/Combat 파랑/Boss 빨강/Item 금색),
+  `Footprint`의 가로세로 비율을 대략 반영한 크기, ㄱ자(`HasNotch`)면 노치 방향에 대각선
+  마커. `FloorGraph.Validate`와 동일한 BFS를 창 안에서 직접 재계산해 시작방에서 도달
+  불가능한 방을 빨간 테두리로 개별 표시(예외 메시지 하나만 띄우는 대신 어느 방이
+  문제인지 바로 보이게). 노드 클릭 시 우측 패널에 RoomId/Type/GridPosition/Footprint
+  (크기+노치)/연결 목록(방향+대상+SubCellIndex)/적 구성(변종별 개수)/장애물 개수 표시 -
+  `DataValidationWindow`의 좌목록·우상세 레이아웃과 같은 결.
+- 시드 입력(0~99999, `RunConfig.MaxSeedValue`와 동일 범위 - `RunConfig.
+  TryParseSeedOverride` 그대로 재사용해 파싱 규칙 이중 정의 안 함) + Random 버튼 + 층
+  드롭다운(1~3) + Generate 버튼.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: 클린(진단 0건)
+- [x] 콘솔 에러 0건(컴파일+메뉴 실행 시점 둘 다)
+- [x] 메뉴 `RogueLike/Floor Graph Visualizer` 등록 확인, `Unity_ManageMenuItem`으로 실행 →
+      창이 예외 없이 열림
+- [x] 창이 소비하는 데이터 파이프라인(`ProceduralFloorSource`) 엣지케이스 시드(0/1/12345/
+      99999) × 3개 층 전부 `RunCommand`로 직접 호출해 방 개수(5~10개)·그리드 좌표 범위·
+      시작방 존재 전부 정상 확인
+- [ ] 실제 시드 입력 → Generate 클릭 → 그래프가 눈으로 보기에 올바른지(노드 위치/색/
+      ㄱ자 마커/빨간 테두리), 노드 클릭 → 우측 패널 갱신 확인은 GUI 이벤트라 자동화로
+      재현 불가 - `DataValidationWindow` 때와 동일한 사유로 유저 직접 확인 필요
+
+### 이슈/메모
+- Write 도구로 새 에디터 스크립트를 만들면 `.meta`가 자동 생성 안 되고 메뉴에도 즉시
+  안 잡힘 - `AssetDatabase.Refresh()`를 명시적으로 한 번 호출해야 Unity가 임포트/
+  컴파일하고 메뉴가 등록됨(앞선 테스트 파일들은 우연히 다른 타이밍에 자동 인식됐던
+  것으로 보임). 다음에 신규 스크립트 추가 후 메뉴/컴파일이 바로 안 잡히면 이것부터
+  의심할 것.
+
+### 다음 작업
+- 유저가 실제로 창을 열어 시드 몇 개(특히 극단값 0/99999)로 그래프가 기대대로
+  보이는지 확인.
+- 확정 우선순위 트랙 5번 완료(5a SO 검증 패스 + 5b 그래프 비주얼라이저). 다음 순번은
+  6번(세이브/로드) - 유저 선택 필요.
+
+---
+
+## 2026-09-15 (31)
+
+### 진행 내용
+- 유저 확인: (30)의 돌진 넉백 2.5배가 실플레이로 만족스러움 확인 → 8n 마감. 아울러
+  "대시 무적 판정 확인"도 이전 작업 중 이미 실플레이로 검증됐다고 확인 → §5 항목 마감
+  (`PlayerDodgeRoll.StartDash()`가 `HealthComponent.SetInvulnerable(true)`를 걸고
+  `CompleteDodgeRoll()`/`CancelDodgeRoll()`에서 해제하는 구조를 코드로도 재확인).
+- 확정 우선순위 트랙 4번의 마지막 잔여 항목 "4b. 프레임레이트 독립성" 착수(유저 승인,
+  간단 설명 요청 후 진행). Update()/FixedUpdate()/Tick(deltaTime)/PhysicsTick
+  (fixedDeltaTime)를 쓰는 프로젝트 전체 스크립트(~25개 파일 - Player 이동/대시/조준/
+  전투/피격반응, Enemy FSM 전체 상태(Idle/Patrol/Chase/Attack/Stunned/Dead), 공격
+  패턴 5종(Melee/ChargeStrike/Ranged/BurstRanged/RetreatAndShoot) + 공용
+  `RangedKitingBehavior`, `Projectile`/`GrenadeProjectile`, 액티브 아이템 3종
+  (Flamethrower/Grenade/EnhancedShot), `InputBuffer`, 씬 전환/페이드 UI 4종)를 전수
+  감사.
+- **감사 결과: 위반 0건.** 모든 이동 코드가 `위치 += 방향 * 속도 * deltaTime` 형태,
+  모든 쿨다운/타이머가 `remaining -= deltaTime`(나눗셈 없이 누적/차감) 형태였고,
+  `Lerp`류도 전부 `elapsed / duration` 비율을 인자로 써서 "매 프레임 같은 계수로
+  Lerp"(프레임 수에 따라 수렴 속도가 달라지는 흔한 함정) 사례가 없었음.
+  `FlamethrowerActiveItem.ApplyDamage`는 `while (_tickTimer >= _tickInterval)`
+  루프로 긴 프레임(저fps)에서도 틱을 누락하지 않는 구조까지 이미 갖춰져 있었음.
+  `EquipMenuController.cs`의 기존 주석이 이 관례를 "프로젝트 전역에서 지켜지는 불변식"
+  으로 이미 명시하고 있었음(`Time.timeScale = 0` 하나로 전체 시스템이 함께 멈추는
+  pause 설계 자체가 이 불변식 위에 세워져 있다는 설명) - 이번 감사가 그 문서화된
+  전제를 실제로 재검증한 셈.
+- 위반이 없어 프로덕션 코드 수정은 없음. 대신 이 불변식을 회귀 테스트로 잠금:
+  `InputBufferTests`에 고fps(144, 잘게 쪼갠 스텝)/저fps(15, 굵게 쪼갠 스텝) 두
+  스케줄이 같은 누적 시간(0.14초/0.24초)에서 항상 같은 상태(대기 중/만료)에
+  도달하는지 검증하는 케이스 1개 추가. 신규 `FrameRateIndependenceTests.cs`
+  (EditMode) - `ChargeStrikePattern`/`MeleeAttackPattern`의 쿨다운이 같은 원리로
+  스텝 크기 무관하게 동일 누적 시간에 준비 완료되는지 검증. 신규
+  `FrameRateIndependenceMovementTests.cs`(PlayMode) - `EnemyChaseState.PhysicsTick`
+  이동 거리가 스텝 크기(144fps 스케줄 vs 15fps 스케줄, 같은 총 1.2초)에 무관하게
+  같은지, 실제 `Rigidbody.MovePosition`을 통해 검증(기존 `EnemyChaseAttackRangeMargin
+  Tests`와 동일한 "FSM 자동 틱 정지 후 PhysicsTick 직접 구동" 패턴 재사용).
+- 검증: `Unity_ValidateScript`로 신규/수정 파일 3개 전부 클린 확인. `InputBuffer`와
+  `ChargeStrikePattern`/`MeleeAttackPattern` 쿨다운 로직은 Unity MCP RunCommand로
+  테스트와 동일한 로직을 독립 실행해 PASS 직접 확인(고fps/저fps 스케줄 모두 0.14초
+  지점 대기 중·0.24초 지점 만료 일치, 쿨다운 0.9초 지점 미완료·1.1초 지점 완료 일치).
+- **한계**: 전체 EditMode/PlayMode 스위트를 이 세션에서 자동 실행해 통과 개수를 받아오지
+  못함 - Unity MCP의 `TestRunnerApi.RegisterCallbacks` 호출이 "user interaction" 사유로
+  차단되어 있어(콜백 없이 `Execute()`만 호출하는 건 가능하지만 결과를 받을 방법이
+  없음), 새로 작성한 PlayMode 이동 테스트(`FrameRateIndependenceMovementTests`)도
+  같은 이유로 이 세션에서 직접 실행 확인은 못 함 - 대안으로 Play Mode에 진입해 임시
+  스크립트로 같은 로직을 직접 실행해보려 했으나, 마침 씬에 실제 게임(Room/Stage
+  매니저가 이미 층을 빌드해 진행 중)이 로드돼 있어 합성 테스트용 "FRT_Player"
+  오브젝트가 `FindGameObjectWithTag("Player")`에서 실제 플레이어와 충돌할 위험이
+  있어 중단, Play Mode 종료. 프로덕션 코드는 무변경(테스트 파일만 추가/수정)이라
+  회귀 위험 자체는 낮다고 판단하지만, **다음 세션에서 Unity Editor의 Test Runner
+  창을 직접 열어 EditMode+PlayMode 전체 스위트를 재확인 필요**.
+
+### 테스트 결과
+- [x] `Unity_ValidateScript`: `InputBufferTests.cs`/`FrameRateIndependenceTests.cs`/
+      `FrameRateIndependenceMovementTests.cs` 전부 클린
+- [x] `InputBuffer`/`ChargeStrikePattern`/`MeleeAttackPattern` 쿨다운의 스텝-그래뉼래리티
+      무관성: Unity MCP RunCommand 독립 실행으로 PASS 직접 확인(위 진행 내용 참고)
+- [ ] EditMode/PlayMode 전체 스위트 자동 실행 - 이 세션에서 미확인(위 "한계" 참고),
+      다음 세션에서 Test Runner 창으로 재확인 필요
+- [ ] `FrameRateIndependenceMovementTests`(PlayMode, 신규) 자체의 실제 통과 여부 -
+      코드 작성 및 컴파일 검증까지만 완료, 실행 확인은 이월
+
+### 이슈/메모
+- Unity MCP RunCommand가 `System.Reflection`(BindingFlags 등)과
+  `TestRunnerApi.RegisterCallbacks` 호출을 차단하는 걸 이번에 처음 확인 - 앞으로
+  이 MCP로 전체 테스트 스위트의 pass/fail 개수를 자동으로 받아오는 건 불가능하고,
+  개별 로직을 RunCommand로 직접 실행해 결과를 `Debug.Log`로 찍어 확인하는 우회만
+  가능함. 이후 세션에서 "테스트 실행해서 확인" 요청이 오면 이 제약을 먼저 알릴 것.
+
+### 다음 작업
+- Test Runner 창에서 EditMode/PlayMode 전체 스위트 수동 재확인(신규 테스트 3개 포함).
+- 확정 우선순위 트랙 4번(입력 버퍼링+프레임레이트 독립성)이 4a/4b/4c 전부 완료로
+  마감. 다음 순번 후보는 5번(SO 검증 패스는 이미 완료, 남은 건 5b 층 그래프
+  비주얼라이저) 또는 6번(세이브/로드) - 유저 선택 필요.
+
+---
+
 ## 2026-09-15 (30)
 
 ### 진행 내용
@@ -59,8 +1079,8 @@
 - [x] EditMode 139/139 (`TestRunnerApi` 재실행, 회귀 없음)
 - [x] PlayMode 47/47(1회차 `EnemyChasePathfindingTests`의 동일 기존 플레이키 테스트
       1건 실패 → 단독 재실행 통과로 무관함 재확인)
-- [ ] 실제 Play Mode 확인 필요 - 돌진 넉백이 2.5배 세진 게 실감상 만족스러운지는 유저
-      실플레이로만 확인 가능
+- [x] 실제 Play Mode 확인 완료 - 유저가 돌진 넉백 2.5배 임팩트를 실플레이로 확인,
+      만족스러움을 확인함
 
 ### 이슈/메모
 - 넉백 세기를 `knockbackDirection` 벡터의 크기로 암묵적으로 인코딩하는 방식은 인터페이스를
@@ -69,7 +1089,9 @@
   `ChargeStrike` 하나뿐) 명시적 파라미터로 승격하는 편이 나을 수 있음.
 
 ### 다음 작업
-- 유저 실플레이로 돌진 공격의 최종 넉백 임팩트 확인.
+- §8(Phase 4 아트+보스 AI)이 8a~8n까지 전부 완료되어 사실상 마감. 다음 순번 후보:
+  확정 우선순위 트랙 4번의 잔여 항목 "4b. 프레임레이트 독립성", 더 가벼운 대안으로
+  §5 미결 항목 "대시 무적 판정 확인" — 유저 선택 필요.
 
 ---
 

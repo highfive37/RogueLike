@@ -15,6 +15,10 @@ public class EnemyPatrolState : IEnemyState
         Vector2 randomOffset = Random.insideUnitCircle * _machine.Data.PatrolRadius;
         _targetPosition = _machine.SpawnPosition + new Vector3(randomOffset.x, 0f, randomOffset.y);
         _machine.Animation?.PlayWalk();
+
+        // Disengaging (search timed out or the player drifted out of leash range) - see
+        // EnemyIdleState.Enter() for the matching release.
+        _machine.Room?.ReleaseAttackSlot(_machine);
     }
 
     public void Tick(float deltaTime)

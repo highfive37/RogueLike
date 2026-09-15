@@ -695,8 +695,10 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
 
 1. ~~**3층 맵 제작**~~ — 완료(2026-09-04, §3 참고). 실플레이 최종 검증만 이월.
 2. ~~**1~3층 방 데이터 JSON 외부화**~~ — 완료(2026-09-04 (2), §3 참고). 실플레이 주파 검증만 이월.
-3. **대시 무적 판정 확인**: 스페이스바 대시(구르기) 이동 중 실제로 무적
-   프레임이 적용되는지 코드/실플레이로 확인.
+3. ~~**대시 무적 판정 확인**~~ — **완료(사용자 확인, 2026-09-15).** 스페이스바 대시(구르기) 중
+   `PlayerDodgeRoll.StartDash()`가 `HealthComponent.SetInvulnerable(true)`를 걸고
+   `CompleteDodgeRoll()`/`CancelDodgeRoll()`에서 해제하는 구조(코드 확인) - 이전 작업 중 유저가
+   실플레이로 이미 검증 완료.
 4. ~~**대시 아이콘 UI + 쿨다운 표시**~~ — 완료(2026-09-04 (2)). 우하단 `DashCooldownSlot`,
    `SkillCooldownSlot`은 그 왼쪽으로 이동, `ActiveItemCooldownUI` 미러(`DashCooldownUI`).
 5. **Stage 2.5 잔여 항목 재개**: 아이템 방(#3) 세부 밸런스("전투 없이 보장된
@@ -894,7 +896,8 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
      `PlayerHitReaction`이 방향/배율을 분리 보관해 속도에 곱함, `EnemyChargeHitbox.
      Arm()`에 `knockbackMultiplier` 파라미터 추가, `ChargeStrikePattern`이 2.5 상수를
      전달. EditMode 139/139, PlayMode 47/47(기존 플레이키 재검증 통과), 회귀 없음.
-     상세는 `DevLog.md` 2026-09-15 (30). 실플레이 최종 확인 필요.
+     상세는 `DevLog.md` 2026-09-15 (30). **실플레이 최종 확인 완료(2026-09-15,
+     유저 만족 확인).**
    - 8c. ~~**적 Death 애니메이션 + 사망 유예 시간**~~ — **완료(2026-09-14).**
      `HealthComponent`에 `deathDelay`(기본 0, 플레이어는 무변화) 추가해 `Health.Died`
      즉시 반환/파괴하던 흐름에 유예 시간 확보. `EnemyDeadState`가 Death 애니메이션 재생
@@ -959,7 +962,27 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
      풀리면 자동 실행. `MeleeWeapon`(쿨다운 없음)·수류탄 던지기(게이트 없음)는 대상 제외.
      EditMode 121/121, PlayMode 36/36. 실플레이 체감 검증 + 값 튜닝은 이월. 상세는
      `DevLog.md` 2026-09-14 (2).
-   - 4b. **프레임레이트 독립성** — 미착수.
+   - 4b. ~~**프레임레이트 독립성**~~ — **완료(감사, 2026-09-15).** Player/Enemy/Combat 전
+     Update·FixedUpdate·Tick(deltaTime)/PhysicsTick(fixedDeltaTime) 구현(~25개 파일)을
+     전수 감사 - 위반 0건. 모든 이동은 `위치 += 방향 * 속도 * deltaTime` 형태, 모든
+     쿨다운/타이머는 `remaining -= deltaTime` 형태(나눗셈 없음)로 이미 일관되게 구현돼
+     있었음(`EquipMenuController`의 기존 주석이 이걸 프로젝트 전역 불변식으로 이미
+     문서화하고 있었음 - `Time.timeScale=0` 하나로 전체가 함께 멈추는 pause 설계의 전제).
+     `Lerp`류도 전부 `elapsed/duration` 비율 사용, "매 프레임 같은 계수로 Lerp" 함정
+     없음. 신규 회귀 테스트로 이 불변식을 잠금: `InputBufferTests`에 스텝 크기(고fps
+     vs 저fps 스케줄, 같은 총 시간)에 무관하게 동일 시점에 만료되는지 검증하는 케이스
+     추가, 신규 `FrameRateIndependenceTests`(EditMode - `ChargeStrikePattern`/
+     `MeleeAttackPattern` 쿨다운), `FrameRateIndependenceMovementTests`(PlayMode -
+     `EnemyChaseState.PhysicsTick` 이동 거리). `InputBuffer`/`ChargeStrikePattern` 쪽은
+     RunCommand로 독립 실행해 PASS 직접 확인(고fps 144/저fps 15 스케줄 모두 0.14초
+     지점 대기, 0.24초 지점 만료 일치 / 쿨다운 0.9초 지점 미완료, 1.1초 지점 완료
+     일치). PlayMode 이동 테스트는 코드는 작성·검증(스크립트 컴파일 클린)됐으나, 이
+     세션에서는 Unity MCP의 `RegisterCallbacks`(TestRunnerApi 콜백 등록) 호출이
+     "user interaction" 사유로 차단되어 있어 전체 스위트(EditMode/PlayMode) 자동 실행
+     결과 집계를 못 받았고, 라이브 씬에 실제 게임이 로드된 상태라 별도 Play Mode 스크립트
+     실행도 플레이어 태그 충돌 위험으로 포기 - **다음 세션에서 Test Runner 창을 직접
+     열어 전체 스위트 재확인 필요**(코드 자체는 프로덕션 코드 무변경, 테스트만 추가라
+     회귀 위험은 낮음). 상세는 `DevLog.md` 2026-09-15 (31).
    - 4c. ~~**대시 중 공격/스킬 차단**~~ — **완료(2026-09-14).** 대시(+겹침 보정 꼬리)가
      끝날 때까지 일반 공격·액티브 아이템 스킬 실행 불가, 끝나면 즉시 재개. 차단된 입력은
      버퍼링하지 않고 버림(의도적 규칙이라 자동 발동은 배제). 반대 방향(공격/스킬이 대시를
@@ -980,8 +1003,31 @@ Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화
      재작성 - Project 창 왕복 없이 한 창에서 탐색+수정+실시간 검증까지 끝남. 콘솔 커맨드는
      그대로 유지. 좌측 클릭→우측 렌더링 자체는 GUI 이벤트라 자동화로 재현 불가, 유저 직접
      확인 필요. 상세는 `DevLog.md` 2026-09-14 (6).
-   - 5b. **층 그래프 비주얼라이저(EditorWindow)** — 미착수, 여유 있을 때 별도 세션.
+   - 5b. ~~**층 그래프 비주얼라이저(EditorWindow)**~~ — **완료(2026-09-15).** 신규
+     `FloorGraphWindow`(`RogueLike/Floor Graph Visualizer`) - 시드+층 입력만으로
+     `ProceduralFloorSource`를 Edit Mode에서 직접 호출해(Play Mode/씬 불필요) 방 그래프를
+     그림. 노드는 `GridPosition` 실좌표 그대로 자동 맞춤 배치(재배치 알고리즘 없음,
+     North가 위로 오게 Y축 반전), `RoomType`별 색, `Footprint` 비율 반영 크기 +
+     ㄱ자 노치 마커. `FloorGraph.Validate`와 동일한 BFS를 창에서 재계산해 도달 불가
+     방을 빨간 테두리로 개별 표시. 노드 클릭 → 우측 패널에 타입/좌표/Footprint/연결/
+     적 구성/장애물 수. `DataValidationWindow`의 좌목록·우상세 IMGUI 패턴 재사용, 신규
+     의존성 없음. 컴파일 클린, 메뉴 실행 시 예외 없음, 데이터 파이프라인은 엣지케이스
+     시드 4개×3개 층 전부 `RunCommand`로 직접 검증 완료 - **다만 그래프가 실제로 보기에
+     맞게 그려지는지(노드 클릭 상호작용 포함)는 GUI 이벤트라 자동화 불가, 유저 직접
+     확인 필요**(`DataValidationWindow` 때와 동일한 한계). 상세는 `DevLog.md`
+     2026-09-15 (32).
 6. **세이브/로드 — 버전드 직렬화 + 런 이어하기** — 아무것도 언블록 안 함, 가장 나중 또는 마감 시 스킵.
+
+**트랙 외 요청 — 전체 층 지도 UI**: ~~**완료(2026-09-15).**~~ 우상단 `MinimapUI` 클릭(또는
+Tab)으로 일시정지 UI와 같은 반투명 오버레이 + 층 전체 방 구조를 드래그로 둘러보는 전체
+화면 지도. 안개(발견 상태) 유지, `MinimapUI`와 상태/코드 완전 비공유(유저 지정 - 파일
+독립성 우선), 클릭 대신 드래그 패닝(줌은 범위 밖), 닫기는 Tab 전용(클릭-닫기는 드래그와
+충돌해 폐기). 신규 `FullFloorMapUI`/`MinimapMapOpenTrigger`/`FullFloorMapActions.
+inputactions`. Play Mode에서 `Open()`/`Close()`/`OnDrag` 등 public API를 RunCommand로
+직접 호출해 페이드·일시정지·안개 반영·드래그 클램프까지 실측 검증 완료, 다만 실제 미니맵
+클릭과 Tab 키 입력 자체는 GUI/Input System 이벤트라 자동화 불가 - 유저 직접 확인 필요.
+확정 우선순위 트랙과 무관한 별도 요청이라 트랙 순번에는 영향 없음. 상세는 `DevLog.md`
+2026-09-15 (33).
 
 **아트 리소스 적용(무료 에셋/AI 생성) 시점**: 2번(절차적 생성) 착수 직전 ~ 진행 중 병행 권장 —
 가장 이른 항목은 아니지만 가장 늦지도 않음. 상세는 `DevLog.md` 2026-09-09.

@@ -1,0 +1,51 @@
+{
+    "name": "FullFloorMapActions",
+    "maps": [
+        {
+            "name": "Menu",
+            "id": "3a8f2c1e-7d4b-4a9c-b6e5-1f2a3b4c5d6e",
+            "actions": [
+                {
+                    "name": "ToggleMap",
+                    "type": "Button",
+                    "id": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                    "path": "<Keyboard>/tab",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "ToggleMap",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        }
+    ],
+    "controlSchemes": [
+        {
+            "name": "Keyboard&Mouse",
+            "bindingGroup": "Keyboard&Mouse",
+            "devices": [
+                {
+                    "devicePath": "<Keyboard>",
+                    "isOptional": false,
+                    "isOR": false
+                },
+                {
+                    "devicePath": "<Mouse>",
+                    "isOptional": false,
+                    "isOR": false
+                }
+            ]
+        }
+    ]
+}

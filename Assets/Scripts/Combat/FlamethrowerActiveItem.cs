@@ -29,12 +29,22 @@ public class FlamethrowerActiveItem : IActiveItem
     private GameObject _debugVisual;
     private LineRenderer _debugLine;
 
+    // Authored as an always-present (but not playing) child of Player.prefab named
+    // "FlamethrowerFX" (Unity's official Particle Pack FlameThrower effect) - found by name once
+    // here rather than threading a new field through ActiveItemContext/FlamethrowerActiveItemData,
+    // since every other skill visual in this project (e.g. the debug outline above) is likewise
+    // owned by this class, not passed in. Null-safe throughout: an owner without that child
+    // (e.g. a bare stand-in in a test) just runs with no visual, same as Animation/ChargeHitbox
+    // being null-conditional elsewhere in this project.
+    private readonly ParticleSystem _fireEffect;
+
     public FlamethrowerActiveItem(Transform owner, FlamethrowerActiveItemData data, int level)
     {
         _owner = owner;
         _data = data;
         _damagePerTick = ActiveItemLeveling.ScaleDamage(data.DamagePerTick, level);
         _tickInterval = data.TickInterval;
+        _fireEffect = owner.Find("FlamethrowerFX")?.GetComponent<ParticleSystem>();
     }
 
     public float CooldownProgress => _isActive
@@ -64,6 +74,7 @@ public class FlamethrowerActiveItem : IActiveItem
         // Start already "due" so the first damage tick lands on the same frame the spray
         // starts, instead of the player waiting a full tickInterval for the first hit.
         _tickTimer = _tickInterval;
+        _fireEffect?.Play();
         Debug.Log("Flamethrower activated");
     }
 
@@ -111,6 +122,11 @@ public class FlamethrowerActiveItem : IActiveItem
         _isActive = false;
         _cooldownRemaining = _data.Cooldown;
         DestroyDebugVisual();
+
+        // StopEmitting (not StopEmittingAndClear) - already-emitted embers keep playing out their
+        // own lifetime and fade on their own instead of vanishing instantly the moment E is
+        // released (2026-09-15 user preference).
+        _fireEffect?.Stop(true, ParticleSystemStopBehavior.StopEmitting);
         Debug.Log($"Flamethrower ended (active for {_activeElapsed:F2}s, total damage dealt: {_totalDamageDealt:F1})");
     }
 

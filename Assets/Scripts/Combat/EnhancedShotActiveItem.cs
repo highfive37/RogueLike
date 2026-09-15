@@ -60,13 +60,11 @@ public class EnhancedShotActiveItem : IActiveItem
 
     private void Fire()
     {
-        Vector3 spawnPosition = _owner.position + _owner.forward * 1f + Vector3.up * 0.5f;
-        GameObject instance = _projectilePool.Get(spawnPosition, _owner.rotation);
-
-        if (instance.TryGetComponent<Projectile>(out var projectile))
-        {
-            projectile.Initialize(_owner.forward, _damage, _owner, 0f, _data.Range);
-        }
+        // Routed through the shared spawner (same as RangedWeapon's basic shot and every enemy
+        // ranged pattern) instead of pulling from _projectilePool directly - this used to bypass
+        // ProjectileSpawner entirely, which is the one place the muzzle flash VFX call lives, so
+        // Enhanced Shot fired with no muzzle flash at all (2026-09-15 user report).
+        ProjectileSpawner.Spawn(_projectilePool, _owner.position, _owner.forward, 1f, _damage, _owner, 0f, _data.Range);
 
         _cooldownRemaining = _data.Cooldown;
     }

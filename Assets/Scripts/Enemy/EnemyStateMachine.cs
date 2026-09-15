@@ -184,6 +184,12 @@ public class EnemyStateMachine : MonoBehaviour
     {
         _healthComponent.Health.Died -= HandleDied;
         HealthComponent.AnyDamageTaken -= HandleDamageTaken;
+
+        // Safety net alongside the Idle/Patrol/Dead-entry releases (RoomAttackSlots) - covers
+        // any path that deactivates this instance without passing through one of those states
+        // first, so a pooled-and-reused enemy can never leave a stale slot reservation behind in
+        // its old room. Release is a no-op if this instance never held one.
+        _room?.ReleaseAttackSlot(this);
     }
 
     private void Update()

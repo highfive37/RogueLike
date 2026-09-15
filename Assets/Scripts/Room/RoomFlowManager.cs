@@ -92,6 +92,16 @@ public class RoomFlowManager : MonoBehaviour
             _pickupNotificationUI.HideImmediate();
         }
 
+        // Force Idle before FloorCompleteUI.Show() below pauses (PauseState.RequestPause sets
+        // Time.timeScale = 0) - without this, walking into the Floor Exit while still holding a
+        // move direction freezes PlayerMovement.FixedUpdate() (no fixed steps while paused)
+        // before its edge-triggered isMoving check ever fires again, leaving the Animator stuck
+        // showing Run's last frame. The Animator itself keeps evaluating through the pause
+        // (PlayerAnimationController forces UnscaledTime), so it would visibly keep looping the
+        // run cycle in place instead of just holding a frame - reads as "still walking" while
+        // stationary (2026-09-15 user report).
+        _playerAnimation?.PlayIdle();
+
         uiManager.ShowFloorComplete(BuildCurrentStats(), stageManager.IsLastFloor);
     }
 

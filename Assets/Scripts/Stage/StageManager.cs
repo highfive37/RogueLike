@@ -33,6 +33,7 @@ public class StageManager : MonoBehaviour
     [SerializeField] private ItemDropManager itemDropManager;
     [SerializeField] private RoomTransitionController roomTransitionController;
     [SerializeField] private MinimapUI minimapUI;
+    [SerializeField] private FullFloorMapUI fullFloorMapUI;
     [SerializeField] private float gridSpacing = 50f;
 
     // The Floor Exit is placed as a child of whichever room in this floor's graph is
@@ -186,6 +187,7 @@ public class StageManager : MonoBehaviour
 
         roomTransitionController.Initialize(_roomsById.Values);
         minimapUI.Initialize(_roomsById.Values);
+        fullFloorMapUI.Initialize(_roomsById.Values);
 
         SpawnFloorExit();
 

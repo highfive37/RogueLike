@@ -3,10 +3,11 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Enter the Gungeon-style minimap: a room stays hidden until a room next to
-// it has been visited (revealed then as a dim, type-less silhouette with a
-// connector line to its known neighbor), and only shows its real type/
-// cleared color once the player actually walks in. Wired exactly like
+// Enter the Gungeon-style minimap: a room stays hidden until a room next to it has been visited,
+// at which point only a connector line hints it exists - no silhouette until the player actually
+// walks in and it shows its real type/cleared color (2026-09-15: Discovered rooms used to render
+// a dim type-less icon too; user feedback dropped that, keeping just the connector as the "there's
+// something over there" hint). Wired exactly like
 // RoomTransitionController - StageManager hands over the full room list
 // once the floor is built, and this subscribes directly to each room's
 // RoomEntered/Cleared events plus each door's TargetRoom to build the
@@ -261,19 +262,18 @@ public class MinimapUI : MonoBehaviour
         Image[] images = _iconsByRoomId[room.RoomId];
         RevealState reveal = _revealByRoomId[room.RoomId];
 
-        if (reveal == RevealState.Hidden)
+        // Discovered (known only via a connector from a visited neighbor, never entered) no
+        // longer shows a silhouette at all - only the connector line hints it exists (2026-09-15
+        // user feedback). Hidden and Discovered share the same "no icon" treatment here; the
+        // connector's own visibility (RefreshAll) is untouched and still lights up as soon as
+        // either endpoint stops being Hidden.
+        if (reveal == RevealState.Hidden || reveal == RevealState.Discovered)
         {
             SetActive(images, false);
             return;
         }
 
         SetActive(images, true);
-
-        if (reveal == RevealState.Discovered)
-        {
-            SetColor(images, discoveredColor);
-            return;
-        }
 
         if (room.RoomId == _currentRoomId)
         {

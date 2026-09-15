@@ -68,6 +68,10 @@ public class EnemyChaseState : IEnemyState
         _searchCheckpoints.Clear();
         _checkpointIndex = 0;
         _machine.Animation?.PlayRun();
+
+        // Idempotent (Reserve no-ops if this enemy already holds a slot) - covers both a fresh
+        // engagement and Chase being re-entered after a round-trip through Attack.
+        _machine.Room?.ReserveAttackSlot(_machine);
     }
 
     public void Tick(float deltaTime)
@@ -190,7 +194,12 @@ public class EnemyChaseState : IEnemyState
         if (clearLine)
         {
             _path.Clear(); // line reopened - drop any stale path instead of finishing it out
-            targetPosition = _machine.Player.position;
+            // The reserved ring slot around the player, not the player's exact position - see
+            // RoomAttackSlots. Falls back to the raw player position when there's no room wired
+            // (e.g. a stray test enemy), same as GetAttackSlotPosition's own fallback.
+            targetPosition = _machine.Room != null
+                ? _machine.Room.GetAttackSlotPosition(_machine, _machine.Player.position)
+                : _machine.Player.position;
         }
         else
         {

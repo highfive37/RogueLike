@@ -12,6 +12,12 @@ public class EnemyDeadState : IEnemyState
     public void Enter()
     {
         _machine.Animation?.PlayDeath();
+        CombatVfxLibrary.Instance?.SpawnEnemyDeath(_machine.transform.position, Quaternion.identity);
+
+        // Release immediately on death, not deferred to whenever HealthComponent's deathDelay
+        // finishes pooling this instance - other engaged enemies should reflow into the gap
+        // right away, not wait out the death animation.
+        _machine.Room?.ReleaseAttackSlot(_machine);
 
         // A corpse shouldn't keep physically blocking the player/projectiles for however long
         // HealthComponent's deathDelay holds it before pooling/destroying it. Re-enabled by

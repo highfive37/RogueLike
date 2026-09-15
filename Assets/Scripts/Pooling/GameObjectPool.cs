@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.Pool;
 
@@ -34,6 +35,38 @@ public class GameObjectPool : MonoBehaviour
     public void Release(GameObject instance)
     {
         _pool.Release(instance);
+    }
+
+    // Pre-creates and briefly activates `count` instances so the first *real* Get() during
+    // gameplay doesn't pay for a cold Instantiate() plus the engine's first-ever draw of that
+    // prefab's material/shader (2026-09-15 - VFX effect prefabs were flashing solid cyan for a
+    // frame on their genuinely first spawn each session, then rendering correctly every time
+    // after). Keeping each instance active for one real frame (not just Get()+Release() back to
+    // back, which would deactivate it before a camera ever draws it) is what actually forces
+    // that first-use cost to happen here instead of during a real hit/shot. Call from a caller's
+    // Start(), not Awake() - this pool's own Awake() must have already built `_pool`.
+    public void WarmUp(int count)
+    {
+        if (count > 0)
+        {
+            StartCoroutine(WarmUpRoutine(count));
+        }
+    }
+
+    private IEnumerator WarmUpRoutine(int count)
+    {
+        var instances = new GameObject[count];
+        for (int i = 0; i < count; i++)
+        {
+            instances[i] = _pool.Get();
+        }
+
+        yield return null;
+
+        for (int i = 0; i < count; i++)
+        {
+            _pool.Release(instances[i]);
+        }
     }
 
     private GameObject CreatePooledInstance()

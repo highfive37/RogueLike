@@ -74,6 +74,8 @@ public class GrenadeProjectile : MonoBehaviour
 
     private void Explode()
     {
+        CombatVfxLibrary.Instance?.SpawnGrenadeExplosion(transform.position, Quaternion.identity);
+
         Collider[] hits = Physics.OverlapSphere(transform.position, _explosionRadius);
         foreach (Collider hit in hits)
         {

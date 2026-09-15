@@ -12,6 +12,13 @@ public class EnemyIdleState : IEnemyState
     {
         _idleElapsed = 0f;
         _machine.Animation?.PlayIdle();
+
+        // Disengaging (or the very first Idle after spawn, where this is a no-op) - release
+        // whatever ring slot Chase reserved so other engaged enemies can reflow into the gap.
+        // Stunned always returns here when it ends (see EnemyStunnedState.Tick), so a staggered
+        // enemy naturally re-reserves via Chase.Enter() once it re-detects the player rather than
+        // holding a slot while stunned.
+        _machine.Room?.ReleaseAttackSlot(_machine);
     }
 
     public void Tick(float deltaTime)

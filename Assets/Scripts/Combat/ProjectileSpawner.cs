@@ -16,11 +16,17 @@ public static class ProjectileSpawner
         }
 
         Vector3 spawnPosition = origin + direction * spawnDistance + Vector3.up * 0.5f;
-        GameObject instance = pool.Get(spawnPosition, Quaternion.LookRotation(direction));
+        Quaternion spawnRotation = Quaternion.LookRotation(direction);
+        GameObject instance = pool.Get(spawnPosition, spawnRotation);
 
         if (instance.TryGetComponent<Projectile>(out var projectile))
         {
             projectile.Initialize(direction, damage, owner, bonusLifetime, rangeOverride);
         }
+
+        // Covers every ranged shot through this one shared spawner - the player's basic ranged
+        // attack, Enhanced Shot, and every enemy ranged pattern - without each caller needing its
+        // own muzzle flash wiring.
+        CombatVfxLibrary.Instance?.SpawnMuzzleFlash(spawnPosition, spawnRotation);
     }
 }

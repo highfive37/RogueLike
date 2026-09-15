@@ -38,6 +38,10 @@ public class RoomController : MonoBehaviour
     // Built once in Initialize() alongside the obstacle geometry - EnemyChaseState calls
     // FindPath() below through this when a straight line to the player is blocked.
     private RoomPathfindingGrid _pathfindingGrid;
+    // Built once in Initialize() - EnemyChaseState reserves/releases a slot and reads its
+    // position through the wrappers below (RoomAttackSlots is pure/scene-free, same convention
+    // as RoomPathfindingGrid).
+    private RoomAttackSlots _attackSlots;
     // Keyed by (direction, sub-cell slot) rather than just direction - a
     // multi-cell merged room's side can carry up to 2 doors (Phase 3, see
     // Docs/DevLog.md 2026-09-11); an ordinary single-cell room only ever uses
@@ -85,6 +89,7 @@ public class RoomController : MonoBehaviour
         BuildGeometry(data);
         BuildObstacles(data);
         _pathfindingGrid = new RoomPathfindingGrid(data.Footprint, data.Obstacles, TileSize);
+        _attackSlots = new RoomAttackSlots();
     }
 
     // World<->local wrappers around the pure RoomBounds math (which is unit-tested
@@ -150,6 +155,16 @@ public class RoomController : MonoBehaviour
 
         return worldPath;
     }
+
+    // Thin wrappers around the pure RoomAttackSlots (see that file) - EnemyChaseState reserves a
+    // slot on entering Chase, releases it on disengaging (Idle/Patrol/Dead entry), and reads its
+    // current position every PhysicsTick instead of walking straight at the player.
+    public void ReserveAttackSlot(EnemyStateMachine enemy) => _attackSlots?.Reserve(enemy);
+
+    public void ReleaseAttackSlot(EnemyStateMachine enemy) => _attackSlots?.Release(enemy);
+
+    public Vector3 GetAttackSlotPosition(EnemyStateMachine enemy, Vector3 target) =>
+        _attackSlots != null ? _attackSlots.GetSlotPosition(enemy, target) : target;
 
     // Picks whichever single neighbour of `cell` the continuous position at `worldPosition`
     // is offset furthest toward (comparing local-space distance from the cell's own centre

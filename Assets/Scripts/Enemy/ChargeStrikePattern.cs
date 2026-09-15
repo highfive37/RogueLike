@@ -70,7 +70,11 @@ public class ChargeStrikePattern : IAttackPattern
         // so without this the hitbox (a child fixed to the boss's own facing) keeps pointing
         // wherever the boss happened to be facing before this attack was selected instead of the
         // direction it's actually charging, and can miss the player entirely during the dash.
-        machine.Body.MoveRotation(Quaternion.LookRotation(_dashDirection));
+        // Captured as a local rather than read back from machine.transform.rotation right below -
+        // Rigidbody.MoveRotation only takes effect at the next physics step, so transform.rotation
+        // would still read the pre-dash facing if used immediately after this call.
+        Quaternion facing = Quaternion.LookRotation(_dashDirection);
+        machine.Body.MoveRotation(facing);
 
         _dashDuration = _data.DashSpeed > 0f ? _data.Range / _data.DashSpeed : 0f;
         _isDashing = true;
@@ -79,6 +83,10 @@ public class ChargeStrikePattern : IAttackPattern
         _machine = machine;
         SetCollisionIgnored(true);
         machine.ChargeHitbox?.Arm(machine.transform, _data.Damage, KnockbackMultiplier);
+
+        // Plays at the launch, not the landing (2026-09-15 user request) - reads as a dust kick-up
+        // from the sudden takeoff rather than an impact puff when the dash stops.
+        CombatVfxLibrary.Instance?.SpawnBossChargeDust(machine.Body.position, facing);
     }
 
     // Narrowly ignores collision between just this enemy's own capsule and the player's, instead

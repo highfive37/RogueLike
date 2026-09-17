@@ -524,7 +524,26 @@ Dodge/Dash, 단일 슬롯 스킬 시스템, `EnemyStateMachine` FSM, ScriptableO
   (`AI_Decision_Log.md` 2026-09-08 (5)).
 - ⏳ 나머지: AI tick 분산(`EnemyAIManager`), `GetComponent` 캐싱 정리 — 실측 병목 없어 비긴급,
   Phase 6에서 실제 병목 위주로 접근
+- ✅ §6.5 After 표 — 그루트 4종×50/100/200 (2026-09-17): 킬/재보충 루틴 + `CombatVfxLibrary`
+  이식 + 플레이어 무적 해제(옵션 B, `AI_Decision_Log.md` 2026-09-17) 후 재측정. Median CPU
+  전 구간 예산의 50% 이하, GC는 킬 사이클 순간에만 스파이크(200마리 기준 4종 전부
+  240KB대). BurstRanged 50/100에서만 100ms대 CPU 이상치 관찰 — 원인 미확정, 다음
+  세션 후보(아래 보스 사례로 미루어 GC 수집 우연 중첩일 가능성 유력). 보스 파트도
+  3회 반복 측정 — median 3.7ms로 일관, 1차의 38.24ms 스파이크는 `GetFrameSelfTimeSample`
+  로 확인 결과 `GarbageCollector.CollectIncremental`(68%)이 원인 - 돌진 로직 자체 비용이
+  아니라 Incremental GC 수집 사이클과 우연히 겹친 것으로 확정, 2·3차는 재현 안 됨.
+  상세 표는 `DevLog.md` 2026-09-17 (50)
+- ❌ Addressables(Phase 5) — 진행 안 하기로 확정(2026-09-17). Portfolio value 25/100:
+  룸 타일 때와 같은 이유(한 씬에 모든 게 동시 존재)로 구조적으로 안 맞고, 이미 확보한
+  기술 스택이 충분히 두꺼움. `DevLog.md` 2026-09-17 (50) 참고
 - Stage 2.5(룸 시스템)가 실질적으로 안정화된 후 재개 여부 논의 예정
+
+### Phase 7 — 포트폴리오 문서화 (다음 세션 최우선)
+- ⏳ `README.md` 현행화 — 커밋 1개뿐(테스트+CI 시점 스냅샷), 절차적 생성/A*/커스텀
+  툴링/아트·애니메이션/보스 AI/VFX/§6.5 프로파일링이 전혀 반영 안 됨. 1차는 텍스트만,
+  스크린샷/GIF는 별도 라운드
+- ⏳ README 이후: Claude Code+Unity MCP 워크플로우 / AI 제안 거부·수정 사례 / 배운 점을
+  담을 별도의 서술형 포트폴리오 문서 + 스크린샷/GIF 캡처
 
 Phase 4(아트/연출), Phase 5(Addressables), Phase 7(포트폴리오 문서화)는 이
 단계들 밖의 별도 트랙으로 남겨둠 — 필요해지는 시점에 진행.

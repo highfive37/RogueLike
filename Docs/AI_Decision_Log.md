@@ -44,6 +44,49 @@ Claude Code와 논의하며 내린 설계 결정을 기록하는 로그. 목적�
 
 ---
 
+## 2026-09-17 — BenchmarkScene 피격 이펙트 재현 방식: 무적 유지+합성 호출(A) vs 무적 해제+체력 999999(B)
+
+### 배경 / 문제
+- 2026-09-15 (49)에서 §6.5 After 프로파일링 준비 중 "피격 이펙트를 어떻게 재현할지"를
+  A/B 두 안으로 제시하고 결정을 미뤄둔 상태였음. 이번 세션에서 유저가 "근접 적한테
+  둘러싸여서 맞아보는" 실플레이 테스트를 하다가 "플레이어가 맞아도 피격 이펙트가
+  안 뜬다"고 제보 - 확인해보니 `BenchmarkSpawner.Start()`가 플레이어 `HealthComponent`를
+  항상 무적으로 고정해뒀던 게 원인(`HealthComponent.TakeDamage`의 `AnyDamageTaken`
+  발화 조건에 `!IsInvulnerable`이 포함돼 있어, 무적인 이상 데미지 판정은 되어도 VFX
+  트리거 이벤트 자체가 안 나감).
+
+### 검토한 대안
+| 대안 | 장점 | 단점 |
+|---|---|---|
+| A. 무적 유지 + 벤치마크 스크립트가 `CombatVfxLibrary.SpawnHitImpact()`를 직접 호출 | VFX만 순수 격리해서 측정, 플레이어 생존 걱정 없음 | 실제 전투 파이프라인과 분리된 합성 호출이라 "진짜 게임에서처럼" 동시다발 피격 빈도를 재현 못 함 |
+| B. 무적 해제 + `maxHealth`를 크게 잡아 실제 공격이 진짜로 맞게 둠 | `HealthComponent`→`AnyDamageTaken`→`CombatVfxLibrary`까지 실제 프로덕션 경로 그대로 사용, 적 수가 늘수록 동시 피격 빈도도 자연스럽게 늘어나 오히려 더 현실적인 스케일링 | 체력 산정을 잘못하면(너무 낮게) 벤치마크 도중 플레이어가 죽어 조건이 바뀔 위험 |
+
+### Claude 제안
+- B안 권장 - 이미 §6.5 킬/재보충 루틴 자체가 "실제 `HealthComponent.TakeDamage` 경로를
+  그대로 태운다"는 방향으로 구현돼 있어(합성 호출 없이 실제 데미지로 적을 죽임),
+  플레이어 쪽만 A안(합성 호출)으로 가면 같은 벤치마크 안에서 측정 철학이 갈라짐.
+  체력을 극단적으로 크게(999999) 잡으면 B안의 유일한 리스크(도중 사망)도 사실상
+  사라짐.
+
+### 선택한 방향
+- B안 채택. `BenchmarkSpawner`에서 무적 처리 코드(`playerHealth` 필드 + `Start()`의
+  `SetInvulnerable(true)` 호출) 완전 제거, BenchmarkScene의 Player 인스턴스
+  `HealthComponent.maxHealth`를 999999로 설정(씬 인스턴스 한정 - Player 프리팹 자체나
+  Prototype 씬은 안 건드림).
+
+### 선택 이유
+- A안은 "히트 이펙트 재생 자체는 되는지"만 확인 가능하고 "몇 마리가 동시에 나를
+  때리면 이펙트 폭주가 감당되는지"는 확인 못 함 - 후자가 §6.5의 실제 목적(VFX 도입
+  후 실사용 시나리오에서 예산 안에 있는가)에 더 가까움. B안의 체력 산정 리스크는
+  999999라는 사실상 무한대에 가까운 값으로 해소.
+
+### 관련 파일
+- `Assets/Scripts/Benchmark/BenchmarkSpawner.cs`
+- `Assets/Scenes/BenchmarkScene.unity` (Player HealthComponent.maxHealth)
+- `Docs/DevLog.md` 2026-09-17 (50)
+
+---
+
 ## 2026-09-14 — 장애물 이동 클램프를 실제 콜라이더 바운즈 기준으로 통일 ("대쉬하면 벽을 뚫고 온다" 수정)
 
 ### 배경 / 문제

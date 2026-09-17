@@ -23,6 +23,14 @@ public class ChargeStrikePattern : IAttackPattern
     private const float KnockbackMultiplier = 2.5f;
 
     private readonly ChargeStrikePatternData _data;
+
+    // Benchmark-only override (see BenchmarkSpawner.AddBoss) - bypasses the SelectionChance
+    // reroll below so this pattern fires every time its cooldown clears instead of waiting on a
+    // low, intentionally-rare roll. Never set outside BenchmarkScene; a normal boss instance
+    // keeps its authored rarity untouched (the shared ChargeStrikePatternData asset itself is
+    // never modified - this flag lives on the per-instance pattern object only).
+    private bool _forceAlwaysReady;
+
     private float _cooldownRemaining;
     private bool _isDashing;
     private float _dashElapsed;
@@ -49,6 +57,8 @@ public class ChargeStrikePattern : IAttackPattern
         // rest.
         _cooldownRemaining = data.Cooldown;
     }
+
+    public void SetForceAlwaysReady(bool force) => _forceAlwaysReady = force;
 
     public bool IsReady => _cooldownRemaining <= 0f;
     public bool IsBusy => _isDashing || _isPausing;
@@ -121,7 +131,7 @@ public class ChargeStrikePattern : IAttackPattern
         }
 
         _cooldownRemaining -= deltaTime;
-        if (_cooldownRemaining <= 0f && Random.value > _data.SelectionChance)
+        if (_cooldownRemaining <= 0f && !_forceAlwaysReady && Random.value > _data.SelectionChance)
         {
             _cooldownRemaining = _data.Cooldown;
         }

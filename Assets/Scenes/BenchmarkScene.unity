@@ -1580,6 +1580,54 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 605045937}
   m_CullTransparentMesh: 1
+--- !u!1 &637607471
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 637607473}
+  - component: {fileID: 637607472}
+  m_Layer: 0
+  m_Name: VfxPool_BossChargeTelegraph
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &637607472
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 637607471}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 00716125b86821345828f736fc825429, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: RogueLike::GameObjectPool
+  prefab: {fileID: 4503612902121041701, guid: 5a936c83b1746f14f9100db745e94f04, type: 3}
+  defaultCapacity: 3
+  maxSize: 10
+  existingInstanceTag: 
+--- !u!4 &637607473
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 637607471}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 999, y: 0, z: 999}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &676262228
 GameObject:
   m_ObjectHideFlags: 0
@@ -3336,6 +3384,7 @@ MonoBehaviour:
   grenadeExplosionPool: {fileID: 1651325270}
   enemyDeathPool: {fileID: 1158364515}
   bossChargeDustPool: {fileID: 1600061021}
+  bossChargeTelegraphPool: {fileID: 637607472}
 --- !u!4 &1226355337
 Transform:
   m_ObjectHideFlags: 0
@@ -5520,3 +5569,4 @@ SceneRoots:
   - {fileID: 1158364516}
   - {fileID: 1600061022}
   - {fileID: 1226355337}
+  - {fileID: 637607473}

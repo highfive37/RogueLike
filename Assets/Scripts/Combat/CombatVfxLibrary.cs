@@ -19,6 +19,7 @@ public class CombatVfxLibrary : MonoBehaviour
     [SerializeField] private GameObjectPool grenadeExplosionPool;
     [SerializeField] private GameObjectPool enemyDeathPool;
     [SerializeField] private GameObjectPool bossChargeDustPool;
+    [SerializeField] private GameObjectPool bossChargeTelegraphPool;
 
     // Roughly chest height above a hit target's pivot - just where a hit impact reads best, not
     // tied to any specific collider dimension.
@@ -45,6 +46,7 @@ public class CombatVfxLibrary : MonoBehaviour
         grenadeExplosionPool?.WarmUp(1);
         enemyDeathPool?.WarmUp(1);
         bossChargeDustPool?.WarmUp(1);
+        bossChargeTelegraphPool?.WarmUp(1);
     }
 
     private void OnEnable()
@@ -83,6 +85,7 @@ public class CombatVfxLibrary : MonoBehaviour
     public void SpawnGrenadeExplosion(Vector3 position, Quaternion rotation) => Spawn(grenadeExplosionPool, position, rotation);
     public void SpawnEnemyDeath(Vector3 position, Quaternion rotation) => Spawn(enemyDeathPool, position, rotation);
     public void SpawnBossChargeDust(Vector3 position, Quaternion rotation) => Spawn(bossChargeDustPool, position, rotation);
+    public void SpawnBossChargeTelegraph(Vector3 position, Quaternion rotation) => Spawn(bossChargeTelegraphPool, position, rotation);
 
     private static void Spawn(GameObjectPool pool, Vector3 position, Quaternion rotation)
     {

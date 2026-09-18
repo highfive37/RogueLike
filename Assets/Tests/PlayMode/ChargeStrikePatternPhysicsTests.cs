@@ -5,11 +5,13 @@ using UnityEngine.TestTools;
 
 namespace RogueLike.Tests
 {
-    // Locks ChargeStrikePattern's dash + hitbox sequence. 2026-09-15: hit resolution moved from a
-    // single distance check at the end of a post-dash pause to a trigger hitbox (EnemyChargeHitbox)
-    // armed for the whole dash - the old approach let the hit land well after the dash had already
-    // visibly stopped, which read as "just getting bumped, no real attack landing". The pattern's
-    // WindUpDuration field is now purely a post-dash recovery hold, not a pre-hit telegraph.
+    // Locks ChargeStrikePattern's telegraph + dash + hitbox sequence. 2026-09-15: hit resolution
+    // moved from a single distance check at the end of a post-dash pause to a trigger hitbox
+    // (EnemyChargeHitbox) armed for the whole dash - the old approach let the hit land well after
+    // the dash had already visibly stopped, which read as "just getting bumped, no real attack
+    // landing". The pattern's WindUpDuration field is a post-dash recovery hold, not a pre-hit
+    // telegraph. 2026-09-18: TelegraphDuration is the actual pre-hit telegraph - a hold before the
+    // dash even starts, during which nothing dash-related may happen yet.
     public class ChargeStrikePatternPhysicsTests
     {
         private readonly TestObjects _t = new TestObjects();
@@ -58,6 +60,10 @@ namespace RogueLike.Tests
             TestObjects.SetPrivateField(data, "windUpDuration", 0.2f);
             TestObjects.SetPrivateField(data, "dashSpeed", 10f);
             TestObjects.SetPrivateField(data, "selectionChance", 1f);
+            // Zeroed out - this test is about the dash/hitbox sequence, not the pre-dash
+            // telegraph (see ChargeStrikePatternTelegraphTests), so the dash should begin on the
+            // very first PhysicsTick.
+            TestObjects.SetPrivateField(data, "telegraphDuration", 0f);
             _t.Track(data);
 
             var pattern = new ChargeStrikePattern(data);
@@ -85,6 +91,98 @@ namespace RogueLike.Tests
             }
 
             Assert.That(_damageDealt, Is.EqualTo(15f), "must still be exactly one hit's worth of damage");
+        }
+
+        // 2026-09-18: Execute() no longer launches the dash on the spot - it holds for
+        // TelegraphDuration first (facing the dash direction, warning VFX at the boss's head)
+        // so the player has an actual tell before the boss commits. Nothing dash-related (motion,
+        // collision-ignore, the hitbox) may start until that hold elapses.
+        [UnityTest]
+        public IEnumerator Execute_HoldsDuringTelegraph_ThenDashesOnceItElapses()
+        {
+            GameObject playerGo = _t.MakePlayer(new Vector3(6f, 0f, 0f));
+            var playerCapsule = playerGo.AddComponent<CapsuleCollider>();
+            playerGo.AddComponent<Rigidbody>().isKinematic = true;
+            _playerHealth = playerGo.AddComponent<HealthComponent>();
+
+            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(), Vector3.zero);
+            yield return null;
+            StopFsmAutoTick(enemy);
+            AddChargeHitbox(enemy);
+
+            var data = ScriptableObject.CreateInstance<ChargeStrikePatternData>();
+            TestObjects.SetPrivateField(data, "range", 8f);
+            TestObjects.SetPrivateField(data, "cooldown", 2.5f);
+            TestObjects.SetPrivateField(data, "damage", 15f);
+            TestObjects.SetPrivateField(data, "dashSpeed", 10f);
+            TestObjects.SetPrivateField(data, "selectionChance", 1f);
+            TestObjects.SetPrivateField(data, "telegraphDuration", 0.2f);
+            _t.Track(data);
+
+            var pattern = new ChargeStrikePattern(data);
+            pattern.Execute(enemy);
+
+            Assert.That(pattern.IsBusy, Is.True, "telegraphing counts as busy");
+            Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.False,
+                "the dash hasn't started yet - nothing should be ignored during the telegraph");
+
+            Vector3 positionBeforeTelegraph = enemy.transform.position;
+
+            // 0.2s of telegraph at a ~0.02s fixed step is ~10 ticks - stop just short of that so
+            // every tick below is still inside the hold.
+            for (int i = 0; i < 8; i++)
+            {
+                pattern.PhysicsTick(enemy, Time.fixedDeltaTime);
+                yield return new WaitForFixedUpdate();
+            }
+
+            Assert.That(enemy.transform.position, Is.EqualTo(positionBeforeTelegraph),
+                "the boss must not move at all while still telegraphing");
+            Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.False,
+                "still telegraphing - collision must still not be ignored");
+            Assert.That(_damageDealt, Is.EqualTo(0f), "the hitbox must not be armed during the telegraph");
+
+            // Push past the remaining telegraph time and into the dash.
+            for (int i = 0; i < 30 && _damageDealt == 0f; i++)
+            {
+                pattern.PhysicsTick(enemy, Time.fixedDeltaTime);
+                yield return new WaitForFixedUpdate();
+            }
+
+            Assert.That(_damageDealt, Is.EqualTo(15f), "the dash should land once the telegraph elapses");
+        }
+
+        // Interrupting before the boss has even committed to the dash (hit-stagger, death, or
+        // anything else that can cut an attack short) must leave nothing armed or ignored behind -
+        // there is nothing to unwind yet, but IsBusy must still clear so the FSM can move on.
+        [UnityTest]
+        public IEnumerator Interrupt_DuringTelegraph_ClearsBusyWithoutTouchingCollisionOrHitbox()
+        {
+            GameObject playerGo = _t.MakePlayer(new Vector3(3f, 0f, 0f));
+            var playerCapsule = playerGo.AddComponent<CapsuleCollider>();
+            playerGo.AddComponent<HealthComponent>();
+
+            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(), Vector3.zero);
+            yield return null;
+            StopFsmAutoTick(enemy);
+            AddChargeHitbox(enemy);
+
+            var data = ScriptableObject.CreateInstance<ChargeStrikePatternData>();
+            TestObjects.SetPrivateField(data, "range", 8f);
+            TestObjects.SetPrivateField(data, "dashSpeed", 10f);
+            TestObjects.SetPrivateField(data, "selectionChance", 1f);
+            TestObjects.SetPrivateField(data, "telegraphDuration", 0.3f);
+            _t.Track(data);
+
+            var pattern = new ChargeStrikePattern(data);
+            pattern.Execute(enemy);
+            pattern.PhysicsTick(enemy, Time.fixedDeltaTime); // still well inside the 0.3s telegraph
+
+            pattern.Interrupt();
+
+            Assert.That(pattern.IsBusy, Is.False, "interrupting must clear the telegraph, not just the dash");
+            Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.False,
+                "collision was never ignored yet - interrupting mid-telegraph must not touch it");
         }
 
         // 2026-09-15: a fast-closing dash could end up physically overlapping the player's
@@ -116,6 +214,10 @@ namespace RogueLike.Tests
             TestObjects.SetPrivateField(data, "windUpDuration", 0.2f);
             TestObjects.SetPrivateField(data, "dashSpeed", 10f);
             TestObjects.SetPrivateField(data, "selectionChance", 1f);
+            // Zeroed out - this test is about the dash/recovery sequence, not the pre-dash
+            // telegraph (see ChargeStrikePatternTelegraphTests), so the dash begins on the very
+            // first PhysicsTick.
+            TestObjects.SetPrivateField(data, "telegraphDuration", 0f);
             _t.Track(data);
 
             var pattern = new ChargeStrikePattern(data);
@@ -125,13 +227,19 @@ namespace RogueLike.Tests
 
             pattern.Execute(enemy);
 
-            Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.True,
-                "should be ignored the instant the dash starts");
+            Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.False,
+                "should still not be ignored during the (zero-length) pre-dash telegraph");
 
             for (int i = 0; i < 45 && pattern.IsBusy; i++)
             {
                 pattern.PhysicsTick(enemy, Time.fixedDeltaTime);
                 yield return new WaitForFixedUpdate();
+
+                if (i == 0)
+                {
+                    Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.True,
+                        "should be ignored the instant the dash actually starts");
+                }
             }
 
             Assert.That(pattern.IsBusy, Is.False, "attack should have fully resolved by now");
@@ -155,10 +263,14 @@ namespace RogueLike.Tests
             TestObjects.SetPrivateField(data, "range", 8f);
             TestObjects.SetPrivateField(data, "dashSpeed", 10f);
             TestObjects.SetPrivateField(data, "selectionChance", 1f);
+            // Zeroed out so the dash (not just the telegraph) is what's actually mid-flight when
+            // Interrupt() below is called - matches the test name.
+            TestObjects.SetPrivateField(data, "telegraphDuration", 0f);
             _t.Track(data);
 
             var pattern = new ChargeStrikePattern(data);
             pattern.Execute(enemy);
+            pattern.PhysicsTick(enemy, Time.fixedDeltaTime); // clears the (zero-length) telegraph, starts the dash
             Assert.That(Physics.GetIgnoreCollision(enemy.Capsule, playerCapsule), Is.True);
 
             pattern.Interrupt();

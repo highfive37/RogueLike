@@ -9,6 +9,8 @@ using UnityEngine;
 // visibly connected, which read as "just getting bumped by an object, no real attack" - see
 // DevLog 2026-09-15. WindUpDuration (inherited) now means "hold still this long after the dash
 // ends" - recovery, not a pre-hit telegraph; the hit itself already happened during the dash.
+// The actual pre-hit telegraph is TelegraphDuration (2026-09-18): a brief hold, facing the dash
+// direction with a warning VFX at the boss's head, before the dash itself launches.
 public class ChargeStrikePattern : IAttackPattern
 {
     // How close the dash stops short of the player - same contact-clearance convention
@@ -31,7 +33,14 @@ public class ChargeStrikePattern : IAttackPattern
     // never modified - this flag lives on the per-instance pattern object only).
     private bool _forceAlwaysReady;
 
+    // Roughly head height above a boss's own pivot for the pre-dash telegraph VFX - like
+    // CombatVfxLibrary's HitImpactHeight, an eyeballed "reads best here" offset rather than
+    // anything tied to a specific model's bone.
+    private const float TelegraphHeightFallback = 2f;
+
     private float _cooldownRemaining;
+    private bool _isTelegraphing;
+    private float _telegraphElapsed;
     private bool _isDashing;
     private float _dashElapsed;
     private float _dashDuration;
@@ -61,7 +70,7 @@ public class ChargeStrikePattern : IAttackPattern
     public void SetForceAlwaysReady(bool force) => _forceAlwaysReady = force;
 
     public bool IsReady => _cooldownRemaining <= 0f;
-    public bool IsBusy => _isDashing || _isPausing;
+    public bool IsBusy => _isTelegraphing || _isDashing || _isPausing;
     public EnemyAnimationCue AnimationCue => EnemyAnimationCue.Attack;
 
     public bool IsInRange(EnemyStateMachine machine)
@@ -69,34 +78,61 @@ public class ChargeStrikePattern : IAttackPattern
         return machine.CanSeePlayer(_data.Range);
     }
 
+    // Selection no longer launches the dash on the spot - it starts a brief telegraph hold
+    // instead (2026-09-18 user request), so the player gets an actual warning (VFX at the boss's
+    // head) before the boss commits to the charge, rather than reacting to the smoke kicked up by
+    // a dash that's already under way.
     public void Execute(EnemyStateMachine machine)
     {
         Vector3 direction = machine.Player != null ? machine.Player.position - machine.transform.position : machine.transform.forward;
         direction.y = 0f;
         _dashDirection = direction.sqrMagnitude > 0.0001f ? direction.normalized : machine.transform.forward;
 
-        // Face the dash direction immediately, not just during the post-dash recovery hold -
-        // TickDash itself never rotates (the direction is fixed for the whole dash, no homing),
-        // so without this the hitbox (a child fixed to the boss's own facing) keeps pointing
-        // wherever the boss happened to be facing before this attack was selected instead of the
-        // direction it's actually charging, and can miss the player entirely during the dash.
-        // Captured as a local rather than read back from machine.transform.rotation right below -
-        // Rigidbody.MoveRotation only takes effect at the next physics step, so transform.rotation
-        // would still read the pre-dash facing if used immediately after this call.
+        // Face the dash direction immediately, for the telegraph hold as well as the dash itself -
+        // TickDash never rotates (the direction is fixed for the whole dash, no homing), so
+        // without this the hitbox (a child fixed to the boss's own facing) keeps pointing wherever
+        // the boss happened to be facing before this attack was selected instead of the direction
+        // it's actually about to charge. Captured as a local rather than read back from
+        // machine.transform.rotation right below - Rigidbody.MoveRotation only takes effect at the
+        // next physics step, so transform.rotation would still read the pre-telegraph facing if
+        // used immediately after this call.
         Quaternion facing = Quaternion.LookRotation(_dashDirection);
         machine.Body.MoveRotation(facing);
 
+        _machine = machine;
+        _isTelegraphing = true;
+        _telegraphElapsed = 0f;
+
+        CombatVfxLibrary.Instance?.SpawnBossChargeTelegraph(HeadPosition(machine), facing);
+    }
+
+    private void BeginDash(EnemyStateMachine machine)
+    {
         _dashDuration = _data.DashSpeed > 0f ? _data.Range / _data.DashSpeed : 0f;
         _isDashing = true;
         _dashElapsed = 0f;
 
-        _machine = machine;
         SetCollisionIgnored(true);
         machine.ChargeHitbox?.Arm(machine.transform, _data.Damage, KnockbackMultiplier);
 
         // Plays at the launch, not the landing (2026-09-15 user request) - reads as a dust kick-up
         // from the sudden takeoff rather than an impact puff when the dash stops.
-        CombatVfxLibrary.Instance?.SpawnBossChargeDust(machine.Body.position, facing);
+        CombatVfxLibrary.Instance?.SpawnBossChargeDust(machine.Body.position, machine.transform.rotation);
+    }
+
+    // Approximates "the boss's head" from its own capsule rather than a named bone, matching the
+    // rest of this project's height-offset VFX anchors (e.g. CombatVfxLibrary.HitImpactHeight) -
+    // works for any boss model without needing a rig-specific reference.
+    private static Vector3 HeadPosition(EnemyStateMachine machine)
+    {
+        if (machine.Capsule != null)
+        {
+            Vector3 top = machine.transform.position;
+            top.y = machine.Capsule.bounds.max.y;
+            return top;
+        }
+
+        return machine.transform.position + Vector3.up * TelegraphHeightFallback;
     }
 
     // Narrowly ignores collision between just this enemy's own capsule and the player's, instead
@@ -139,6 +175,12 @@ public class ChargeStrikePattern : IAttackPattern
 
     public void PhysicsTick(EnemyStateMachine machine, float fixedDeltaTime)
     {
+        if (_isTelegraphing)
+        {
+            TickTelegraph(machine, fixedDeltaTime);
+            return;
+        }
+
         if (_isDashing)
         {
             TickDash(machine, fixedDeltaTime);
@@ -149,6 +191,18 @@ public class ChargeStrikePattern : IAttackPattern
         {
             TickPause(machine, fixedDeltaTime);
         }
+    }
+
+    private void TickTelegraph(EnemyStateMachine machine, float fixedDeltaTime)
+    {
+        _telegraphElapsed += fixedDeltaTime;
+        if (_telegraphElapsed < _data.TelegraphDuration)
+        {
+            return;
+        }
+
+        _isTelegraphing = false;
+        BeginDash(machine);
     }
 
     private void TickDash(EnemyStateMachine machine, float fixedDeltaTime)
@@ -204,6 +258,7 @@ public class ChargeStrikePattern : IAttackPattern
 
     public void Interrupt()
     {
+        _isTelegraphing = false;
         _isDashing = false;
         _isPausing = false;
         _cooldownRemaining = _data.Cooldown;

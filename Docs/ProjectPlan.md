@@ -1,165 +1,169 @@
-# Project Plan — 3D Arena Roguelite
+# 프로젝트 기획서 — 3D 아레나 로그라이트
 
-## 1. Project Goal
+## 1. 프로젝트 목표
 
-Build a small-scale **3D quarter-view action roguelite** in Unity using Claude Code and Unity MCP.
+Unity에서 Claude Code와 Unity MCP를 활용해 소규모 **3D 쿼터뷰 액션 로그라이트**를 만든다.
 
-The project is intended not only to produce a playable game, but also to serve as a **game client developer portfolio project** that demonstrates:
+이 프로젝트는 플레이 가능한 게임을 만드는 것뿐 아니라, 다음을 증명하는 **게임 클라이언트 개발자 포트폴리오**로도 기능하는 것을 목표로 한다:
 
-- C# / Unity fundamentals
-- System design and architecture
-- AI-assisted development workflow
-- Profiling and optimization
-- Ability to explain technical decisions in interviews
+- C# / Unity 기초
+- 시스템 설계와 아키텍처
+- AI 보조 개발 워크플로우
+- 프로파일링과 최적화
+- 기술적 의사결정을 면접에서 설명하는 능력
 
-The goal is not to make the largest possible game. The priority is to complete a compact, polished, technically defensible project.
-
----
-
-## 2. Game Concept
-
-### Genre
-3D quarter-view action roguelite, **in the style of a 3D _The Binding of Isaac_ / _Enter the Gungeon_** — spatial rooms connected by doors, procedurally generated floors, tight twin-stick-style movement and dodging, run-based structure. (Genre explicitly declared by the developer 2026-09-09 to anchor future scope decisions; see `ClaudeSessionSummary.md` §1.)
-
-### Starting Character / Weapon Type
-The player's initial combat style will depend on the character selected at the start of a run.
-
-- **Ranged character** — starts with a gun-type ranged weapon.
-- **Melee character** — starts with a sword-type melee weapon.
-
-The two starting archetypes should share the same overall game loop while providing clearly different attack ranges, positioning requirements, and combat feel.
-
-### Core Flow
-- Select a starting character and weapon archetype.
-- Enter a room.
-- Fight enemies directly using movement, aiming, attacks, skills, and dodge.
-- Clear the room.
-- Choose an upgrade or weapon/skill enhancement.
-- Move to the next room.
-- Continue until reaching the boss and ending the run.
-
-### Target Playtime
-Approximately **15–20 minutes per run**.
+목표는 최대한 큰 게임을 만드는 것이 아니다. 우선순위는 작지만 완성도 있고 기술적으로 설명 가능한 프로젝트를 끝까지 완료하는 것이다.
 
 ---
 
-## 3. Target Content Scope
+## 2. 게임 컨셉
 
-The planned game scope is:
+### 장르
 
-- 1 player character
-- 1 basic attack
-- Multiple collectible skill items, with **1 skill item equipped and usable during a stage at a time**
-- Dodge / dash
-- 4–5 normal enemy types
-- 1–2 elite enemy types
-- 1 boss
-- 5–10 stages or rooms
-- Upgrade selection system
-- HP / skill UI
-- Sound and effects
-- Settings
-- Pause
-- Game over
-- A complete playable flow from start to ending
+3D 쿼터뷰 액션 로그라이트 — **3D 바인딩 오브 아이작 / 엔터 더 건전 스타일** — 문으로 연결된 공간형 방, 절차적으로 생성되는 층, 타이트한 트윈스틱식 이동과 회피, 런 기반 구조. (개발자가 2026-09-09에 향후 스코프 판단의 기준으로 삼기 위해 장르를 명시적으로 선언함. `ClaudeSessionSummary.md` §1 참고.)
 
-The project should avoid excessive content expansion. Technical quality and completion are more important than quantity.
+### 시작 캐릭터 / 무기 타입
 
----
+플레이어의 초기 전투 스타일은 런 시작 시 선택한 캐릭터에 따라 달라진다.
 
-## 4. Core Controls
+- **원거리 캐릭터** — 총기형 원거리 무기로 시작.
+- **근접 캐릭터** — 검형 근접 무기로 시작.
 
-Initial prototype controls:
+두 시작 아키타입은 전체적인 게임 루프는 공유하되, 명확히 다른 공격 사거리·포지셔닝 요구·전투 감각을 제공해야 한다.
 
-- **WASD** — movement
-- **Mouse** — aim
-- **LMB** — basic attack
-- **E** — equipped skill item
-- **Space** — dodge
+### 핵심 흐름
 
-The first implementation should use simple primitives such as capsules and cubes before replacing them with art assets.
+- 시작 캐릭터와 무기 아키타입을 선택한다.
+- 방에 입장한다.
+- 이동·조준·공격·스킬·회피를 활용해 적과 직접 전투한다.
+- 방을 클리어한다.
+- 업그레이드 또는 무기/스킬 강화를 선택한다. *(실제로는 이 단계가 2026-08-31에 폐기되고, 바닥 드롭 + 아이템 방/보스방 보장 지급 방식으로 대체됨. 핵심 흐름 자체는 원안과 동일하게 유지됨. `ClaudeSessionSummary.md` §1·§4 참고.)*
+- 다음 방으로 이동한다.
+- 보스에 도달해 런을 종료할 때까지 반복한다.
 
-### Skill Item System
+### 목표 플레이타임
 
-The player may own multiple skill items, but only **one skill item can be equipped and used during a stage**.
-
-- The equipped skill is activated with the **E key**.
-- The player starts the prototype with **Grenade equipped by default**.
-- Skill items cannot be freely swapped during an active stage in the final gameplay design.
-- After clearing a stage and before the next stage begins, the player will eventually be able to change the equipped skill through a dedicated **Skill Item Swap UI**.
-- The exact UI and stage-transition flow will be implemented later.
-- A **skill level system** is planned, but its detailed rules, upgrade method, scaling, and maximum level are not yet decided.
-
-#### Prototype-Only Skill Switching
-
-For prototype testing only, temporary number-key shortcuts will be available to swap the currently equipped skill without using the future Skill Item Swap UI.
-
-- **1** — equip **Enhanced Shot**
-- **2** — equip **Grenade**
-- **3** — equip **Flamethrower**
-
-These shortcuts are strictly a development/prototype convenience and are **not part of the intended final gameplay flow**. They should be removed or disabled once the proper between-stage Skill Item Swap UI is implemented.
-
-#### Planned Skill Item — Grenade
-
-The Grenade skill uses a two-step E-key interaction.
-
-1. Press **E** once:
-   - The player enters a grenade-ready state and holds the grenade while continuing to aim.
-   - The grenade's **2.5-second explosion timer starts immediately at this moment**, not when the grenade is thrown.
-2. Press **E** again:
-   - The grenade is thrown in the direction the player is currently facing.
-   - The throw follows a simple parabolic arc and travels approximately **2.5 meters**.
-3. Explosion:
-   - The grenade explodes when **2.5 seconds have elapsed since the first E press**, even if part of that time was spent holding it.
-   - The explosion deals **15 damage** to enemies within approximately **1 meter** of the grenade.
-4. Cooldown:
-   - After the grenade is thrown, the skill enters a **3-second cooldown**.
-
-Prototype values such as throw distance, explosion radius, damage, fuse time, and cooldown may be adjusted later through playtesting.
-
-#### Planned Skill Item — Enhanced Shot
-
-The Enhanced Shot skill is a simple single-projectile skill intended to provide a straightforward skill option alongside more complex skills.
-
-- Press **E**:
-  - The player temporarily uses a dedicated skill weapon and fires **one non-piercing enhanced projectile** in the direction the player is currently facing.
-- Projectile behavior:
-  - The projectile travels forward in a straight line.
-  - It stops at the **first enemy it collides with**.
-  - It deals **12 damage** to that enemy.
-  - The projectile does not pierce through enemies.
-- Cooldown:
-  - The cooldown starts immediately after the shot is fired.
-  - Cooldown duration: **2 seconds**.
-
-This skill does not need to be included in the earliest prototype milestone, but should remain part of the planned skill-item pool because it provides a deliberately simple implementation compared with skills such as Grenade and Flamethrower.
-
-#### Planned Skill Item — Flamethrower
-
-The Flamethrower skill is a hold-to-use skill.
-
-- Hold **E**:
-  - The player equips/uses the flamethrower while the key remains held.
-  - The flamethrower attacks in the direction the player is facing.
-  - The final effect is intended to be fan/cone-shaped.
-  - During the prototype phase, the damage area may be represented by a simple **rectangular zone**.
-- Damage:
-  - Enemies inside the active area take **3 damage per second**.
-- Maximum duration:
-  - The flamethrower can remain active for up to **7 seconds** per activation.
-- End conditions:
-  - If the player releases **E** before 7 seconds, the flamethrower ends immediately.
-  - If 7 seconds elapse while E is still held, the flamethrower ends automatically.
-  - When the skill ends, the player returns to the normal combat state.
-
-The cooldown/recharge behavior after Flamethrower use has **not yet been finalized** and should not be assumed until explicitly decided.
+런당 약 **15~20분**.
 
 ---
 
-## 5. Suggested Project Architecture
+## 3. 목표 콘텐츠 스코프
 
-Initial high-level structure:
+계획된 게임 스코프는 다음과 같다:
+
+- 플레이어 캐릭터 1종
+- 기본 공격 1종
+- 수집 가능한 다수의 스킬 아이템, 단 **스테이지 중엔 스킬 아이템 1개만 장착·사용 가능**
+- 회피/대시
+- 일반 적 4~5종
+- 엘리트 적 1~2종
+- 보스 1체
+- 스테이지 또는 방 5~10개
+- 업그레이드 선택 시스템
+- 체력/스킬 UI
+- 사운드와 이펙트
+- 설정
+- 일시정지
+- 게임 오버
+- 시작부터 엔딩까지 완결된 플레이 흐름
+
+프로젝트는 과도한 콘텐츠 확장을 피해야 한다. 기술적 완성도와 완결성이 양보다 중요하다.
+
+---
+
+## 4. 기본 조작
+
+초기 프로토타입 조작:
+
+- **WASD** — 이동
+- **마우스** — 조준
+- **좌클릭(LMB)** — 기본 공격
+- **E** — 장착한 스킬 아이템 사용
+- **Space** — 회피
+
+첫 구현은 아트 에셋으로 교체하기 전, 캡슐·큐브 같은 단순 프리미티브를 사용한다.
+
+### 스킬 아이템 시스템
+
+플레이어는 여러 개의 스킬 아이템을 보유할 수 있지만, **스테이지 중엔 스킬 아이템 1개만 장착·사용**할 수 있다.
+
+- 장착한 스킬은 **E 키**로 발동한다.
+- 플레이어는 프로토타입 시작 시 **그레네이드를 기본 장착한 채로** 시작한다. *(실제로는 이 규칙이 폐기됨 — 플레이어는 아무것도 장착하지 않은 채로 시작하며, 스킬(액티브 아이템)은 오직 바닥 드롭/보장 지급으로만 획득한다. `ClaudeSessionSummary.md` §1·§4 참고.)*
+- 최종 게임플레이 설계상 스킬 아이템은 스테이지 진행 중 자유롭게 교체할 수 없다.
+- 스테이지를 클리어한 후, 다음 스테이지가 시작되기 전에 플레이어는 전용 **스킬 아이템 교체 UI**를 통해 장착 스킬을 바꿀 수 있게 될 예정이다.
+- 정확한 UI와 스테이지 전환 흐름은 이후에 구현한다.
+- **스킬 레벨 시스템**이 계획돼 있으나, 세부 규칙·강화 방식·스케일링·최대 레벨은 아직 결정되지 않았다.
+
+#### 프로토타입 전용 스킬 전환
+
+프로토타입 테스트 전용으로, 향후 만들어질 스킬 아이템 교체 UI 없이도 현재 장착한 스킬을 바꿀 수 있는 임시 숫자 키 단축키를 둔다.
+
+- **1** — **강화 샷(Enhanced Shot)** 장착
+- **2** — **그레네이드** 장착
+- **3** — **화염방사기** 장착
+
+이 단축키들은 순전히 개발/프로토타입 편의 기능이며 **최종 게임플레이 흐름에는 포함되지 않는다**. 정식 스테이지 간 스킬 아이템 교체 UI가 구현되면 제거하거나 비활성화해야 한다.
+
+#### 계획된 스킬 아이템 — 그레네이드
+
+그레네이드 스킬은 2단계 E 키 상호작용을 사용한다.
+
+1. **E**를 한 번 누르면:
+   - 플레이어는 그레네이드 준비 상태에 들어가 조준을 유지한 채 그레네이드를 든다.
+   - 그레네이드를 던지는 시점이 아니라 **이 순간 즉시 2.5초 폭발 타이머가 시작**된다.
+2. **E**를 다시 누르면:
+   - 플레이어가 현재 바라보는 방향으로 그레네이드를 던진다.
+   - 투척은 단순한 포물선 궤적을 그리며 약 **2.5미터**를 이동한다.
+3. 폭발:
+   - 첫 E 입력 이후 **2.5초가 경과하면** 그레네이드가 폭발한다(그 시간의 일부를 들고 있는 데 썼더라도 무관).
+   - 폭발은 그레네이드 주변 약 **1미터** 안의 적에게 **15의 피해**를 입힌다.
+4. 쿨다운:
+   - 그레네이드를 던진 후 스킬은 **3초 쿨다운**에 들어간다.
+
+투척 거리·폭발 반경·데미지·퓨즈 시간·쿨다운 같은 프로토타입 수치는 이후 플레이테스트를 통해 조정될 수 있다.
+
+#### 계획된 스킬 아이템 — 강화 샷(Enhanced Shot)
+
+강화 샷 스킬은 더 복잡한 스킬들과 나란히 놓일, 단순한 단일 발사체 스킬이다.
+
+- **E** 입력 시:
+  - 플레이어가 잠시 전용 스킬 무기를 사용해 현재 바라보는 방향으로 **관통하지 않는 강화 발사체 1발**을 발사한다.
+- 발사체 동작:
+  - 발사체는 직선으로 전진한다.
+  - **처음 충돌하는 적**에서 멈춘다.
+  - 그 적에게 **12의 피해**를 입힌다.
+  - 발사체는 적을 관통하지 않는다.
+- 쿨다운:
+  - 발사 직후 즉시 쿨다운이 시작된다.
+  - 쿨다운 지속시간: **2초**.
+
+이 스킬은 최초 프로토타입 마일스톤에 반드시 포함될 필요는 없지만, 그레네이드나 화염방사기 같은 스킬 대비 의도적으로 단순한 구현을 제공하므로 계획된 스킬 아이템 풀에는 남겨둬야 한다.
+
+#### 계획된 스킬 아이템 — 화염방사기
+
+화염방사기 스킬은 홀드 방식으로 사용하는 스킬이다.
+
+- **E** 홀드 시:
+  - 키를 누르고 있는 동안 플레이어가 화염방사기를 장착/사용한다.
+  - 화염방사기는 플레이어가 바라보는 방향으로 공격한다.
+  - 최종 이펙트는 부채꼴/원뿔 형태를 목표로 한다.
+  - 프로토타입 단계에서는 데미지 영역을 단순한 **사각형 구역**으로 표현할 수 있다.
+- 데미지:
+  - 활성 영역 안의 적은 **초당 3의 피해**를 입는다.
+- 최대 지속시간:
+  - 화염방사기는 1회 발동당 최대 **7초**까지 활성 상태를 유지할 수 있다.
+- 종료 조건:
+  - 7초가 되기 전에 **E**를 떼면 화염방사기가 즉시 종료된다.
+  - E를 계속 누른 채 7초가 지나면 자동으로 종료된다.
+  - 스킬이 종료되면 플레이어는 일반 전투 상태로 돌아간다.
+
+화염방사기 사용 후의 쿨다운/재충전 동작은 **아직 확정되지 않았으며**, 명시적으로 결정되기 전까지는 가정하지 않아야 한다.
+
+---
+
+## 5. 제안하는 프로젝트 아키텍처
+
+초기 상위 구조:
 
 ```text
 Game
@@ -190,17 +194,17 @@ Game
 └─ UI
 ```
 
-This structure is a starting point, not a rigid requirement. Avoid unnecessary abstraction and over-engineering.
+이 구조는 출발점일 뿐 엄격한 요구사항이 아니다. 불필요한 추상화와 과설계를 피한다.
 
 ---
 
-## 6. Portfolio-Focused Technical Features
+## 6. 포트폴리오 중심 기술 요소
 
-The project should include the following technical elements where they are justified by the game.
+프로젝트는 게임 자체가 정당화하는 선에서 아래 기술 요소들을 포함해야 한다.
 
-### 6.1 FSM-Based Enemy AI
+### 6.1 FSM 기반 적 AI
 
-Normal enemy behavior can use states such as:
+일반 적 행동은 다음과 같은 상태를 사용할 수 있다:
 
 ```text
 Idle
@@ -214,7 +218,7 @@ Attack
 Stunned / Dead
 ```
 
-Boss behavior can use phase-based FSM logic such as:
+보스 행동은 다음과 같은 페이즈 기반 FSM 로직을 사용할 수 있다:
 
 ```text
 Phase 1
@@ -224,15 +228,15 @@ Phase 2
 Phase 3
 ```
 
-The implementation should remain understandable enough to explain why FSM was selected instead of alternatives such as Behavior Trees.
+구현은 왜 Behavior Tree 같은 대안 대신 FSM을 선택했는지 설명할 수 있을 만큼 이해하기 쉬운 수준을 유지해야 한다.
 
 ---
 
-### 6.2 ScriptableObject-Based Data
+### 6.2 ScriptableObject 기반 데이터
 
-Avoid hard-coding weapon and skill values directly into behavior scripts.
+무기·스킬 수치를 행동 스크립트에 직접 하드코딩하지 않는다.
 
-Example:
+예시:
 
 ```text
 SkillData
@@ -244,37 +248,37 @@ SkillData
 - Prefab
 ```
 
-Skill data must support multiple skill-item behaviors while preserving the rule that only **one skill item is equipped for active use during a stage**. Do not force all skills into identical fields if their behaviors differ significantly; the final data/behavior architecture should be chosen when the skill system is formally designed.
+스킬 데이터는 "스테이지 중엔 스킬 아이템 1개만 활성 장착된다"는 규칙을 유지하면서도 여러 스킬 아이템의 서로 다른 동작을 지원해야 한다. 동작이 크게 다른데도 모든 스킬을 동일한 필드에 억지로 끼워 맞추지 말 것 — 최종 데이터/동작 아키텍처는 스킬 시스템을 정식으로 설계하는 시점에 정한다.
 
-The project should make it possible to explain why ScriptableObject was chosen, including its advantages and limitations.
+프로젝트는 ScriptableObject를 선택한 이유와 그 장단점을 설명할 수 있어야 한다. *(실제로는 밸런스 수치의 상당 부분이 이후 `Assets/StreamingAssets/*.json` 평문 JSON 외부화로 옮겨감 — `ScriptableObject`는 `EnemyData`/`ItemData`/`AttackPatternData` 등 일부 데이터 타입에 남아 있다. "왜 ScriptableObject인가"뿐 아니라 "왜 일부는 JSON으로 옮겼는가"도 함께 설명 가능해야 한다. `ClaudeSessionSummary.md` §2 참고.)*
 
 ---
 
-### 6.3 Object Pooling
+### 6.3 오브젝트 풀링
 
-Potential pooling targets:
+풀링 대상 후보:
 
-- Projectiles
-- Damage numbers
+- 발사체
+- 데미지 숫자
 - VFX
-- Enemies
+- 적
 
-The project should eventually compare performance before and after pooling.
+프로젝트는 궁극적으로 풀링 적용 전후 성능을 비교해야 한다.
 
-Suggested benchmark cases:
+권장 벤치마크 케이스:
 
-- 20 enemies
-- 50 enemies
-- 100 enemies
-- 200 enemies
+- 적 20마리
+- 적 50마리
+- 적 100마리
+- 적 200마리
 
-Measure actual results such as FPS, CPU load, and GC Alloc instead of inventing numbers.
+수치를 지어내지 말고 FPS, CPU 부하, GC Alloc 같은 실제 측정값을 기록한다.
 
 ---
 
-### 6.4 Addressables and Asynchronous Loading
+### 6.4 Addressables와 비동기 로딩
 
-Potential usage:
+잠재적 활용처:
 
 ```text
 Lobby
@@ -284,40 +288,40 @@ Loading
 Gameplay
 ```
 
-Technical topics to demonstrate:
+시연할 기술 주제:
 
 - Async / Await
-- Resource management
-- Resource release
-- Loading UI
+- 리소스 관리
+- 리소스 해제
+- 로딩 UI
 
-Addressables should be introduced when the project reaches a stage where resource loading architecture is useful, rather than added prematurely.
+Addressables는 성급하게 도입하기보다, 리소스 로딩 아키텍처가 실제로 유용해지는 시점에 도입해야 한다. *(실제로는 검토 후 도입하지 않기로 명시적으로 결정됨 — 런 전체가 하나의 게임플레이 씬에서 절차적으로 방을 짓는 구조라 씬 단위 로드/언로드 자체가 없어 비동기 로딩의 이득이 없다고 판단. `AI_Decision_Log.md` 2026-09-15 참고. 포트폴리오 관점에서는 "왜 도입했는가"가 아니라 "왜 검토하고도 도입하지 않았는가"가 설명 포인트가 됨.)*
 
 ---
 
-### 6.5 Unity Profiler-Based Optimization
+### 6.5 Unity Profiler 기반 최적화
 
-Profiling and optimization should be treated as a required portfolio step.
+프로파일링과 최적화는 포트폴리오 필수 단계로 다뤄야 한다.
 
-Potential optimization topics:
+잠재적 최적화 주제:
 
-- Object pooling
-- AI tick distribution
-- GetComponent caching
-- Reducing unnecessary Update calls
-- GC allocation reduction
-- Resource loading / unloading
+- 오브젝트 풀링
+- AI 틱 분산
+- GetComponent 캐싱
+- 불필요한 Update 호출 축소
+- GC 할당 축소
+- 리소스 로딩/언로딩
 
-Record actual before-and-after measurements.
+실제 Before/After 측정치를 기록한다.
 
-Example format:
+예시 포맷:
 
 ```text
 Before
 
 Enemy 200
-FPS : [measured value]
-GC Alloc : [measured value]
+FPS : [측정값]
+GC Alloc : [측정값]
 
 ↓
 
@@ -331,96 +335,96 @@ Optimization
 After
 
 Enemy 200
-FPS : [measured value]
-GC Alloc : [measured value]
+FPS : [측정값]
+GC Alloc : [측정값]
 ```
 
 ---
 
-## 7. Additional Systems to Consider
+## 7. 추가로 고려할 시스템
 
-As the project grows, consider adding:
+프로젝트가 커지면서 다음을 추가하는 것을 고려한다:
 
 - Input System
-- Event System
-- Save System
-- Shader / VFX
-- Performance profiling
-- Optimization
+- 이벤트 시스템
+- 세이브 시스템
+- 셰이더/VFX
+- 성능 프로파일링
+- 최적화
 
-These should be added according to development needs rather than inserted only to increase the feature count.
+이들은 기능 개수를 늘리기 위해서가 아니라 개발상 필요에 따라 추가해야 한다.
 
 ---
 
-## 8. Development Workflow with Claude Code
+## 8. Claude Code를 활용한 개발 워크플로우
 
-Claude Code should be used as a development tool, not as a replacement for engineering judgment.
+Claude Code는 엔지니어링 판단을 대체하는 것이 아니라 개발 도구로 사용해야 한다.
 
-Preferred workflow:
+선호하는 워크플로우:
 
 ```text
-Define requirements
+요구사항 정의
 ↓
-Ask Claude for a design proposal
+Claude에게 설계안 요청
 ↓
-Review the proposed design
+제안된 설계 검토
 ↓
-Implement
+구현
 ↓
-Test with Unity / Profiler
+Unity/Profiler로 테스트
 ↓
-Identify problems
+문제 식별
 ↓
-Revise with Claude
+Claude와 함께 수정
 ↓
-Refactor
+리팩터링
 ```
 
-Avoid prompts such as:
+다음과 같은 프롬프트는 피한다:
 
-> Build the entire game for me.
+> 게임 전체를 만들어줘.
 
-Prefer incremental requests such as:
+대신 다음과 같은 점진적 요청을 선호한다:
 
-> Review the current project and propose a Player movement architecture. Explain the required GameObjects, Components, and scripts before modifying files.
+> 현재 프로젝트를 검토하고 Player 이동 아키텍처를 제안해줘. 파일을 수정하기 전에 필요한 GameObject, Component, 스크립트를 설명해줘.
 
-Then review the proposal before asking Claude to implement it.
+그런 다음 Claude에게 구현을 요청하기 전에 제안을 검토한다.
 
 ---
 
-## 9. AI-Assisted Development Responsibilities
+## 9. AI 보조 개발의 책임 범위
 
 ### Claude Code
 
-Claude can assist with:
+Claude는 다음을 도울 수 있다:
 
-- Repetitive code generation
-- Refactoring suggestions
-- Code review
-- Test code drafts
-- Profiler result analysis
-- Unity Editor operations through Unity MCP
+- 반복적인 코드 생성
+- 리팩터링 제안
+- 코드 리뷰
+- 테스트 코드 초안
+- 프로파일러 결과 분석
+- Unity MCP를 통한 Unity 에디터 작업
 
-### Developer
+### 개발자
 
-The developer remains responsible for:
+개발자는 다음에 대한 책임을 진다:
 
-- System design
-- Requirement definition
-- Reviewing generated code
-- Architecture decisions
-- Unity debugging
-- Performance measurement
-- Optimization
-- Understanding and explaining the final implementation
+- 시스템 설계
+- 요구사항 정의
+- 생성된 코드 검토
+- 아키텍처 결정
+- Unity 디버깅
+- 성능 측정
+- 최적화
+- 최종 구현의 이해와 설명
 
-The portfolio should show that AI output was critically reviewed rather than accepted blindly.
+포트폴리오는 AI 산출물을 무비판적으로 수용하지 않고 비판적으로 검토했음을 보여줘야 한다.
 
 ---
 
-## 10. Example of Critical AI Review
+## 10. 비판적 AI 검토 예시
 
-Example scenario:
+예시 시나리오:
 
 ```text
 Problem
@@ -441,145 +445,145 @@ Revision
 Use a simpler TargetProvider structure
 ```
 
-This kind of decision is valuable because it demonstrates engineering judgment rather than simple AI-generated implementation.
+이런 종류의 판단은 단순한 AI 생성 구현이 아니라 엔지니어링 판단력을 보여준다는 점에서 가치가 있다.
 
 ---
 
-## 11. Development Phases
+## 11. 개발 단계
 
-### Phase 1 — Primitive Prototype
+### Phase 1 — 프리미티브 프로토타입
 
-Use capsules, cubes, and simple materials.
+캡슐, 큐브, 단순한 머티리얼을 사용한다.
 
-Implement:
+구현 항목:
 
 1. Player GameObject
-2. Quarter-view camera
-3. WASD movement
-4. Mouse aiming
-5. Basic attack
+2. 쿼터뷰 카메라
+3. WASD 이동
+4. 마우스 조준
+5. 기본 공격
 6. Enemy GameObject
-7. Enemy chase behavior
-8. Damage and hit handling
-9. Enemy death
-10. Basic room clear flow
+7. 적 추격 행동
+8. 데미지와 피격 처리
+9. 적 사망
+10. 기본 방 클리어 흐름
 
-The priority is obtaining the smallest playable combat loop.
-
----
-
-### Phase 2 — Core Gameplay Systems
-
-Add:
-
-- Dodge / dash
-- Single-slot equipped Skill Item system
-- Enemy FSM
-- Multiple enemy types
-- Upgrade selection
-- Room progression
-- Basic UI
-- Boss prototype
+우선순위는 플레이 가능한 최소 전투 루프를 확보하는 것이다.
 
 ---
 
-### Phase 3 — Data and Architecture
+### Phase 2 — 핵심 게임플레이 시스템
 
-Introduce where appropriate:
+추가 항목:
 
-- ScriptableObject data
-- Shared stats
-- Object pooling
-- Event-based communication
-- Save structure
-- Project folder cleanup / refactoring
+- 회피/대시
+- 단일 슬롯 장착 스킬 아이템 시스템
+- 적 FSM
+- 다양한 적 종류
+- 업그레이드 선택
+- 방 진행
+- 기본 UI
+- 보스 프로토타입
 
 ---
 
-### Phase 4 — Content and Presentation
+### Phase 3 — 데이터와 아키텍처
 
-Replace primitives with suitable free or low-cost assets.
+적절한 시점에 도입:
 
-Add:
+- ScriptableObject 데이터
+- 공유 스탯
+- 오브젝트 풀링
+- 이벤트 기반 통신
+- 세이브 구조
+- 프로젝트 폴더 정리/리팩터링
 
-- Character / enemy art
-- Animation
+---
+
+### Phase 4 — 콘텐츠와 표현
+
+프리미티브를 적절한 무료/저비용 에셋으로 교체한다.
+
+추가 항목:
+
+- 캐릭터/적 아트
+- 애니메이션
 - VFX
-- Sound
-- Environment assets
-- UI polish
+- 사운드
+- 환경 에셋
+- UI 폴리싱
 
-Prefer a consistent visual style rather than mixing unrelated asset packs.
+서로 안 어울리는 에셋 팩을 섞기보다 일관된 비주얼 스타일을 우선한다.
 
 ---
 
-### Phase 5 — Loading and Resource Management
+### Phase 5 — 로딩과 리소스 관리
 
-Add where useful:
+유용한 시점에 추가:
 
 - Addressables
-- Async loading
-- Loading UI
-- Resource release logic
+- 비동기 로딩
+- 로딩 UI
+- 리소스 해제 로직
 
 ---
 
-### Phase 6 — Profiling and Optimization
+### Phase 6 — 프로파일링과 최적화
 
-Use Unity Profiler to identify real bottlenecks.
+Unity Profiler로 실제 병목을 식별한다.
 
-Test scenarios such as increasing enemy counts and compare before/after results.
+적 수를 늘리는 등의 시나리오로 테스트하고 Before/After 결과를 비교한다.
 
-Document:
+다음을 문서화한다:
 
-- Problem
-- Measurement
-- Cause
-- Chosen solution
-- Result
-
----
-
-### Phase 7 — Portfolio Documentation
-
-Prepare project documentation that explains:
-
-- Game overview
-- Architecture
-- Key systems
-- Technical decisions
-- Optimization results
-- Claude Code + Unity MCP workflow
-- Cases where AI suggestions were rejected or modified
-- Lessons learned
+- 문제
+- 측정
+- 원인
+- 선택한 해결책
+- 결과
 
 ---
 
-## 12. Interview Topics the Project Should Support
+### Phase 7 — 포트폴리오 문서화
 
-The final project should make it possible to answer questions such as:
+다음을 설명하는 프로젝트 문서를 준비한다:
 
-- Why did you use Object Pooling?
-- Why did you reduce Update usage?
-- What are the disadvantages of ScriptableObject?
-- How does Addressables reference counting work?
-- Why was GC Alloc occurring?
-- Why did you choose FSM instead of a Behavior Tree?
-- How did you validate code generated by Claude?
-- How did you identify and optimize bottlenecks?
-
-The goal is to answer these questions using concrete examples from the project.
+- 게임 개요
+- 아키텍처
+- 핵심 시스템
+- 기술적 의사결정
+- 최적화 결과
+- Claude Code + Unity MCP 워크플로우
+- AI 제안을 거부하거나 수정한 사례
+- 배운 점
 
 ---
 
-## 13. Project Principle
+## 12. 프로젝트가 뒷받침해야 할 인터뷰 주제
 
-The project should aim for:
+최종 프로젝트는 다음과 같은 질문에 답할 수 있어야 한다:
 
-> Use AI to design, implement, measure, and optimize a small but complete game architecture.
+- 왜 오브젝트 풀링을 사용했는가?
+- 왜 Update 사용을 줄였는가?
+- ScriptableObject의 단점은 무엇인가?
+- Addressables의 레퍼런스 카운팅은 어떻게 동작하는가? *(실제로는 검토 후 도입하지 않기로 결정됨 — 위 §6.4 참고. 따라서 이 프로젝트 기준으로는 "어떻게 동작하는가"보다 "왜 검토하고도 도입하지 않았는가"를 설명하는 쪽이 실제 답변에 가깝다.)*
+- 왜 GC Alloc이 발생했는가?
+- 왜 Behavior Tree 대신 FSM을 선택했는가?
+- Claude가 생성한 코드를 어떻게 검증했는가?
+- 병목을 어떻게 식별하고 최적화했는가?
 
-Rather than:
+목표는 프로젝트의 구체적인 사례를 들어 이 질문들에 답하는 것이다.
 
-> Use AI to make an impressive-looking game as quickly as possible.
+---
 
-A completed, technically explainable game is more valuable for this portfolio goal than a large but unfinished project.
+## 13. 프로젝트 원칙
+
+프로젝트가 지향해야 할 것:
+
+> AI를 활용해 작지만 완결된 게임 아키텍처를 설계·구현·측정·최적화한다.
+
+지양해야 할 것:
+
+> AI를 활용해 최대한 빨리 인상적으로 보이는 게임을 만든다.
+
+이 포트폴리오 목표에는, 크지만 미완성인 프로젝트보다 완결되고 기술적으로 설명 가능한 게임이 더 가치 있다.

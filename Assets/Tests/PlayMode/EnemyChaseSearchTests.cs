@@ -41,6 +41,21 @@ namespace RogueLike.Tests
             return TestObjects.GetPrivateField<List<Vector3>>(esm.ChaseState, "_path");
         }
 
+        // Stops EnemyStateMachine's own Update()/FixedUpdate() from also calling
+        // _currentState.Tick()/PhysicsTick() with the real, uncontrolled Time.deltaTime -
+        // disabling the component (not nulling _currentState, unlike
+        // FrameRateIndependenceMovementTests' StopFsmAutoTick) so CurrentState(enemy) below
+        // still reads the real current state instead of null; Unity simply stops calling
+        // Update()/FixedUpdate() on a disabled Behaviour, everything else keeps working when
+        // called directly. This does fire OnDisable() (unsubscribes the two HealthComponent
+        // events, releases a Room attack-slot reservation) - harmless here since none of these
+        // tests build a Room or assert on health/death events, but worth knowing if this helper
+        // is ever reused in a test that does.
+        private static void StopFsmAutoTick(EnemyStateMachine esm)
+        {
+            esm.enabled = false;
+        }
+
         [UnityTest]
         public IEnumerator Chase_VisitsEveryCheckpoint_WithNobodyThere_GivesUpToPatrol()
         {
@@ -57,17 +72,24 @@ namespace RogueLike.Tests
             _t.BuildStaticBlocker(new Vector3(0f, 0f, 5f), new Vector3(10f, 3f, 1f));
             Physics.SyncTransforms();
 
-            // Poll once per rendered frame (matching Tick()'s Update-rate granularity) for the
-            // first state change, rather than running a fixed number of steps or polling on
-            // WaitForFixedUpdate - Update can tick more than once between two FixedUpdates, so
-            // polling at FixedUpdate's rate can skip straight past Patrol into its own
-            // subsequent (unrelated) randomised-walk-completes-then-Idle transition before ever
-            // observing the Patrol frame this test is locking down. Generous cap: up to 3
-            // checkpoints to visit.
+            // Drive Tick()/PhysicsTick() with a fixed synthetic deltaTime instead of relying on
+            // real Update()/FixedUpdate() frame timing - a loaded/slow CI runner can hand a
+            // single frame a huge real Time.deltaTime, which blows straight past
+            // MinimumSearchTime/SearchDuration in one call and skips the exact transition this
+            // test is trying to observe (2026-09-28 CI flakiness investigation - passed locally
+            // every time, only ever failed in GitHub Actions). Still yield once per iteration so
+            // Rigidbody.MovePosition actually resolves before the next distance check - same
+            // technique FrameRateIndependenceMovementTests already uses for PhysicsTick, just
+            // with the state-machine Tick() driven alongside it here too.
+            const float step = 1f / 60f;
+            StopFsmAutoTick(enemy);
+
             IEnemyState state = CurrentState(enemy);
             for (int i = 0; i < 600 && state == enemy.ChaseState; i++)
             {
-                yield return null;
+                enemy.ChaseState.PhysicsTick(step);
+                yield return new WaitForFixedUpdate();
+                enemy.ChaseState.Tick(step);
                 state = CurrentState(enemy);
             }
 
@@ -94,28 +116,38 @@ namespace RogueLike.Tests
             _t.BuildStaticBlocker(new Vector3(0.5f, 0f, 0f), new Vector3(0.2f, 3f, 3f)); // thin - fits in the gap
             Physics.SyncTransforms();
 
-            yield return null; // one Tick(): sight just broke, already within SearchArriveDistance of checkpoint 0
+            // Drive Tick() with a fixed synthetic deltaTime instead of relying on real Update()
+            // frame timing, for the same reason as the other search test above - a loaded/slow
+            // CI runner handing a single frame a huge real Time.deltaTime can blow straight past
+            // MinimumSearchTime in one call (2026-09-28 CI flakiness investigation). The enemy
+            // never needs to physically move for this particular test (it starts already within
+            // SearchArriveDistance of checkpoint 0), so no yields/PhysicsTick are needed here -
+            // straight synchronous Tick() calls are enough and keep this fully deterministic.
+            const float step = 1f / 60f;
+            StopFsmAutoTick(enemy);
+
+            enemy.ChaseState.Tick(step); // one Tick(): sight just broke, already within SearchArriveDistance of checkpoint 0
 
             Assert.That(CurrentState(enemy), Is.SameAs(enemy.ChaseState),
                 "must not give up on the very first blind tick just because it started this close");
             Assert.That(CheckpointIndex(enemy), Is.EqualTo(0), "still waiting out the minimum search time at checkpoint 0");
 
-            for (int i = 0; i < 20; i++) // ~0.4s more - still under the 0.5s minimum search time
+            for (int i = 0; i < 24; i++) // ~0.4s more - still under the 0.5s minimum search time
             {
-                yield return new WaitForFixedUpdate();
+                enemy.ChaseState.Tick(step);
             }
 
             Assert.That(CurrentState(enemy), Is.SameAs(enemy.ChaseState), "still within the minimum search window");
 
-            // From here, poll frame-by-frame (Tick() only ever advances the checkpoint index by
-            // 1 per call, so index 1 must be observed for at least one frame even if the
-            // look-around points also happen to be close enough to cascade quickly toward
-            // Patrol) rather than jumping in a bigger fixed step that could miss the moment
-            // entirely and only see the eventual Patrol/Idle outcome.
+            // From here, tick one synthetic step at a time (Tick() only ever advances the
+            // checkpoint index by 1 per call, so index 1 must be observed for at least one step
+            // even if the look-around points also happen to be close enough to cascade quickly
+            // toward Patrol) rather than jumping in a bigger fixed step that could miss the
+            // moment entirely and only see the eventual Patrol/Idle outcome.
             bool advancedPastFirstCheckpoint = false;
             for (int i = 0; i < 120 && CurrentState(enemy) == enemy.ChaseState; i++)
             {
-                yield return null;
+                enemy.ChaseState.Tick(step);
                 if (CheckpointIndex(enemy) >= 1)
                 {
                     advancedPastFirstCheckpoint = true;

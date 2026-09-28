@@ -29,8 +29,17 @@ namespace RogueLike.Tests
             var player = _t.MakePlayer(new Vector3(5000f, 0f, 0f));
             EnemyData data = _t.MakeEnemyData(moveSpeed: 5f);
 
-            EnemyStateMachine highFps = _t.BuildEnemy(data, Vector3.zero);
-            EnemyStateMachine lowFps = _t.BuildEnemy(data, Vector3.zero);
+            // Spawned well apart on Z (not both at the same point) - this project has
+            // Enemy-vs-Enemy physics collision enabled, so two overlapping capsule colliders
+            // push each other apart on the very first physics step, adding an extra, untracked
+            // displacement on top of the deliberate PhysicsTick movement this test is trying to
+            // measure (2026-09-28 CI investigation - reproduced locally too, not a timing
+            // flake: highFpsDistance came out ~8% high, same value on every machine). The 50-unit
+            // Z offset barely tilts either enemy's direction toward the player at (5000,0,0).
+            Vector3 highFpsStart = new Vector3(0f, 0f, 0f);
+            Vector3 lowFpsStart = new Vector3(0f, 0f, 50f);
+            EnemyStateMachine highFps = _t.BuildEnemy(data, highFpsStart);
+            EnemyStateMachine lowFps = _t.BuildEnemy(data, lowFpsStart);
 
             yield return null; // Start(): both find the player
             StopFsmAutoTick(highFps);
@@ -44,8 +53,8 @@ namespace RogueLike.Tests
             yield return DriveChase(highFps, stepSeconds: 1f / 144f, totalSeconds: totalSeconds);
             yield return DriveChase(lowFps, stepSeconds: 1f / 15f, totalSeconds: totalSeconds);
 
-            float highFpsDistance = Vector3.Distance(Vector3.zero, highFps.Body.position);
-            float lowFpsDistance = Vector3.Distance(Vector3.zero, lowFps.Body.position);
+            float highFpsDistance = Vector3.Distance(highFpsStart, highFps.Body.position);
+            float lowFpsDistance = Vector3.Distance(lowFpsStart, lowFps.Body.position);
 
             Assert.That(highFpsDistance, Is.InRange(5.9f, 6.1f), "sanity check: ~moveSpeed * totalSeconds");
             Assert.That(highFpsDistance, Is.EqualTo(lowFpsDistance).Within(0.05f),

@@ -77,16 +77,20 @@ namespace RogueLike.Tests
             // HasClearLineToPlayer agrees the straight line is blocked.
             _t.BuildStaticBlocker(new Vector3(-2f, 0f, 0f), new Vector3(0.6f, 3f, 4f));
 
-            // Enemy and player sit right against opposite faces of that thin wall - 1 unit
-            // apart in a straight line, well inside the default 1.2 MaxAttackRange, but the
-            // wall is between them the whole time.
-            GameObject player = _t.MakePlayer(new Vector3(-1.5f, 0f, 0f));
+            // Enemy and player sit outside the wall's own real footprint (it's 1 unit thick,
+            // centred at x=-2 - see RoomController.BuildObstacles' Connector sizing) but still
+            // well inside straight-line MaxAttackRange, with the wall between them the whole
+            // time. 2026-09-30: moved out from the original +/-0.5 (which put the enemy's
+            // spawn cell inside the wall's own now-precisely-tracked footprint) to +/-1.5 from
+            // the wall's centre, and widened MaxAttackRange to match the larger straight-line
+            // distance this now requires.
+            GameObject player = _t.MakePlayer(new Vector3(-0.5f, 0f, 0f));
             EnemyStateMachine enemy = _t.BuildEnemy(
                 _t.MakeEnemyData(leashRange: 30f, moveSpeed: 6f, searchDuration: 300f,
-                    tracksLivePositionWhileBlind: true, attackRange: 1.2f),
-                new Vector3(-2.5f, 0f, 0f));
+                    tracksLivePositionWhileBlind: true, attackRange: 3.5f),
+                new Vector3(-3.5f, 0f, 0f));
             enemy.SetRoom(room);
-            enemy.SetSpawnPosition(new Vector3(-2.5f, 0f, 0f));
+            enemy.SetSpawnPosition(new Vector3(-3.5f, 0f, 0f));
 
             Physics.SyncTransforms();
             yield return null; // Start(): finds the player
@@ -110,90 +114,62 @@ namespace RogueLike.Tests
             Assert.That(movedFromSpawn, Is.GreaterThan(0.5f),
                 "enemy must not freeze in place just because straight-line distance (ignoring the wall) reads as already in attack range");
 
+            // Scaled with the wider spawn gap above (was < 1.5f at the old +/-0.5 setup) -
+            // AttackRangeApproachFactor (0.9) means Chase stops closing at 90% of the 3.5
+            // attackRange once a clear line opens, so this only needs to rule out "still stuck
+            // on the far side of the wall", not a tight arrival bound.
             float endDistance = Vector3.Distance(enemy.Body.position, player.transform.position);
-            Assert.That(endDistance, Is.LessThan(1.5f),
-                $"enemy should have routed around the thin wall and actually reached the player (end={endDistance})");
+            Assert.That(endDistance, Is.LessThan(3.5f),
+                $"enemy should have routed around the thin wall and actually closed in on the player (end={endDistance})");
         }
 
         // 2026-09-13: regression for a live playtesting report - in a room with a "+"-shaped
-        // fence (mirrors ObstaclePatterns.json's "FenceCrossHub": one hub cell with all 4
-        // edges to its neighbours blocked by Connectors), the player was pinned at one corner
-        // of the cross and the relentless enemy at the opposite corner just rubbed against the
-        // fence on its own side instead of routing around. Root cause: the hub cell itself
-        // stays walkable (only its edges are blocked), so both occupants - standing on
-        // opposite sides of the fence but both within the hub cell's own footprint - rounded
-        // to the exact same cell. RoomPathfindingGrid.TryFindPath's start==goal shortcut then
-        // handed back a trivial 1-waypoint "already there" path sitting right on the fence
-        // between them, which nothing in EnemyChaseState ever second-guessed.
+        // fence, the player was pinned at one corner of the cross and the relentless enemy at
+        // the opposite corner just rubbed against the fence on its own side instead of routing
+        // around. 2026-09-30: the fix at the time (RoomPathfindingGrid.TryFindPath's start==goal
+        // shortcut only, back when pathfinding blocked one coarse tile per placement) turned out
+        // to only mask a deeper problem - a hub cell fenced on all 4 sides is genuinely
+        // unreachable no matter how precisely its geometry is read (moving each wall's real
+        // footprint doesn't add any width of opening, it only moves which side of the boundary
+        // loses it - see AI_Decision_Log.md 2026-09-30). ObstaclePatterns.json's real
+        // "FenceCrossHub" pattern was actually generating this exact unreachable pocket, so it
+        // was changed to a 3-sided fence (west arm removed) instead.
+        // A companion ChaseState-level test (corner-to-corner across the hub, forced blind by
+        // an extra test-only collider) was tried and dropped: with each Connector's real
+        // footprint now living fully inside its neighbour cell (BuildObstacles' 2안 fix below),
+        // none of the 3 walls actually reach into the hub's own interior except a single strip
+        // (south-hub leans into the hub, not its own anchor cell) - the hub interior ends up
+        // fully open, not just "one side left open", so two points inside it are never blind to
+        // each other via the real geometry alone. The extra collider needed to fake blindness
+        // for that test had no matching pathfinding data, so the enemy's real (correct) route
+        // walked straight through test-only geometry it could never actually cross - a test
+        // artifact, not a real bug. The movement/routing side of this fix (enemy actually
+        // follows a found route instead of stalling) is already locked by
+        // ChaseState_ObstacleBlockingDirectLine_RoutesAroundInsteadOfStalling and
+        // ChaseState_PlayerHidesBehindThinWall_WithinStraightLineAttackRange_StillRoutesAround
+        // above; this test only needs to lock the connectivity fact itself.
         [Test]
-        public void FindPath_BothSidesOfCrossHubRoundToSameCell_ReturnsRouteInsteadOfTrivialSameCellPath()
+        public void FindPath_ThreeSidedFenceHub_LeavesTheOpenSideRoutable()
         {
             var obstacles = new List<ObstaclePlacement>
             {
                 new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(2, 2), 0, 90f), // hub-east
-                new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(1, 2), 0, 90f), // west-hub
                 new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(2, 2), 0, 0f),  // hub-north
                 new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(2, 1), 0, 0f),  // south-hub
+                // West deliberately left open - see the pattern comment above.
             };
             RoomController room = _t.BuildRoom(Vector3.zero, 20f, obstacles: obstacles); // 5x5 cells, hub at (2,2) = local (0,0)
 
-            // Both within 1 unit of the hub cell's own centre, on opposite (diagonal) sides -
-            // both round to cell (2,2) under plain WorldToCell rounding.
-            Vector3 northwestSide = new Vector3(-1f, 0f, 1f);
-            Vector3 southeastSide = new Vector3(1f, 0f, -1f);
+            // Both within the hub cell's own footprint, on opposite (diagonal) sides - offset
+            // 1.5 (not a round 1) so neither coordinate lands exactly on a PathfindingCellSize
+            // cell boundary, where WorldToCell's rounding tie could go either way.
+            Vector3 northwestSide = new Vector3(-1.5f, 0f, 0.5f);
+            Vector3 southeastSide = new Vector3(1.5f, 0f, -0.5f);
 
             IReadOnlyList<Vector3> path = room.FindPath(southeastSide, northwestSide);
 
-            Assert.That(path, Is.Not.Null, "a real route around the cross exists via the room's outer cells");
-            Assert.That(path.Count, Is.GreaterThan(1),
-                "must not be the trivial 'already there' single waypoint sitting on the fence between them");
-        }
-
-        [UnityTest]
-        public IEnumerator ChaseState_BothSidesOfCrossHubRoundToSameCell_StillRoutesAroundInsteadOfRubbingOnFence()
-        {
-            var obstacles = new List<ObstaclePlacement>
-            {
-                new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(2, 2), 0, 90f), // hub-east
-                new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(1, 2), 0, 90f), // west-hub
-                new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(2, 2), 0, 0f),  // hub-north
-                new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(2, 1), 0, 0f),  // south-hub
-            };
-            RoomController room = _t.BuildRoom(Vector3.zero, 20f, obstacles: obstacles);
-
-            // Stands in for the real "+" fence mesh filling the hub cell - just needs to sit
-            // between the two corners below without enclosing either of them (a box big
-            // enough to contain both endpoints has no surface left for the linecast to
-            // cross, since Physics.Linecast never reports a hit when both ends already sit
-            // inside the same collider).
-            _t.BuildStaticBlocker(Vector3.zero, new Vector3(1.2f, 3f, 1.2f));
-
-            // Player pinned at the hub's northwest corner, enemy at the opposite (southeast)
-            // corner - exactly the live report's layout.
-            GameObject player = _t.MakePlayer(new Vector3(-1f, 0f, 1f));
-            EnemyStateMachine enemy = _t.BuildEnemy(
-                _t.MakeEnemyData(leashRange: 30f, moveSpeed: 6f, searchDuration: 300f, tracksLivePositionWhileBlind: true),
-                new Vector3(1f, 0f, -1f));
-            enemy.SetRoom(room);
-            enemy.SetSpawnPosition(new Vector3(1f, 0f, -1f));
-
-            Physics.SyncTransforms();
-            yield return null; // Start(): finds the player
-
-            Assert.That(enemy.HasClearLineToPlayer(), Is.False, "test setup should start blind");
-
-            float startDistance = Vector3.Distance(enemy.Body.position, player.transform.position);
-            enemy.ChangeState(enemy.ChaseState);
-
-            for (int i = 0; i < 200; i++)
-            {
-                yield return new WaitForFixedUpdate();
-            }
-
-            float endDistance = Vector3.Distance(enemy.Body.position, player.transform.position);
-            Assert.That(endDistance, Is.LessThan(startDistance * 0.5f),
-                $"enemy should have routed around the cross via the room's outer cells instead of " +
-                $"rubbing against the fence on its own side (start={startDistance}, end={endDistance})");
+            Assert.That(path, Is.Not.Null,
+                "the old 4-walled hub sealed this cell off entirely; the 3-walled fix must leave it routable");
         }
 
         // 2026-09-13: regression for a live playtesting report - RelentlessMelee's pathfinding

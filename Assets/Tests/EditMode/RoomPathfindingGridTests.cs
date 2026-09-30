@@ -4,14 +4,25 @@ using UnityEngine;
 
 namespace RogueLike.Tests
 {
-    // 2026-09-13: locks RoomPathfindingGrid's A* - pure/local-space like RoomBoundsTests, no
-    // scene or RoomController needed. Room-local cell coordinates match ObstaclePlacement's
-    // own LocalCell convention throughout.
+    // 2026-09-30: RoomPathfindingGrid takes real obstacle Bounds now (not ObstaclePlacement),
+    // at a cell size finer than the room's authoring tile size, so it can represent obstacle
+    // footprints and any real gaps between them more precisely than the old per-tile block/
+    // edge model could - see RoomController.SoloClampBounds for why a Solo obstacle's real
+    // footprint is often smaller than the tile it's placed on. Pure/local-space like
+    // RoomBoundsTests, no scene or RoomController needed.
     public class RoomPathfindingGridTests
     {
         private const float TileSize = 4f;
 
-        private static List<ObstaclePlacement> NoObstacles() => new List<ObstaclePlacement>();
+        private static List<Bounds> NoObstacles() => new List<Bounds>();
+
+        // Mirrors RoomController.CellToLocal's centre formula, so a test can place an obstacle
+        // Bounds exactly on a cell without duplicating RoomController's own (private) math.
+        private static Vector3 CellCenter(Vector2Int cell, float roomSize, float cellSize)
+        {
+            float half = roomSize / 2f;
+            return new Vector3(-half + cellSize / 2f + cell.x * cellSize, 0f, -half + cellSize / 2f + cell.y * cellSize);
+        }
 
         [Test]
         public void TryFindPath_OpenRoom_FindsShortestManhattanPath()
@@ -28,12 +39,12 @@ namespace RogueLike.Tests
         }
 
         [Test]
-        public void TryFindPath_SoloObstacleInTheWay_RoutesAround()
+        public void TryFindPath_ObstacleInTheWay_RoutesAround()
         {
-            // 5x5 cells, Solo block sitting directly on the straight line from (0,2) to (4,2).
-            var obstacles = new List<ObstaclePlacement>
+            // 5x5 cells, a full-tile obstacle sitting directly on the straight line from (0,2) to (4,2).
+            var obstacles = new List<Bounds>
             {
-                new ObstaclePlacement(ObstacleShape.Solo, new Vector2Int(2, 2), 0, 0f),
+                new Bounds(CellCenter(new Vector2Int(2, 2), 20f, TileSize), new Vector3(TileSize, 0f, TileSize)),
             };
             var grid = new RoomPathfindingGrid(RoomFootprint.Square(20f), obstacles, TileSize);
             var path = new List<Vector2Int>();
@@ -47,26 +58,22 @@ namespace RogueLike.Tests
         }
 
         [Test]
-        public void TryFindPath_ConnectorBlocksOnlyTheSpecificEdge_NotTheWholeCell()
+        public void TryFindPath_ThinObstacleBetweenTwoOpenCells_BlocksOnlyItsOwnFootprint_NotTheWholeTile()
         {
-            // Connector spans (1,0)-(2,0) (RotationY 90 = east neighbour) - blocks that one
-            // connection only. Straight line along z=0 must detour, but (1,0) itself must
-            // still be reachable and usable from another direction (e.g. via (1,1)).
-            var obstacles = new List<ObstaclePlacement>
-            {
-                new ObstaclePlacement(ObstacleShape.Connector, new Vector2Int(1, 0), 0, 90f),
-            };
-            var grid = new RoomPathfindingGrid(RoomFootprint.Square(20f), obstacles, TileSize);
+            // The precision fix this locks down: a real obstacle footprint can be much smaller
+            // than a full tile (RoomController.SoloClampBounds), so at a finer-than-tile cell
+            // size a thin obstacle must block only the cells it actually overlaps, leaving a
+            // real gap next to it walkable - the old per-tile model blocked the whole tile
+            // regardless of the obstacle's true size, hiding a passable gap between obstacles.
+            const float cellSize = 1f;
+            // 1-unit-thick wall spanning the room depth, exactly aligned to cell x=10's span
+            // (local x in [0, 1)) so neither neighbour cell is ambiguously touched.
+            var obstacles = new List<Bounds> { new Bounds(new Vector3(0.5f, 0f, 0f), new Vector3(1f, 0f, 20f)) };
+            var grid = new RoomPathfindingGrid(RoomFootprint.Square(20f), obstacles, cellSize); // 20x20 cells
 
-            Assert.That(grid.IsWalkable(new Vector2Int(1, 0)), Is.True, "Connector must not block the cell itself, only the edge");
-
-            var path = new List<Vector2Int>();
-            bool found = grid.TryFindPath(new Vector2Int(0, 0), new Vector2Int(2, 0), path);
-
-            Assert.That(found, Is.True);
-            // The direct (0,0)->(1,0)->(2,0) route (3 cells) crosses the blocked edge, so the
-            // shortest surviving path must be longer - it has to detour through another row.
-            Assert.That(path.Count, Is.GreaterThan(3));
+            Assert.That(grid.IsWalkable(new Vector2Int(9, 10)), Is.True, "a cell just short of the wall must stay open");
+            Assert.That(grid.IsWalkable(new Vector2Int(10, 10)), Is.False, "the wall's own footprint must be blocked");
+            Assert.That(grid.IsWalkable(new Vector2Int(11, 10)), Is.True, "a cell just past the wall must stay open");
         }
 
         [Test]
@@ -80,19 +87,20 @@ namespace RogueLike.Tests
         }
 
         [Test]
-        public void TryFindPath_GoalFullySurroundedBySoloObstacles_ReturnsFalse()
+        public void TryFindPath_GoalFullySurroundedByObstacles_ReturnsFalse()
         {
-            var obstacles = new List<ObstaclePlacement>
+            var goal = new Vector2Int(2, 2);
+            var obstacles = new List<Bounds>
             {
-                new ObstaclePlacement(ObstacleShape.Solo, new Vector2Int(1, 2), 0, 0f),
-                new ObstaclePlacement(ObstacleShape.Solo, new Vector2Int(3, 2), 0, 0f),
-                new ObstaclePlacement(ObstacleShape.Solo, new Vector2Int(2, 1), 0, 0f),
-                new ObstaclePlacement(ObstacleShape.Solo, new Vector2Int(2, 3), 0, 0f),
+                new Bounds(CellCenter(new Vector2Int(1, 2), 20f, TileSize), new Vector3(TileSize, 0f, TileSize)),
+                new Bounds(CellCenter(new Vector2Int(3, 2), 20f, TileSize), new Vector3(TileSize, 0f, TileSize)),
+                new Bounds(CellCenter(new Vector2Int(2, 1), 20f, TileSize), new Vector3(TileSize, 0f, TileSize)),
+                new Bounds(CellCenter(new Vector2Int(2, 3), 20f, TileSize), new Vector3(TileSize, 0f, TileSize)),
             };
             var grid = new RoomPathfindingGrid(RoomFootprint.Square(20f), obstacles, TileSize);
             var path = new List<Vector2Int>();
 
-            bool found = grid.TryFindPath(new Vector2Int(0, 0), new Vector2Int(2, 2), path);
+            bool found = grid.TryFindPath(new Vector2Int(0, 0), goal, path);
 
             Assert.That(found, Is.False);
             Assert.That(path, Is.Empty);

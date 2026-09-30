@@ -7,11 +7,34 @@ public class EnemyChaseState : IEnemyState
     private readonly List<Vector3> _path = new List<Vector3>();
     private int _pathIndex;
     private float _repathTimer;
+
+    // Which clearLine state _path was last computed for - CurrentTarget resolves to a
+    // completely different point depending on clearLine (attack slot vs blind target), so a
+    // path computed for one must never silently keep being followed after clearLine flips
+    // (RepathInterval/path-exhausted alone won't catch that transition, since the stale path
+    // isn't exhausted yet). Without this, sight flickering true/false near a wall's edge made
+    // the enemy zigzag between two different targets every few repaths instead of converging
+    // (2026-09-29, found via ChaseState_PlayerHidesBehindThinWall regression after unifying
+    // clear-line movement onto this same path-following code).
+    private bool? _pathForClearLine;
+    // Debounced clearLine actually fed into pathing (CurrentTarget/NextWaypoint/Repath) -
+    // separate from the raw per-tick HasClearLineToPlayer() read below, which briefly flickers
+    // true/false near an obstacle's edge while routing around it (the sight linecast and the
+    // path's own waypoints don't agree pixel-for-pixel on exactly where the corner is). Without
+    // this, every flicker forced an immediate Repath (see _pathForClearLine above) toward a
+    // different target - attack slot vs blind target - zigzagging the whole detour instead of
+    // committing to one (2026-09-30, ChaseState_SlowEnemyAcrossManyRepathCycles regression).
+    // Only gates pathing - the attack-range stop-closing check below still reacts to the raw
+    // value immediately, since that's a one-shot terminal condition, not a repeated retarget.
+    private bool _committedClearLine;
+    private float _pendingClearLineTime;
+    private const float ClearLineDebounceTime = 0.15f;
     private Vector3 _lastKnownPlayerPosition;
     private Vector3 _lastKnownPlayerVelocity;
     private float _searchElapsed;
 
-    // Checkpoints to visit in order while blind: [0] is the predicted position (last-seen
+    // Checkpoints to visit in order while blind, used only by the dormant
+    // SearchNearLastKnownPosition below (see Tick) - [0] is the predicted position (last-seen
     // position extrapolated a bit along the player's last velocity - see PredictionLookAheadTime),
     // [1..] are a couple of "look around" spots near the last-known position to check once the
     // predicted spot turns out empty too. Built once per search (Enter/regained-sight clears it,
@@ -25,24 +48,37 @@ public class EnemyChaseState : IEnemyState
     // How close counts as "arrived" at a waypoint - a fraction of one 4-unit tile, not the
     // full tile, so the enemy doesn't cut corners wide enough to clip back into an obstacle.
     private const float WaypointArriveDistance = 1f;
-    // How close to a search checkpoint counts as "checked it, nobody's there".
+    // How far the enemy may be from the player while blind before giving up and returning to
+    // Patrol. Every enemy now tracks the player's live position while blind (see Tick) instead
+    // of only RelentlessMelee doing so - this single flat range is what replaced the old
+    // per-enemy LeashRange*SearchHardRangeMultiplier combo as the give-up gate for all of them.
+    // Derived from a live-play encounter routing around an L-shaped ("ㄱ자") fence corner: the
+    // enemy-to-player straight-line distance was ~10.15 units mid-detour; +1 unit buffer,
+    // rounded up to 12 (2026-09-30 user call - "그 거리 안에서는 RelentlessMelee과 같이 계속
+    // 추격").
+    private const float BlindChaseGiveUpRange = 12f;
+    // How close to a search checkpoint counts as "checked it, nobody's there" - only used by
+    // the dormant SearchNearLastKnownPosition below.
     private const float SearchArriveDistance = 1.5f;
-    // Multiplies LeashRange into a much looser hard ceiling while searching (blind). A search
-    // deliberately ignores the player's real live position otherwise - this is just a safety
-    // valve for the degenerate case of the player wandering far away while still unseen.
+    // Multiplies LeashRange into a much looser hard ceiling while searching (blind) - only used
+    // by the dormant SearchNearLastKnownPosition below, which still guesses off a per-enemy
+    // LeashRange rather than the flat BlindChaseGiveUpRange above.
     private const float SearchHardRangeMultiplier = 2f;
     // A melee enemy is often already within SearchArriveDistance of the last-known spot the
     // instant sight breaks (it was closing in when the player ducked around a corner) - without
     // this floor, "arrived" is satisfied on the very first blind tick and the search never
     // visibly happens at all. Forces at least this long before any checkpoint can count as
-    // "arrived" or the whole search can time out.
+    // "arrived" or the whole search can time out. Only used by the dormant
+    // SearchNearLastKnownPosition below.
     private const float MinimumSearchTime = 0.5f;
     // How far ahead to extrapolate the player's last known velocity for the first checkpoint -
     // "they were heading that way", instead of freezing exactly on the point sight broke, which
-    // in a close chase is often right next to the enemy already.
+    // in a close chase is often right next to the enemy already. Only used by BuildSearchCheckpoints,
+    // called only from the dormant SearchNearLastKnownPosition below.
     private const float PredictionLookAheadTime = 0.6f;
     // Extra checkpoints after the predicted position, scattered around the last-known position
-    // (not the predicted one, so they don't also drift far off in one direction).
+    // (not the predicted one, so they don't also drift far off in one direction). Only used by
+    // BuildSearchCheckpoints, called only from the dormant SearchNearLastKnownPosition below.
     private const int LookAroundPointCount = 2;
     private const float LookAroundRadius = 3f;
     // Chase stops closing at this fraction of MaxAttackRange, not the full value - see
@@ -60,6 +96,12 @@ public class EnemyChaseState : IEnemyState
         _path.Clear();
         _pathIndex = 0;
         _repathTimer = 0f;
+        _pathForClearLine = null;
+        // Starts committed to whatever's actually true right now, not a default false - Chase
+        // is only ever entered right after CanSeePlayer succeeded, so an artificial debounce
+        // delay on the very first tick would be pure lag, not protection against a flicker.
+        _committedClearLine = _machine.HasClearLineToPlayer();
+        _pendingClearLineTime = 0f;
         // Chase is only ever entered right after CanSeePlayer succeeded (Idle/Patrol/Attack's
         // own transitions), so the player's current position is a safe initial "last seen at".
         _lastKnownPlayerPosition = _machine.Player != null ? _machine.Player.position : _machine.Body.position;
@@ -100,26 +142,40 @@ public class EnemyChaseState : IEnemyState
             return;
         }
 
+        // Every enemy now tracks the player's real, live position while blind - the same
+        // persistence RelentlessMelee originally had exclusively via
+        // EnemyData.TracksLivePositionWhileBlind (that field, and the SearchDuration/
+        // last-known-checkpoint machinery below, are no longer read here as a result - kept,
+        // not deleted, in case a future enemy type wants the old "guess near the last-known
+        // spot" behaviour back; see SearchNearLastKnownPosition). Gated only by
+        // BlindChaseGiveUpRange, a single flat distance for every enemy, instead of a
+        // per-enemy LeashRange/SearchDuration combo (2026-09-30 user call: "그 거리 안에서는
+        // RelentlessMelee과 같이 계속 추격").
+        if (!_machine.IsPlayerWithinRange(BlindChaseGiveUpRange))
+        {
+            _machine.ChangeState(_machine.PatrolState);
+        }
+    }
+
+    // Dormant since 2026-09-30 (see Tick, above) - no live call site reaches this anymore now
+    // that every enemy tracks the player's real position while blind instead of guessing.
+    // Kept, not deleted, as a ready-made "search near the last-known position, give up after
+    // SearchDuration or a per-enemy leash multiple" behaviour for a possible future enemy type
+    // that shouldn't always know exactly where the player is. To bring it back for such a type,
+    // call this instead of the BlindChaseGiveUpRange check in Tick, gated on whatever flag
+    // identifies that type.
+    private void SearchNearLastKnownPosition(float deltaTime)
+    {
         _searchElapsed += deltaTime;
 
         // Give up outright regardless of checkpoint progress: spent too long searching, or the
         // player has (by real position, a safety check the enemy doesn't "know" about) drifted
-        // far enough that continuing stops making sense. A "never loses track" enemy has both
-        // set so large neither ever trips - see EnemyData.TracksLivePositionWhileBlind.
+        // far enough that continuing stops making sense.
         bool searchTimedOut = _searchElapsed >= _machine.Data.SearchDuration;
         bool wayTooFar = !_machine.IsPlayerWithinRange(_machine.Data.LeashRange * SearchHardRangeMultiplier);
         if (searchTimedOut || wayTooFar)
         {
             _machine.ChangeState(_machine.PatrolState);
-            return;
-        }
-
-        // Always knows exactly where the player is - no guessing needed, just keep re-pathing
-        // to their real position every repath cycle (handled by Repath/NextWaypoint below).
-        // Skips the checkpoint machinery entirely rather than feeding it a single-checkpoint
-        // list, since "arrived with nobody there" makes no sense when the target is never stale.
-        if (_machine.Data.TracksLivePositionWhileBlind)
-        {
             return;
         }
 
@@ -165,9 +221,6 @@ public class EnemyChaseState : IEnemyState
         // attack range - no-op on the current facing-less capsule, correct once art has a front.
         _machine.Body.MoveRotation(Quaternion.LookRotation(toPlayer.normalized));
 
-        // A clear line is cheaper and reads better than path-following, so it always wins
-        // when available - only route around obstacles (or through the search checkpoints)
-        // while actually blocked.
         bool clearLine = _machine.HasClearLineToPlayer();
 
         // Stop closing once inside attack range: AttackState owns all movement from here
@@ -190,21 +243,13 @@ public class EnemyChaseState : IEnemyState
             return;
         }
 
-        Vector3 targetPosition;
-        if (clearLine)
-        {
-            _path.Clear(); // line reopened - drop any stale path instead of finishing it out
-            // The reserved ring slot around the player, not the player's exact position - see
-            // RoomAttackSlots. Falls back to the raw player position when there's no room wired
-            // (e.g. a stray test enemy), same as GetAttackSlotPosition's own fallback.
-            targetPosition = _machine.Room != null
-                ? _machine.Room.GetAttackSlotPosition(_machine, _machine.Player.position)
-                : _machine.Player.position;
-        }
-        else
-        {
-            targetPosition = NextWaypoint(fixedDeltaTime);
-        }
+        // Routed through the same A* waypoint-following machinery regardless of clearLine now
+        // (2026-09-29 - previously a clear line meant walking straight at the attack slot every
+        // tick, which could still clip a corner that the sight linecast itself happened to miss).
+        // CurrentTarget below is what changes based on clearLine, not the movement method. Uses
+        // the debounced value (see _committedClearLine above), not the raw one just read.
+        bool pathClearLine = UpdateCommittedClearLine(clearLine, fixedDeltaTime);
+        Vector3 targetPosition = NextWaypoint(fixedDeltaTime, pathClearLine);
 
         Vector3 toTarget = targetPosition - _machine.Body.position;
         toTarget.y = 0f;
@@ -217,6 +262,28 @@ public class EnemyChaseState : IEnemyState
 
         Vector3 nextPosition = _machine.Body.position + direction * _machine.Data.MoveSpeed * fixedDeltaTime;
         _machine.MoveTo(nextPosition);
+    }
+
+    // Only commits a clearLine change to _committedClearLine once the raw reading has held
+    // steady for ClearLineDebounceTime - a single-tick (or few-tick) flicker back to the old
+    // value resets the pending timer instead of accumulating toward a commit, so genuine noise
+    // right at an edge never adds up to a real switch.
+    private bool UpdateCommittedClearLine(bool clearLine, float fixedDeltaTime)
+    {
+        if (clearLine == _committedClearLine)
+        {
+            _pendingClearLineTime = 0f;
+            return _committedClearLine;
+        }
+
+        _pendingClearLineTime += fixedDeltaTime;
+        if (_pendingClearLineTime >= ClearLineDebounceTime)
+        {
+            _committedClearLine = clearLine;
+            _pendingClearLineTime = 0f;
+        }
+
+        return _committedClearLine;
     }
 
     // [0]: last-known position extrapolated along the player's last velocity - if they were
@@ -235,30 +302,37 @@ public class EnemyChaseState : IEnemyState
         }
     }
 
-    // What to path toward while blind: the player's real current position for a "never loses
-    // track" enemy (see EnemyData.TracksLivePositionWhileBlind), otherwise the current search
-    // checkpoint (guessing based on where they were last seen).
-    private Vector3 BlindTarget()
+    // What to path toward. clearLine: the reserved ring slot around the player, not their exact
+    // position - see RoomAttackSlots. Blind: every enemy now tracks the player's real current
+    // position here too (2026-09-30 - see Tick's blind branch), not just RelentlessMelee's old
+    // TracksLivePositionWhileBlind special case. Both branches fall back to the raw player
+    // position when there's no room wired (e.g. a stray test enemy). If
+    // SearchNearLastKnownPosition (dormant, see Tick) is ever reactivated for some future enemy
+    // type, this blind branch would need its old
+    // "_checkpointIndex < _searchCheckpoints.Count ? _searchCheckpoints[_checkpointIndex] :
+    // _lastKnownPlayerPosition" fallback restored alongside it, gated the same way.
+    private Vector3 CurrentTarget(bool clearLine)
     {
-        if (_machine.Data.TracksLivePositionWhileBlind)
+        if (clearLine)
         {
-            return _machine.Player.position;
+            return _machine.Room != null
+                ? _machine.Room.GetAttackSlotPosition(_machine, _machine.Player.position)
+                : _machine.Player.position;
         }
 
-        return _checkpointIndex < _searchCheckpoints.Count ? _searchCheckpoints[_checkpointIndex] : _lastKnownPlayerPosition;
+        return _machine.Player.position;
     }
 
     // Advances past any waypoint already reached and returns the next one to head toward.
-    // Falls back to the current search checkpoint if there is no room wired (a stray enemy) or
-    // no path was found (e.g. an unreachable target) - the same "keep heading there anyway"
-    // behaviour this state used before pathfinding existed, so a missing path never leaves the
-    // enemy idle.
-    private Vector3 NextWaypoint(float fixedDeltaTime)
+    // Falls back to CurrentTarget directly if there is no room wired (a stray enemy) or no path
+    // was found (e.g. an unreachable target) - the same "keep heading there anyway" behaviour
+    // this state used before pathfinding existed, so a missing path never leaves the enemy idle.
+    private Vector3 NextWaypoint(float fixedDeltaTime, bool clearLine)
     {
         _repathTimer -= fixedDeltaTime;
-        if (_path.Count == 0 || _pathIndex >= _path.Count || _repathTimer <= 0f)
+        if (_path.Count == 0 || _pathIndex >= _path.Count || _repathTimer <= 0f || _pathForClearLine != clearLine)
         {
-            Repath();
+            Repath(clearLine);
         }
 
         // Horizontal distance only - Vector3.Distance would include Y, and RoomController's
@@ -274,15 +348,16 @@ public class EnemyChaseState : IEnemyState
             _pathIndex++;
         }
 
-        return _pathIndex < _path.Count ? _path[_pathIndex] : BlindTarget();
+        return _pathIndex < _path.Count ? _path[_pathIndex] : CurrentTarget(clearLine);
     }
 
-    private void Repath()
+    private void Repath(bool clearLine)
     {
         _repathTimer = RepathInterval;
+        _pathForClearLine = clearLine;
         _path.Clear();
 
-        Vector3 target = BlindTarget();
+        Vector3 target = CurrentTarget(clearLine);
         IReadOnlyList<Vector3> found = _machine.Room != null
             ? _machine.Room.FindPath(_machine.Body.position, target)
             : null;

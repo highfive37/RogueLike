@@ -18,6 +18,13 @@ public class RoomController : MonoBehaviour
     private const float WallThickness = RoomBounds.WallThickness;
     private const float DoorWidth = 8f; // matches modular_space tile grid (see BuildSide)
     private const float TileSize = 4f; // template-floor/wall/corner footprint
+    // 2026-09-30: pathfinding cell size, finer than TileSize (which stays as-is for geometry/
+    // obstacle authoring - only the pathfinding grid's own resolution changes here). Blocking
+    // is now derived from real obstacle Bounds (see BuildObstacles/_obstacleBounds) rather than
+    // a whole tile per placement, so a coarser cell would defeat the point - see
+    // RoomPathfindingGrid's header comment for what this fixes.
+    private const int PathfindingSubCellsPerTile = 4;
+    private const float PathfindingCellSize = TileSize / PathfindingSubCellsPerTile;
     private const float HalfTileSize = 2f; // template-wall-half footprint
     private const float DoorHeight = 3f;
     private const float EntryPointInset = 4f;
@@ -87,8 +94,8 @@ public class RoomController : MonoBehaviour
         Footprint = data.Footprint;
 
         BuildGeometry(data);
-        BuildObstacles(data);
-        _pathfindingGrid = new RoomPathfindingGrid(data.Footprint, data.Obstacles, TileSize);
+        BuildObstacles(data); // fills _obstacleBounds - must run before the grid below reads it
+        _pathfindingGrid = new RoomPathfindingGrid(data.Footprint, _obstacleBounds, PathfindingCellSize);
         _attackSlots = new RoomAttackSlots();
     }
 
@@ -117,29 +124,12 @@ public class RoomController : MonoBehaviour
             return null;
         }
 
+        // No same-cell disambiguation needed here (2026-09-30) - at PathfindingCellSize
+        // resolution, two points a couple of units apart on opposite sides of a thin wall
+        // land in different cells in the first place, since blocking now comes from the
+        // wall's own real footprint rather than a whole coarse tile swallowing both sides.
         Vector2Int fromCell = WorldToCell(fromWorld);
         Vector2Int toCell = WorldToCell(toWorld);
-
-        // A hub cell with a Connector blocking every direction out of it (e.g. a "+"-shaped
-        // fence occupying one cell's footprint) stays walkable itself - only its edges are
-        // blocked - so two occupants standing on opposite sides of that fence, both close
-        // enough to the shared cell's centre, round to the exact same cell here. Left alone,
-        // TryFindPath's own start==goal shortcut would then report them as "already there"
-        // and hand back a single waypoint sitting right on top of the fence that's actually
-        // between them. Re-resolve each side to whichever real neighbour its continuous
-        // position is actually offset toward whenever that specific direction is genuinely
-        // blocked - an ordinary (non-hub) cell has no blocked edges to redirect through, so
-        // this is a no-op there.
-        if (fromCell == toCell)
-        {
-            Vector2Int adjustedFrom = ResolveEffectiveCell(fromWorld, fromCell);
-            Vector2Int adjustedTo = ResolveEffectiveCell(toWorld, toCell);
-            if (adjustedFrom != adjustedTo)
-            {
-                fromCell = adjustedFrom;
-                toCell = adjustedTo;
-            }
-        }
 
         var cellPath = new List<Vector2Int>();
         if (!_pathfindingGrid.TryFindPath(fromCell, toCell, cellPath))
@@ -166,34 +156,13 @@ public class RoomController : MonoBehaviour
     public Vector3 GetAttackSlotPosition(EnemyStateMachine enemy, Vector3 target) =>
         _attackSlots != null ? _attackSlots.GetSlotPosition(enemy, target) : target;
 
-    // Picks whichever single neighbour of `cell` the continuous position at `worldPosition`
-    // is offset furthest toward (comparing local-space distance from the cell's own centre
-    // on each axis), but only when that specific edge is actually blocked and the neighbour
-    // is itself walkable - otherwise there's nothing to disambiguate and the original cell
-    // is correct as-is.
-    private Vector2Int ResolveEffectiveCell(Vector3 worldPosition, Vector2Int cell)
-    {
-        Vector3 local = transform.InverseTransformPoint(worldPosition);
-        Vector3 cellCenter = CellToLocal(cell);
-        float dx = local.x - cellCenter.x;
-        float dz = local.z - cellCenter.z;
-
-        Vector2Int neighbour = Mathf.Abs(dx) >= Mathf.Abs(dz)
-            ? cell + new Vector2Int(dx >= 0f ? 1 : -1, 0)
-            : cell + new Vector2Int(0, dz >= 0f ? 1 : -1);
-
-        return _pathfindingGrid.IsEdgeBlocked(cell, neighbour) && _pathfindingGrid.IsWalkable(neighbour)
-            ? neighbour
-            : cell;
-    }
-
     private Vector2Int WorldToCell(Vector3 worldPosition)
     {
         Vector3 local = transform.InverseTransformPoint(worldPosition);
         float halfWidth = Footprint.Width / 2f;
         float halfDepth = Footprint.Depth / 2f;
-        int ix = Mathf.RoundToInt((local.x + halfWidth - TileSize / 2f) / TileSize);
-        int iz = Mathf.RoundToInt((local.z + halfDepth - TileSize / 2f) / TileSize);
+        int ix = Mathf.RoundToInt((local.x + halfWidth - PathfindingCellSize / 2f) / PathfindingCellSize);
+        int iz = Mathf.RoundToInt((local.z + halfDepth - PathfindingCellSize / 2f) / PathfindingCellSize);
         return new Vector2Int(ix, iz);
     }
 
@@ -201,8 +170,8 @@ public class RoomController : MonoBehaviour
     {
         float halfWidth = Footprint.Width / 2f;
         float halfDepth = Footprint.Depth / 2f;
-        float x = -halfWidth + TileSize / 2f + cell.x * TileSize;
-        float z = -halfDepth + TileSize / 2f + cell.y * TileSize;
+        float x = -halfWidth + PathfindingCellSize / 2f + cell.x * PathfindingCellSize;
+        float z = -halfDepth + PathfindingCellSize / 2f + cell.y * PathfindingCellSize;
         return new Vector3(x, 0f, z);
     }
 
@@ -293,11 +262,23 @@ public class RoomController : MonoBehaviour
         }
     }
 
-    // Thin segment's real cross-section, matching how Block_Stone_Connector was built
-    // (Block_Stone rescaled to 1/4 on its thin axis only - see
-    // Docs/AI_Decision_Log.md 2026-09-12 "얇은 연결 세그먼트로 전환"). Used only to size
-    // the coarse enemy-containment Bounds below; the collider itself lives on the prefab.
+    // Segment's real cross-section, matching how Block_Stone_Connector was built (Block_Stone
+    // rescaled to 1/4 on its thin axis only - see Docs/AI_Decision_Log.md 2026-09-12 "얇은 연결
+    // 세그먼트로 전환"). This is the THIN axis, perpendicular to the direction the segment
+    // connects toward - used only to size the enemy-containment/pathfinding Bounds below; the
+    // real collider lives on the prefab itself.
     private const float ConnectorThickness = 1f;
+    // 2026-09-30: the segment's LENGTH along the direction it connects toward - was TileSize (a
+    // full room-floor-tile edge) until now, shrunk to match the fine pathfinding grid instead
+    // (user call: "얇은 벽들의 길이를 바닥 그리드 1칸 기준으로, 배치는 그리드 칸 외곽에"). A
+    // full-TileSize-long segment necessarily blocked the entire shared boundary between two
+    // tiles along the pathfinding grid's fine cells; this one only ever blocks 1 of the 4 fine
+    // cells along that same edge, leaving the other 3 walkable regardless of how many sides of a
+    // cell carry a fence. PathfindingCellSize*2 (2 fine cells blocked, 2 left open) was tried
+    // in between - looked more like the original rectangle and still left a theoretically
+    // comfortable gap - but real Play Mode testing showed the enemy actually struggling to get
+    // through, reverted back to a single PathfindingCellSize on that live result.
+    private const float ConnectorLength = PathfindingCellSize;
 
     // One instance per ProceduralFloorGenerator-authored ObstaclePlacement (Combat rooms
     // only, today). A Solo placement occupies exactly one floor tile, same as before. A
@@ -335,26 +316,41 @@ public class RoomController : MonoBehaviour
                     continue;
                 }
 
+                // 2026-09-30: positioned fully inside the neighbour cell (LocalCell + offset)
+                // instead of straddling the shared boundary half-and-half - LocalCell is always
+                // the lower of the pair by convention (see ObstaclePlacement's header comment),
+                // so a short ConnectorLength-long segment never fractionally double-blocks a
+                // fine cell on both sides of the boundary line, and a cell surrounded on all 4
+                // sides (e.g. a "+"-shaped fence hub) keeps every side's other 3 fine cells open
+                // regardless (see RoomPathfindingGrid's cell-size header comment for the
+                // full-sealing bug a TileSize-long segment used to risk here).
                 bool alongX = Mathf.Approximately(placement.RotationY, 90f);
-                float x = alongX ? anchorX + TileSize / 2f : anchorX;
-                float z = alongX ? anchorZ : anchorZ + TileSize / 2f;
+                float x = alongX ? anchorX + TileSize / 2f + ConnectorLength / 2f : anchorX;
+                float z = alongX ? anchorZ : anchorZ + TileSize / 2f + ConnectorLength / 2f;
 
                 GameObject instance = Instantiate(obstacleSet.ConnectorPrefab, transform);
                 instance.name = $"Connector_{placement.LocalCell.x}_{placement.LocalCell.y}";
                 instance.transform.localPosition = new Vector3(x, 0f, z);
                 instance.transform.localRotation = Quaternion.Euler(0f, placement.RotationY, 0f);
+                // Block_Stone_Connector is authored TileSize long on its own local Z (its
+                // "connects toward" axis, before placement.RotationY reorients it) - shrink that
+                // same local axis to ConnectorLength regardless of rotation, since Unity applies
+                // scale before rotation so this always shrinks the segment's own length axis,
+                // never its thickness, whichever world direction that ends up pointing.
+                Vector3 scale = instance.transform.localScale;
+                scale.z *= ConnectorLength / TileSize;
+                instance.transform.localScale = scale;
 
-                // Thin along the axis a body actually crosses to get through this connector
-                // (blocking that), full TileSize along the shared boundary line it sits on -
-                // an east/west (alongX) connector is thin in X and spans the full Z width of
-                // the boundary; a north/south one is thin in Z and spans the full X width.
-                // Swapped these two until 2026-09-13: the box ended up thin on the boundary's
-                // own line and TileSize-deep along the crossing axis instead, so its inflated
-                // clamp footprint reached a full tile deep into both neighbouring cells - far
-                // more than the thin wall it was meant to represent - and MoveTo's clamp kept
-                // shoving a chasing enemy back out of cells RoomPathfindingGrid correctly
-                // considered open, well short of a path it had already computed correctly.
-                Vector3 size = alongX ? new Vector3(ConnectorThickness, 0f, TileSize) : new Vector3(TileSize, 0f, ConnectorThickness);
+                // 2026-09-30: fixed an axis mix-up found while shrinking ConnectorLength above -
+                // this used to be transposed (TileSize on the crossing/thickness axis,
+                // ConnectorThickness on the connecting/length axis), the opposite of
+                // Block_Stone_Connector's real shape (verified via its actual Collider.bounds:
+                // thin on the crossing axis, long on the connecting one, for both rotations).
+                // Pathfinding/movement-clamping only ever read this abstract Bounds, never the
+                // prefab's own real collider, so the mismatch never broke connectivity outright,
+                // but it did block a box rotated 90 degrees from the one the player actually
+                // sees and whose sight line the real collider blocks - now matches.
+                Vector3 size = alongX ? new Vector3(ConnectorLength, 0f, ConnectorThickness) : new Vector3(ConnectorThickness, 0f, ConnectorLength);
                 _obstacleBounds.Add(new Bounds(new Vector3(x, 0f, z), size));
             }
             else

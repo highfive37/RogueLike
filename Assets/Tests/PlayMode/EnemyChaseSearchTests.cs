@@ -6,14 +6,17 @@ using UnityEngine.TestTools;
 
 namespace RogueLike.Tests
 {
-    // 2026-09-13: locks the "search last-known position" behaviour added to EnemyChaseState.
-    // Losing line of sight no longer drops the chase immediately (that was the original bug -
-    // leashRange, a pure real-time distance check, was firing before pathfinding ever got a
-    // chance to run). It now visits a short list of checkpoints while blind - [0] the last-seen
-    // position extrapolated a bit along the player's last velocity, [1..] a couple of "look
-    // around" spots near it - and only gives up once every checkpoint has been checked with
-    // nobody there, it times out searching, or the real player has drifted very far away
-    // regardless.
+    // 2026-09-13: originally locked the "search last-known position" behaviour added to
+    // EnemyChaseState - losing line of sight no longer dropped the chase immediately (that was
+    // the original bug - leashRange, a pure real-time distance check, was firing before
+    // pathfinding ever got a chance to run). 2026-09-30: that checkpoint-search behaviour is now
+    // dormant (EnemyChaseState.SearchNearLastKnownPosition, no live call site) - every enemy
+    // tracks the player's real, live position while blind now, the same persistence
+    // RelentlessMelee originally had exclusively, gated only by a flat BlindChaseGiveUpRange
+    // distance instead of a per-enemy LeashRange/SearchDuration combo (user call: "그 거리
+    // 안에서는 RelentlessMelee과 같이 계속 추격"). The tests below now lock that behaviour
+    // instead; the checkpoint-specific tests that exercised the dormant system were removed
+    // since production no longer reaches that code path.
     public class EnemyChaseSearchTests
     {
         private readonly TestObjects _t = new TestObjects();
@@ -26,170 +29,9 @@ namespace RogueLike.Tests
             return TestObjects.GetPrivateField<IEnemyState>(esm, "_currentState");
         }
 
-        private static int CheckpointIndex(EnemyStateMachine esm)
-        {
-            return TestObjects.GetPrivateField<int>(esm.ChaseState, "_checkpointIndex");
-        }
-
-        private static List<Vector3> SearchCheckpoints(EnemyStateMachine esm)
-        {
-            return TestObjects.GetPrivateField<List<Vector3>>(esm.ChaseState, "_searchCheckpoints");
-        }
-
         private static List<Vector3> Path(EnemyStateMachine esm)
         {
             return TestObjects.GetPrivateField<List<Vector3>>(esm.ChaseState, "_path");
-        }
-
-        // Stops EnemyStateMachine's own Update()/FixedUpdate() from also calling
-        // _currentState.Tick()/PhysicsTick() with the real, uncontrolled Time.deltaTime -
-        // disabling the component (not nulling _currentState, unlike
-        // FrameRateIndependenceMovementTests' StopFsmAutoTick) so CurrentState(enemy) below
-        // still reads the real current state instead of null; Unity simply stops calling
-        // Update()/FixedUpdate() on a disabled Behaviour, everything else keeps working when
-        // called directly. This does fire OnDisable() (unsubscribes the two HealthComponent
-        // events, releases a Room attack-slot reservation) - harmless here since none of these
-        // tests build a Room or assert on health/death events, but worth knowing if this helper
-        // is ever reused in a test that does.
-        private static void StopFsmAutoTick(EnemyStateMachine esm)
-        {
-            esm.enabled = false;
-        }
-
-        [UnityTest]
-        public IEnumerator Chase_VisitsEveryCheckpoint_WithNobodyThere_GivesUpToPatrol()
-        {
-            GameObject player = _t.MakePlayer(new Vector3(2f, 0f, 0f));
-            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(leashRange: 9f, moveSpeed: 6f), Vector3.zero);
-            yield return null; // Start(): finds the player
-
-            enemy.ChangeState(enemy.ChaseState); // snapshots last-known position = (2,0,0)
-
-            // The player slips far away behind a wall - the walk to the checkpoints (all near
-            // the snapshot) is clear, but the real player is no longer visible from anywhere
-            // near them.
-            player.transform.position = new Vector3(2f, 0f, 10f);
-            _t.BuildStaticBlocker(new Vector3(0f, 0f, 5f), new Vector3(10f, 3f, 1f));
-            Physics.SyncTransforms();
-
-            // Drive Tick()/PhysicsTick() with a fixed synthetic deltaTime instead of relying on
-            // real Update()/FixedUpdate() frame timing - a loaded/slow CI runner can hand a
-            // single frame a huge real Time.deltaTime, which blows straight past
-            // MinimumSearchTime/SearchDuration in one call and skips the exact transition this
-            // test is trying to observe (2026-09-28 CI flakiness investigation - passed locally
-            // every time, only ever failed in GitHub Actions). Still yield once per iteration so
-            // Rigidbody.MovePosition actually resolves before the next distance check - same
-            // technique FrameRateIndependenceMovementTests already uses for PhysicsTick, just
-            // with the state-machine Tick() driven alongside it here too.
-            const float step = 1f / 60f;
-            StopFsmAutoTick(enemy);
-
-            IEnemyState state = CurrentState(enemy);
-            for (int i = 0; i < 600 && state == enemy.ChaseState; i++)
-            {
-                enemy.ChaseState.PhysicsTick(step);
-                yield return new WaitForFixedUpdate();
-                enemy.ChaseState.Tick(step);
-                state = CurrentState(enemy);
-            }
-
-            // Idle is reachable only via Patrol.Tick's own arrival check in this state graph
-            // (never directly from Chase) - so observing Idle here still proves the chase gave
-            // up, just that Patrol's own randomised walk (irrelevant to this test) also finished
-            // in the same frame it was entered, before this poll's next sample. Accepting both
-            // avoids a rare timing race on exactly which single frame is observed.
-            Assert.That(state, Is.SameAs(enemy.PatrolState).Or.SameAs(enemy.IdleState));
-        }
-
-        [UnityTest]
-        public IEnumerator Chase_AlreadyAtFirstCheckpoint_HoldsUntilMinimumSearchTime_ThenAdvancesInsteadOfPatrol()
-        {
-            // A melee enemy is typically already this close (within SearchArriveDistance) the
-            // instant the player breaks sight around a corner mid-chase - "arrived" alone would
-            // be satisfied on the very first blind tick without the minimum search time floor.
-            GameObject player = _t.MakePlayer(new Vector3(1f, 0f, 0f));
-            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(leashRange: 9f, moveSpeed: 6f), Vector3.zero);
-            yield return null;
-
-            enemy.ChangeState(enemy.ChaseState); // snapshots last-known position = (1,0,0), zero velocity
-
-            _t.BuildStaticBlocker(new Vector3(0.5f, 0f, 0f), new Vector3(0.2f, 3f, 3f)); // thin - fits in the gap
-            Physics.SyncTransforms();
-
-            // Drive Tick() with a fixed synthetic deltaTime instead of relying on real Update()
-            // frame timing, for the same reason as the other search test above - a loaded/slow
-            // CI runner handing a single frame a huge real Time.deltaTime can blow straight past
-            // MinimumSearchTime in one call (2026-09-28 CI flakiness investigation). The enemy
-            // never needs to physically move for this particular test (it starts already within
-            // SearchArriveDistance of checkpoint 0), so no yields/PhysicsTick are needed here -
-            // straight synchronous Tick() calls are enough and keep this fully deterministic.
-            const float step = 1f / 60f;
-            StopFsmAutoTick(enemy);
-
-            enemy.ChaseState.Tick(step); // one Tick(): sight just broke, already within SearchArriveDistance of checkpoint 0
-
-            Assert.That(CurrentState(enemy), Is.SameAs(enemy.ChaseState),
-                "must not give up on the very first blind tick just because it started this close");
-            Assert.That(CheckpointIndex(enemy), Is.EqualTo(0), "still waiting out the minimum search time at checkpoint 0");
-
-            for (int i = 0; i < 24; i++) // ~0.4s more - still under the 0.5s minimum search time
-            {
-                enemy.ChaseState.Tick(step);
-            }
-
-            Assert.That(CurrentState(enemy), Is.SameAs(enemy.ChaseState), "still within the minimum search window");
-
-            // From here, tick one synthetic step at a time (Tick() only ever advances the
-            // checkpoint index by 1 per call, so index 1 must be observed for at least one step
-            // even if the look-around points also happen to be close enough to cascade quickly
-            // toward Patrol) rather than jumping in a bigger fixed step that could miss the
-            // moment entirely and only see the eventual Patrol/Idle outcome.
-            bool advancedPastFirstCheckpoint = false;
-            for (int i = 0; i < 120 && CurrentState(enemy) == enemy.ChaseState; i++)
-            {
-                enemy.ChaseState.Tick(step);
-                if (CheckpointIndex(enemy) >= 1)
-                {
-                    advancedPastFirstCheckpoint = true;
-                }
-            }
-
-            Assert.That(advancedPastFirstCheckpoint, Is.True,
-                "should have moved on to a look-around checkpoint at some point, not jumped straight from checkpoint 0 to giving up");
-        }
-
-        [UnityTest]
-        public IEnumerator Chase_PlayerWasMoving_FirstCheckpointExtrapolatesPastLastKnownPosition()
-        {
-            GameObject player = _t.MakePlayer(new Vector3(8f, 0f, 0f));
-            var playerRb = player.AddComponent<Rigidbody>();
-            playerRb.useGravity = false;
-            playerRb.linearVelocity = new Vector3(3f, 0f, 0f); // still heading further away when last seen
-
-            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(leashRange: 20f, moveSpeed: 6f), Vector3.zero);
-            yield return null; // Start(): finds the player (and its Rigidbody)
-
-            // The player's own Rigidbody (velocity (3,0,0), no damping) may have already
-            // integrated a physics step or two by now - read its actual position right before
-            // the snapshot instead of assuming the (8,0,0) it was created at, so this isn't
-            // fighting test-runner physics-step timing that has nothing to do with what's
-            // actually being tested (the prediction math itself).
-            Vector3 positionAtSnapshot = player.transform.position;
-            enemy.ChangeState(enemy.ChaseState); // snapshots last-known=positionAtSnapshot, velocity=(3,0,0)
-
-            _t.BuildStaticBlocker(new Vector3(4f, 0f, 0f), new Vector3(1f, 3f, 3f)); // breaks sight
-            Physics.SyncTransforms();
-
-            yield return null; // one Tick(): blind, builds the search checkpoints
-
-            List<Vector3> checkpoints = SearchCheckpoints(enemy);
-            Assert.That(checkpoints.Count, Is.GreaterThanOrEqualTo(1));
-
-            // Mirrors EnemyChaseState.PredictionLookAheadTime (0.6s) - the first checkpoint
-            // should sit ahead of the last-known position along the player's last velocity,
-            // not frozen exactly on it.
-            Vector3 expectedPredicted = positionAtSnapshot + new Vector3(3f, 0f, 0f) * 0.6f;
-            Assert.That(Vector3.Distance(checkpoints[0], expectedPredicted), Is.LessThan(0.01f));
         }
 
         [UnityTest]
@@ -198,13 +40,20 @@ namespace RogueLike.Tests
             // Same obstacle-blocks-the-direct-line room as EnemyChasePathfindingTests, so the
             // enemy is blind from the start and its blind-mode target is exercised through a
             // real Room.FindPath call, not this minimal scene's no-Room straight-line fallback.
+            // 2026-09-30: this behaviour is no longer gated behind tracksLivePositionWhileBlind -
+            // every enemy tracks the player's live position while blind now, so a plain
+            // MakeEnemyData() enemy exercises the exact same path this test locks.
             var obstacles = new List<ObstaclePlacement> { new ObstaclePlacement(ObstacleShape.Solo, new Vector2Int(2, 2), 0, 0f) };
             RoomController room = _t.BuildRoom(Vector3.zero, 20f, obstacles: obstacles);
             _t.BuildStaticBlocker(Vector3.zero, new Vector3(4f, 3f, 4f));
 
-            GameObject player = _t.MakePlayer(new Vector3(4f, 0f, 0f));
+            // x=4.5 (not a round 4) so WorldToCell never lands on an exact .5 rounding tie for
+            // this 20-unit room's PathfindingCellSize=1 grid - x=4 does for any z (halfWidth 10,
+            // (4+10-0.5)/1=13.5 exactly), which let the last waypoint land a full cell further
+            // from the target than expected and made this test's tolerance flaky.
+            GameObject player = _t.MakePlayer(new Vector3(4.5f, 0f, 0.5f));
             EnemyStateMachine enemy = _t.BuildEnemy(
-                _t.MakeEnemyData(leashRange: 30f, moveSpeed: 8f, tracksLivePositionWhileBlind: true), new Vector3(-4f, 0f, 0f));
+                _t.MakeEnemyData(leashRange: 30f, moveSpeed: 8f), new Vector3(-4f, 0f, 0f));
             enemy.SetRoom(room);
             enemy.SetSpawnPosition(new Vector3(-4f, 0f, 0f));
 
@@ -212,17 +61,17 @@ namespace RogueLike.Tests
             yield return null; // Start(): finds the player
 
             enemy.ChangeState(enemy.ChaseState);
-            yield return new WaitForFixedUpdate(); // one PhysicsTick: blind, computes a path toward (4,0,0)
+            yield return new WaitForFixedUpdate(); // one PhysicsTick: blind, computes a path toward (4.5,0,0.5)
 
             List<Vector3> pathToOld = Path(enemy);
             Assert.That(pathToOld, Is.Not.Empty, "should have computed a path while blind");
             Vector3 oldTarget = pathToOld[pathToOld.Count - 1];
-            Assert.That(Vector3.Distance(oldTarget, new Vector3(4f, 0f, 0f)), Is.LessThan(2.5f),
+            Assert.That(Vector3.Distance(oldTarget, new Vector3(4.5f, 0f, 0.5f)), Is.LessThan(2.5f),
                 "initial path should lead toward the player's first position");
 
             // Player relocates to a different spot - still on the far side of the same central
             // obstacle from the enemy's general vicinity, so line of sight stays blocked.
-            player.transform.position = new Vector3(4f, 0f, 3f);
+            player.transform.position = new Vector3(4.5f, 0f, 3.5f);
             Physics.SyncTransforms();
 
             for (int i = 0; i < 20; i++) // > RepathInterval (0.3s @ 0.02 = 15 steps), forces a fresh Repath
@@ -233,32 +82,41 @@ namespace RogueLike.Tests
             List<Vector3> pathToNew = Path(enemy);
             Assert.That(pathToNew, Is.Not.Empty, "should still have a path while blind after relocating");
             Vector3 newTarget = pathToNew[pathToNew.Count - 1];
-            Assert.That(Vector3.Distance(newTarget, new Vector3(4f, 0f, 3f)), Is.LessThan(2.5f),
+            Assert.That(Vector3.Distance(newTarget, new Vector3(4.5f, 0f, 3.5f)), Is.LessThan(2.5f),
                 "after relocating, the recomputed path should now lead toward the player's new position");
         }
 
+        // 2026-09-30: replaces the old SearchDuration-timeout test - every enemy now tracks the
+        // player's live position while blind (no more guessing/giving-up-by-timer), so the only
+        // way left to shed a blind chase is drifting past EnemyChaseState.BlindChaseGiveUpRange
+        // (12 units) in real distance.
         [UnityTest]
-        public IEnumerator Chase_SearchTimesOut_GivesUpToPatrol_WhenLastKnownSpotUnreachable()
+        public IEnumerator Chase_PlayerBeyondBlindChaseGiveUpRange_GivesUpToPatrol()
         {
             GameObject player = _t.MakePlayer(new Vector3(2f, 0f, 0f));
-            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(leashRange: 9f, moveSpeed: 6f, searchDuration: 0.3f), Vector3.zero);
+            EnemyStateMachine enemy = _t.BuildEnemy(_t.MakeEnemyData(leashRange: 9f, moveSpeed: 6f), Vector3.zero);
             yield return null;
 
             enemy.ChangeState(enemy.ChaseState); // snapshots last-known position = (2,0,0)
 
-            // A wall sits directly between the enemy and the snapshot itself - with no Room to
-            // path around it (this minimal scene has none), the enemy can never actually arrive.
-            _t.BuildStaticBlocker(new Vector3(1f, 0f, 0f), new Vector3(1f, 3f, 3f));
-            player.transform.position = new Vector3(2f, 0f, 10f); // also out of sight
+            // Wide wall blocks sight along this whole strip regardless of exactly where along z
+            // the player ends up, so relocating further away doesn't accidentally regain a clear
+            // line before distance alone can trigger the give-up this test is after.
             _t.BuildStaticBlocker(new Vector3(0f, 0f, 5f), new Vector3(10f, 3f, 1f));
+            player.transform.position = new Vector3(2f, 0f, 13f); // ~13.15 straight-line, past the 12-unit BlindChaseGiveUpRange
             Physics.SyncTransforms();
 
-            for (int i = 0; i < 60; i++) // 1.2s @ 0.02 - well past the 0.3s search duration
+            for (int i = 0; i < 60; i++)
             {
                 yield return new WaitForFixedUpdate();
             }
 
-            Assert.That(CurrentState(enemy), Is.SameAs(enemy.PatrolState));
+            // Idle is reachable only via Patrol.Tick's own arrival check in this state graph
+            // (never directly from Chase) - so observing Idle here still proves the chase gave
+            // up, just that Patrol's own randomised walk (irrelevant to this test) also finished
+            // in the same window, e.g. rolled a target close to spawn. Accepting both avoids a
+            // rare timing/RNG race on exactly which single frame is observed.
+            Assert.That(CurrentState(enemy), Is.SameAs(enemy.PatrolState).Or.SameAs(enemy.IdleState));
         }
 
         [UnityTest]

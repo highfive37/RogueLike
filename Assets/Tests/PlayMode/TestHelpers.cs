@@ -12,6 +12,11 @@ namespace RogueLike.Tests
     // once with the config already in place.
     internal sealed class TestObjects
     {
+        // Matches RoomController's own TileSize - only used to size the default obstacle
+        // prefab BuildRoom auto-provides below, not to duplicate any of RoomController's real
+        // geometry logic.
+        private const float DefaultObstacleTileSize = 4f;
+
         private readonly List<Object> _spawned = new List<Object>();
 
         public T Track<T>(T obj) where T : Object
@@ -114,6 +119,18 @@ namespace RogueLike.Tests
                 "Assets/Prefabs/RoomTiles/RoomTileSet_ModularSpace.asset");
             SetPrivateField(room, "tileSet", tileSet);
 #endif
+            // Pathfinding now blocks cells from real obstacle Bounds (RoomController.
+            // BuildObstacles), not from ObstaclePlacement data alone (2026-09-30) - a caller
+            // that passes obstacles but no obstacleSet would otherwise get real prefabs never
+            // instantiated, _obstacleBounds left empty, and a pathfinding grid that sees no
+            // obstacles at all. Default to a full-tile box so "just route around this
+            // placement" tests keep working without every call site wiring one explicitly -
+            // a test that cares about a smaller real footprint already passes its own.
+            if (obstacleSet == null && obstacles != null && obstacles.Count > 0)
+            {
+                obstacleSet = MakeObstacleSet();
+            }
+
             if (obstacleSet != null)
             {
                 SetPrivateField(room, "obstacleSet", obstacleSet);
@@ -137,18 +154,28 @@ namespace RogueLike.Tests
         // Connector sizing/placement logic (it early-returns with obstacleSet == null
         // otherwise, which is why no earlier test caught the 2026-09-13 swapped-axis clamp
         // bug: none of them wired one). Instantiate() only needs a GameObject to clone, not a
-        // saved asset, so this never touches the project's real obstacle prefabs.
+        // saved asset, so this never touches the project's real obstacle prefabs. soloPrefab
+        // defaults to a bare full-tile BoxCollider (2026-09-30) rather than staying unset - a
+        // Solo placement with no real collider to measure would otherwise leave the
+        // pathfinding grid seeing no obstacle at all (BuildObstacles' Solo branch also
+        // early-returns with no prefabs configured). A test that cares about a smaller real
+        // footprint still passes its own soloPrefab explicitly and gets that instead.
         public RoomObstacleSet MakeObstacleSet(GameObject soloPrefab = null)
         {
             var connectorPrefab = new GameObject("TEST_ConnectorPrefab");
             Track(connectorPrefab);
 
+            if (soloPrefab == null)
+            {
+                soloPrefab = new GameObject("TEST_DefaultSoloPrefab");
+                BoxCollider collider = soloPrefab.AddComponent<BoxCollider>();
+                collider.size = new Vector3(DefaultObstacleTileSize, 3f, DefaultObstacleTileSize);
+                Track(soloPrefab);
+            }
+
             var set = ScriptableObject.CreateInstance<RoomObstacleSet>();
             SetPrivateField(set, "connectorPrefab", connectorPrefab);
-            if (soloPrefab != null)
-            {
-                SetPrivateField(set, "prefabs", new[] { soloPrefab });
-            }
+            SetPrivateField(set, "prefabs", new[] { soloPrefab });
 
             return Track(set);
         }

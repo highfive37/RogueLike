@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6c36d5884cbd71d469be64bc0ae129cb, type: 3}
   m_Name: EnemyRelentlessMeleeData
   m_EditorClassIdentifier: RogueLike::EnemyData
-  moveSpeed: 4.5
+  moveSpeed: 2.25
   patrolSpeed: 1.5
   patrolRadius: 3
   idleDuration: 1.5
@@ -23,6 +23,6 @@ MonoBehaviour:
   searchDuration: 300
   tracksLivePositionWhileBlind: 1
   attackPatterns:
-  - {fileID: 11400000, guid: 4e545610843d4884accb3fb2ab09a2bf, type: 2}
+  - {fileID: 11400000, guid: 77693472267172a48bfedaba488c932a, type: 2}
   stunDuration: 0.15
   knockbackResistance: 0

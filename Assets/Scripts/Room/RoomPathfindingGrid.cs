@@ -1,14 +1,21 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Pure grid-based A* over one room's floor-tile cells - the same ix/iz convention
-// ObstaclePlacement.LocalCell already uses (see that file's header comment), so no extra
-// translation is needed between "which cell an obstacle occupies" and "which cell is
-// blocked for pathfinding". No Unity scene/physics dependency: RoomController builds one
-// instance per room from its RoomFootprint + ObstaclePlacements and exposes it as
-// FindPath(worldFrom, worldTo). 4-directional only - this project's tiles are uniform
-// 4-unit squares, so diagonal movement would only add corner-cutting edge cases for no
-// real benefit at this granularity.
+// Pure grid-based A* over one room's floor, at a cell size finer than the room's authoring
+// tile size (RoomController passes its own real obstacle Bounds - the same ones
+// RoomObstacleBounds/ClampToInterior already use - and a cell size smaller than TileSize).
+// No Unity scene/physics dependency beyond the Bounds values themselves. 4-directional only -
+// diagonal movement would only add corner-cutting edge cases for no real benefit here.
+//
+// 2026-09-30: previously took ObstaclePlacement data + blocked one whole TileSize cell per
+// Solo obstacle regardless of the placed prefab's real (often smaller) footprint, with a
+// separate blocked-edge set for Connectors. That let two problems slip through: (1) a real
+// gap between two obstacles that only look tile-sized got treated as fully blocked, (2) two
+// points close together but on opposite sides of a thin wall could round to the same coarse
+// cell and read as "already arrived" mid-chase. Blocking cells directly from real Bounds at a
+// finer resolution fixes both - a thin Connector's real (~1 unit) footprint now blocks only
+// the cells it actually overlaps, and two points a couple of units apart essentially never
+// share a 1-unit cell the way they routinely shared a 4-unit one.
 public class RoomPathfindingGrid
 {
     private static readonly Vector2Int[] Directions =
@@ -16,38 +23,27 @@ public class RoomPathfindingGrid
         new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
     };
 
+    // Guards against a Bounds edge landing exactly on a cell boundary rounding either way
+    // depending on float error - errs toward the smaller overlap (excludes the boundary cell)
+    // rather than over-blocking, since SetBlocked below is safe to call zero times but IsInBounds
+    // silently no-ops an out-of-range one either way.
+    private const float BoundaryEpsilon = 0.001f;
+
     private readonly int _cellsX;
     private readonly int _cellsZ;
     private readonly bool[,] _blocked;
 
-    // Connector obstacles block the thin connection between exactly 2 adjacent cells, not
-    // either cell's whole interior (see ObstaclePlacement) - a separate blocked-edge set
-    // (both orderings stored, so a lookup works from either side) preserves that instead of
-    // forcing a coarse whole-cell block that would send a path around the long way for no
-    // reason.
-    private readonly HashSet<(Vector2Int, Vector2Int)> _blockedEdges = new HashSet<(Vector2Int, Vector2Int)>();
-
-    public RoomPathfindingGrid(RoomFootprint footprint, IReadOnlyList<ObstaclePlacement> obstacles, float tileSize)
+    public RoomPathfindingGrid(RoomFootprint footprint, IReadOnlyList<Bounds> obstacleBounds, float cellSize)
     {
-        _cellsX = Mathf.RoundToInt(footprint.Width / tileSize);
-        _cellsZ = Mathf.RoundToInt(footprint.Depth / tileSize);
+        _cellsX = Mathf.RoundToInt(footprint.Width / cellSize);
+        _cellsZ = Mathf.RoundToInt(footprint.Depth / cellSize);
         _blocked = new bool[_cellsX, _cellsZ];
 
-        MarkNotchCellsBlocked(footprint, tileSize);
+        MarkNotchCellsBlocked(footprint, cellSize);
 
-        foreach (ObstaclePlacement placement in obstacles)
+        for (int i = 0; i < obstacleBounds.Count; i++)
         {
-            if (placement.Shape == ObstacleShape.Solo)
-            {
-                SetBlocked(placement.LocalCell);
-                continue;
-            }
-
-            // RotationY 90 = spans east (+X), 0 = spans north (+Z) - see ObstaclePlacement.
-            Vector2Int neighbourOffset = Mathf.Approximately(placement.RotationY, 90f)
-                ? new Vector2Int(1, 0)
-                : new Vector2Int(0, 1);
-            AddBlockedEdge(placement.LocalCell, placement.LocalCell + neighbourOffset);
+            BlockOverlappingCells(obstacleBounds[i], footprint, cellSize);
         }
     }
 
@@ -55,18 +51,12 @@ public class RoomPathfindingGrid
 
     public bool IsWalkable(Vector2Int cell) => IsInBounds(cell) && !_blocked[cell.x, cell.y];
 
-    // Exposed for RoomController's same-cell disambiguation (see FindPath) - a hub cell
-    // with a Connector blocking every direction (e.g. a "+"-shaped fence) stays walkable
-    // itself, but two occupants standing on opposite sides of it both round to that one
-    // cell; telling which specific neighbour is actually blocked from it is what lets that
-    // case be told apart from a normal, genuinely-open cell.
-    public bool IsEdgeBlocked(Vector2Int a, Vector2Int b) => _blockedEdges.Contains((a, b));
-
     // Standard grid A*, Manhattan heuristic (admissible and exact here - with only
     // 4-directional, uniform-cost moves, remaining distance is never less than Manhattan
     // distance). The open set is a plain list with a linear min-scan rather than a binary
-    // heap - room grids top out around a few dozen cells, nowhere near where a heap's own
-    // overhead would pay for itself.
+    // heap - rooms top out around a couple thousand cells at the current cell size, verify via
+    // benchmark before assuming that still doesn't matter the way it didn't at the old coarser
+    // resolution.
     public bool TryFindPath(Vector2Int start, Vector2Int goal, List<Vector2Int> path)
     {
         path.Clear();
@@ -99,7 +89,7 @@ public class RoomPathfindingGrid
             foreach (Vector2Int direction in Directions)
             {
                 Vector2Int neighbour = current + direction;
-                if (!IsWalkable(neighbour) || IsEdgeBlocked(current, neighbour))
+                if (!IsWalkable(neighbour))
                 {
                     continue;
                 }
@@ -163,23 +153,41 @@ public class RoomPathfindingGrid
         }
     }
 
-    private void AddBlockedEdge(Vector2Int a, Vector2Int b)
+    // Marks every cell this obstacle's real AABB actually overlaps, however many that is -
+    // a full-tile Solo obstacle still blocks one cell at TileSize-equal cellSize, a Solo
+    // smaller than its tile blocks only the cells its real collider reaches at a finer
+    // cellSize, and a thin Connector blocks only the thin strip of cells its ~1-unit
+    // footprint crosses instead of a whole edge's worth of coarse cell.
+    private void BlockOverlappingCells(Bounds bounds, RoomFootprint footprint, float cellSize)
     {
-        _blockedEdges.Add((a, b));
-        _blockedEdges.Add((b, a));
+        float halfWidth = footprint.Width / 2f;
+        float halfDepth = footprint.Depth / 2f;
+
+        int minX = Mathf.FloorToInt((bounds.min.x + halfWidth) / cellSize + BoundaryEpsilon);
+        int maxX = Mathf.CeilToInt((bounds.max.x + halfWidth) / cellSize - BoundaryEpsilon) - 1;
+        int minZ = Mathf.FloorToInt((bounds.min.z + halfDepth) / cellSize + BoundaryEpsilon);
+        int maxZ = Mathf.CeilToInt((bounds.max.z + halfDepth) / cellSize - BoundaryEpsilon) - 1;
+
+        for (int x = minX; x <= maxX; x++)
+        {
+            for (int z = minZ; z <= maxZ; z++)
+            {
+                SetBlocked(new Vector2Int(x, z));
+            }
+        }
     }
 
     // Mirrors RoomController.BuildFloor's identical notch-void check - a cell inside the
     // notch has no floor at all, so it can never be walkable regardless of any obstacle.
-    private void MarkNotchCellsBlocked(RoomFootprint footprint, float tileSize)
+    private void MarkNotchCellsBlocked(RoomFootprint footprint, float cellSize)
     {
         if (!footprint.HasNotch)
         {
             return;
         }
 
-        int notchCellsX = Mathf.RoundToInt(footprint.NotchWidth / tileSize);
-        int notchCellsZ = Mathf.RoundToInt(footprint.NotchDepth / tileSize);
+        int notchCellsX = Mathf.RoundToInt(footprint.NotchWidth / cellSize);
+        int notchCellsZ = Mathf.RoundToInt(footprint.NotchDepth / cellSize);
         int signX = footprint.NotchSignX;
         int signZ = footprint.NotchSignZ;
 

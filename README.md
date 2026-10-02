@@ -72,12 +72,12 @@ RogueLike는 시드마다 다른 모양으로 이어지는 던전을 방 단위�
 ### 02. 뭉치지 않고 대형을 갖추는 적, 장애물을 우회하는 추격
 
 여러 적이 한 플레이어에게 몰릴 때 서로 밀치며 뭉개지지 않도록 근접/원거리 링에
-균등하게 자리를 배분하고, 시야가 장애물에 막히면 그리드 기반 경로탐색으로 우회해
-따라옵니다.
+균등하게 자리를 배분합니다. 추격 중에는 항상 경로탐색으로 장애물을 돌아오고,
+시야를 잃어도 일정 거리 안에 있으면 끝까지 쫓아옵니다.
 
 ![적 포메이션과 경로 우회](Docs/Images/enemy-formation.png)
 
-*여러 적이 원형으로 자리를 나눠 서고, 시야가 막힌 적은 장애물을 돌아서 추격합니다.*
+*여러 적이 원형으로 자리를 나눠 서고, 장애물에 가로막혀도 돌아서 끝까지 추격합니다.*
 
 ### 03. 준비 동작이 있는 보스의 돌진 공격 패턴
 
@@ -104,22 +104,24 @@ RogueLike는 시드마다 다른 모양으로 이어지는 던전을 방 단위�
 
 ### 그리드 기반 A* 경로탐색과 적 포메이션
 
-방/장애물 생성기가 이미 만들어둔 런타임 그리드를 그대로
-재사용하는 자체 A*를 적용했습니다. 시야가 막혔을 때만 경로탐색으로 전환하고
-확보되면 직선 추격으로 복귀하며, 여러 적이 한 대상에게 몰릴 때는 근접/원거리 링에
-매 프레임 균등하게 슬롯을 재분배해 뭉침을 방지합니다. 아직 미완성된 부분이라 특정 장애물이 있는 방에서는 경로 탐색 동작이 잘 되지 않아 확인 중에 있습니다.
+처음에는 방/장애물 생성기가 이미 만들어둔 4유닛 타일 그리드를 그대로 재사용하는
+자체 A*를 적용했었으나 적이 공격 위치처럼 1~2유닛 단위의 세밀한 목표로
+이동해야 할 때, 4유닛 칸으로는 위치를 정확히 맞출 수 없는 문제가 있었습니다.
+그래서 방 생성은 4유닛 타일을 그대로 쓰고, 경로탐색에 쓰는 그리드만 1유닛 칸으로
+잘게 나눈 뒤 실제 장애물의 크기를 그대로 반영하도록 바꿨습니다. 여러 적이 한
+대상에게 몰릴 때는 근접/원거리 링에 매 프레임 균등하게 슬롯을 재분배해 뭉침을
+방지합니다.
 
-- **살펴볼 부분:** 시야 차단 시에만 경로탐색으로 전환하는 조건, 슬롯 예약/해제(적이 링에 들어오고 빠질 때 자리를 배정·반납하는 처리)
-  생명주기
-- **관련 코드:** [RoomPathfindingGrid.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Room/RoomPathfindingGrid.cs) · [RoomAttackSlots.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Room/RoomAttackSlots.cs) · [RoomController.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Room/RoomController.cs)
+- **살펴볼 부분:** 장애물마다 실제로 차지하는 영역을 계산해 경로탐색 그리드의 막힌 칸으로 표시하는 방식, 시야를 잃었을 때 12유닛 기준으로 추격을 포기하는 조건, 슬롯 예약/해제(적이 링에 들어오고 빠질 때 자리를 배정·반납하는 처리)
+- **관련 코드:** [RoomPathfindingGrid.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Room/RoomPathfindingGrid.cs) · [RoomAttackSlots.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Room/RoomAttackSlots.cs) · [RoomController.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Room/RoomController.cs) · [EnemyChaseState.cs](https://github.com/highfive37/RogueLike/blob/main/Assets/Scripts/Enemy/EnemyChaseState.cs)
 
 ### 일반 적과 보스가 공유하는 FSM
 
 하나의 상태머신(Idle/Patrol/Chase/Attack/Stunned/Dead)을 일반 적 6종과 보스가
 함께 쓰고, 교체 가능한 공격 패턴으로 개체별 차이를 만들었습니다. 
 일반 적은 같은 상태머신 위에 패턴만 바꿔 끼워 근접으로 밀어붙이는 개체, 거리를
-벌리며 쏘는 개체, 한 번에 발사체를 3발 쏘는 개체, 한번 발견하면 방을 벗어날 때까지
-집요하게 쫓아오는 개체처럼 서로 다른 개체들을 만들어냈고,
+벌리며 쏘는 개체, 한 번에 발사체를 3발 쏘는 개체, 느리게 다가오지만 공격 주기가
+빠른 개체처럼 서로 다른 개체들을 만들어냈고,
 보스의 공격 패턴은 특별히 돌진 공격으로 돌진 내내 보스 캐릭터 앞에 유지되는 히트박스로 설계했고, 
 공격별로 다른 넉백 세기를 인터페이스 변경 없이 적용할 수 있게 만들었습니다.
 
@@ -208,7 +210,7 @@ AI와의 대화는 세션이 바뀌면 이전 판단 과정이 바로 보이지 
 
 - 세이브/로드(런 이어하기)
 - 리소스 교체 - 발사체, 드랍 아이템, 캐릭터 스탯 및 아이템 슬롯
-- 적 추적 기능 보완 작업 - 현재는 특정 장애물에서 길을 찾지 못하는 이슈가 있음
+
 ---
 
 <div align="center">

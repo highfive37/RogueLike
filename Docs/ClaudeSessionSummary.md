@@ -16,6 +16,11 @@
 반영. 다음 재작성은 구조가 다시 크게 바뀔 때(예: 세이브/로드 도입, 4층 이상
 확장 등).
 
+**부분 갱신: 2026-10-02** — 커밋 `775511c`(2026-09-30)의 적 경로탐색/추격 정책
+변경만 해당 항목에 반영(파인딩 그리드 1유닛 세분화, Chase 상태 항상 경로 추종,
+전 적 실시간 위치 추적 + 12유닛 포기 거리, 커넥터 길이 축소). 나머지 내용은
+2026-09-18 재작성 기준 그대로.
+
 ---
 
 ## 1. 프로젝트 목표
@@ -193,7 +198,7 @@ GitHub Actions(GameCI)가 매 push마다 두 스위트를 자동 실행. 순수 
 | 이동/조준 | `PlayerMovement`, `PlayerAim`, `PlayerDodgeRoll`(대시 = `linearVelocity` 구동, 대시 중 `Enemy` 레이어 관통 + 종료 시 보정), `WallClamp`(공용 벽 클램프), `InputBuffer`(쿨다운 입력 0.15초 버퍼링) | Rigidbody 기반 이동/회전/구르기. 모든 이동 명령 전 `WallClamp`로 벽 관통 방지 |
 | 전투(플레이어) | `PlayerCombat`+`IWeapon`(Melee/Ranged), `ActiveItemController`+`IActiveItem`(Grenade/EnhancedShot/Flamethrower), `PlayerHitReaction`(피격 시 방향성 넉백 + 0.4초 히트스턴 + 애니) | 기본 공격/액티브 아이템/피격 반응을 각각 다형성 구조로 분리 |
 | 비주얼/애니메이션 | `PlayerAnimationController`(상하체 레이어 분리, Avatar Mask), `EnemyAnimationController`(FSM 상태 전환에 맞춰 Animator 재생) | 프리미티브 → 실제 모델(Phase 4)로 교체 후 FSM/전투 상태와 Animator 상태를 동기화 |
-| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead, 모든 이동은 `MoveTo` 단일 초크포인트), `IAttackPattern`(Melee/Ranged/BurstRanged/`ChargeStrikePattern`+`EnemyChargeHitbox`), `RangedKitingBehavior`, `EnemyMovementFlavor`, `RoomPathfindingGrid`(시야 막히면 A*, 확보되면 직선 추격), `RoomAttackSlots`(근접/원거리 링으로 균등 분산 배치해 뭉침 방지) | 일반 적 6종(Melee/Ranged/ErraticMelee/BurstRanged/RelentlessMelee)과 보스가 같은 FSM 공유, 데이터/공격 패턴/포메이션으로 차별화 |
+| 적 AI | `EnemyStateMachine`(FSM: Idle→Patrol→Chase→Attack→Stunned/Dead, 모든 이동은 `MoveTo` 단일 초크포인트), `IAttackPattern`(Melee/Ranged/BurstRanged/`ChargeStrikePattern`+`EnemyChargeHitbox`), `RangedKitingBehavior`, `EnemyMovementFlavor`, `RoomPathfindingGrid`(1유닛 셀 그리드 A*, 실제 장애물 Bounds 기반 — Chase 중엔 시야와 무관하게 항상 경로 추종, 시야 O면 공격 슬롯·X면 플레이어 실시간 위치가 목표, 12유닛 넘게 멀어지면 포기), `RoomAttackSlots`(근접/원거리 링으로 균등 분산 배치해 뭉침 방지) | 일반 적 6종(Melee/Ranged/ErraticMelee/BurstRanged/RelentlessMelee)과 보스가 같은 FSM 공유, 데이터/공격 패턴/포메이션으로 차별화 (RelentlessMelee는 이동속도 -50%/공격 주기 -50% + 붉은 틴트) |
 | 적 스폰 | `EnemySpawner` | `EnemyVariantType` → `GameObjectPool` 매핑, 방 진입 시 `RoomData` 구성대로 스폰, 사망 시 `ItemDropManager` 드롭 트리거 |
 | 방/문 진행 | `StageManager`, `RoomController`(방 하나의 생명주기, 지오메트리/장애물/공격 슬롯 소유), `RoomFootprint`, `ObstaclePlacement`/`RoomObstacleSet`, `DoorController`, `RoomTransitionController` | 아이작 스타일 공간형 방/문 시스템, 멀티셀 병합 + 절차적 장애물 배치 |
 | 던전 생성 | `IFloorSource`(`ProceduralFloorSource`/`JsonFloorSource`), `ProceduralFloorGenerator`, `DeterministicRng`/`RngStreams`, `RunConfig`, `FloorGraph`(연결성 검증), `GameFloors` | 시드 기반 결정적 절차 생성이 기본, JSON은 디버그 모드. 손상 시 비상용 층 폴백 |
@@ -280,8 +285,19 @@ GitHub Actions(GameCI)가 매 push마다 두 스위트를 자동 실행. 순수 
 - **적 방 이탈 방지는 물리가 아니라 AABB 클램프**: `RoomController.
   ClampToInterior` — 물리 튜닝이나 "모든 이동 코드가 벽 체크를 기억"하는
   데 의존하지 않는 결정적 차단.
-- **NavMesh 대신 자체 그리드 A***: 방/장애물 생성기가 이미 만든 런타임
-  그리드(`RoomPathfindingGrid`)를 그대로 재사용할 수 있어서.
+- **NavMesh 대신 자체 그리드 A***: 처음엔 방/장애물 생성기가 이미 만든 4유닛
+  타일 그리드를 재사용할 수 있어서 채택. 2026-09-30에 그 해상도가 적의 미세 위치
+  목표보다 성긴 게 문제가 되어, 생성기는 4유닛 그대로 두고 파인딩만 1유닛 셀 +
+  실제 장애물 Bounds(이동 클램프와 같은 데이터) 기반으로 세분화. NavMesh 전환도
+  재검토했으나 런타임 베이크·인접 방 누수 등 범위가 커서 보류
+  (`AI_Decision_Log.md` 2026-09-30 (1)).
+- **시야를 잃은 적은 실시간 위치를 쫓되 거리로 포기**: 전 적이 플레이어의
+  실제 위치로 경로를 잡고 12유닛(`BlindChaseGiveUpRange`)을 넘으면 Patrol로
+  복귀 — 시간 기반 포기는 방마다 다른 우회 거리를 못 맞춰서 교체. 옛
+  "마지막 목격 지점 탐색" 로직은 휴면 보존(`AI_Decision_Log.md` 2026-09-30 (2)).
+- **얇은 벽(커넥터)은 타일 경계의 1/4만 차지**: 벽 하나가 경계 전체를 막으면
+  사방이 막힌 셀이 밀폐되므로, 길이를 파인 그리드 1칸(1유닛)으로 제한해 각
+  경계에 항상 틈이 남게 함(`AI_Decision_Log.md` 2026-09-30 (3)).
 - **Addressables는 도입하지 않음**: 런 전체가 하나의 게임플레이 씬에서
   절차적으로 방을 짓는 구조라 비동기 로딩 이득이 없음(검토 후 기각,
   `AI_Decision_Log.md` 2026-09-15 참고).

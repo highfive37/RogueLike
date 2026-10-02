@@ -30,6 +30,87 @@
 
 ---
 
+## 2026-09-30 (51)
+
+### 진행 내용
+- **출발점**: 실플레이에서 "ㄱ자/십자형 울타리 사이에 플레이어가 있으면 적이 못 찾고 벽만
+  비빈다"는 제보. 원인을 따라가다 파인딩 그리드 해상도·커넥터 지오메트리·추격 상태 로직
+  세 군데에 걸친 문제를 순차로 발견·수정 (커밋 `775511c`).
+- **Chase 상태 이동 통합**: 시야 확보 여부와 상관없이 항상 A* 경로(`NextWaypoint`)를
+  따라가도록 통합 - 시야가 열려 있을 땐 공격 슬롯을, 막혔을 땐 블라인드 타겟을 목표로
+  삼는 것만 다름. 시야 상태가 바뀌면 즉시 재경로(`_pathForClearLine`).
+- **파인딩 그리드 세분화 (`RoomPathfindingGrid` 재작성)**: `ObstaclePlacement` 기반으로
+  4유닛 타일 단위로 막던 방식을, 실제 장애물 `Bounds`(이동 클램프가 이미 쓰던 같은
+  데이터)를 1유닛 셀 그리드(`PathfindingCellSize = TileSize/4`)에 반영하는 방식으로 교체.
+  옛 십자 허브 보정용 `ResolveEffectiveCell`/엣지 차단(`_blockedEdges`)은 불필요해져 제거.
+  NavMesh 전환도 검토했으나 범위가 커서 보류 - 대안 비교는 `AI_Decision_Log.md` 참고.
+- **clearLine 디바운스(0.15초)**: 장애물 모서리 근처에서 시야가 매 틱 깜빡이면 공격 슬롯↔
+  블라인드 타겟으로 경로가 계속 갈아끼워지며 지그재그하던 문제 해결. 원시 clearLine은
+  "공격 사거리에서 정지" 판정에만 즉시 반영.
+- **FenceCrossHub 완전 밀폐 버그**: 4방향 "+" 울타리가 허브 셀을 사방에서 막아 도달 불가
+  공간을 만들던 문제가 실제 생성 패턴(weight 3)에서 발생 중이었음을 확인 →
+  `ObstaclePatterns.json`의 `FenceCrossHub`를 3방향(서쪽 팔 제거)으로 변경. (중간에
+  "커넥터를 이웃 셀 쪽으로 밀어넣으면 밀폐가 풀린다"고 판단했다가, 막히는 쪽만 바뀔 뿐
+  밀폐 자체는 그대로라는 걸 테스트로 확인하고 정정함.)
+- **커넥터(얇은 벽) 지오메트리 재설계 + 기존 버그 수정** (`RoomController.BuildObstacles`):
+  - 실제 `Block_Stone_Connector` 프리팹의 콜라이더를 직접 측정해보니, 파인딩/이동 클램프용
+    추상 `Bounds`의 두께·길이 축이 실제 프리팹과 뒤바뀌어 있었음 - 시야 판정(실제 콜라이더)은
+    맞았지만 이동 클램프·경로탐색은 보이는 벽과 90도 어긋난 박스를 막고 있었음. 축 정정.
+  - 벽 길이를 `TileSize`(4유닛, 경계 전체)에서 `ConnectorLength = PathfindingCellSize`
+    (1유닛)로 축소하고 비주얼 프리팹도 같은 비율로 스케일 - 한 경계선에서 파인 셀 1칸만
+    막고 3칸은 항상 열림. 2유닛도 시도했으나 실플레이에서 적이 잘 못 지나가 1유닛으로 되돌림.
+- **블라인드 추격 정책 통일** (`EnemyChaseState`): 기존엔 `RelentlessMelee`만
+  (`TracksLivePositionWhileBlind`) 시야를 잃어도 실시간 위치를 쫓고, 나머지는 마지막 목격
+  지점 체크포인트를 돌다 `searchDuration` 후 포기했음. 실플레이에서 `EnemyBasicData`
+  (moveSpeed 1.5, searchDuration 4)가 ㄱ자 코너 우회 경로(약 14유닛)를 절반도 못 가고
+  포기하는 걸 확인 → 모든 적이 실시간 위치를 쫓되, 거리가 `BlindChaseGiveUpRange`(12유닛)를
+  넘으면 Patrol로 포기하도록 통일. 기존 체크포인트 탐색 로직은 `SearchNearLastKnownPosition`
+  으로 분리해 휴면 상태로 보존(호출처 없음, 주석 명시).
+  - 구현 중 버그: give-up 조건만 바꾸고 `CurrentTarget()`은 여전히 플래그로 분기해서 일반
+    적이 blind 상태에서 마지막 목격 위치만 쫓고 있었음 → 테스트로 재현 후 수정.
+- **RelentlessMelee 트레이드오프**: 이동속도 4.5→2.25(-50%), 공격 주기 단축(신규
+  `MeleeAttack_Relentless.asset`: cooldown 1→0.5, windUp 0.35→0.175). 다른 근접 적과
+  구분되도록 `Enemy_RelentlessMelee.prefab` 머티리얼을 붉은 톤 변형 4종
+  (`Assets/Materials/Enemy_RelentlessMelee/`)으로 교체 - 공유 FBX/`Enemy_Basic`은 안 건드림.
+- **테스트 갱신**: `RoomPathfindingGridTests`(Bounds 입력으로 재작성 + 얇은 장애물 정밀도
+  테스트 추가), `EnemyChasePathfindingTests`/`EnemyChaseSearchTests`(1유닛 그리드의
+  `WorldToCell` 반올림 경계(.5) 좌표 회피, 도달 불가능해진 체크포인트/허브 시나리오 테스트
+  제거·재작성, `Chase_PlayerBeyondBlindChaseGiveUpRange_GivesUpToPatrol` 신규),
+  `TestHelpers`(장애물이 있으면 `RoomObstacleSet` 자동 생성 - 파인딩이 이제 실제 Bounds를
+  읽기 때문).
+
+### 테스트 결과
+- [x] EditMode 142/142, PlayMode 51/51 (Unity Test Runner, 최종 커밋 직전 기준)
+- [x] Play Mode 라이브 진단: ㄱ자 코너에서 `Room.FindPath`가 정상 우회 경로(15 웨이포인트)를
+  반환하는데 적은 Idle 상태 - 파인딩이 아니라 searchDuration 포기가 원인임을 확인
+- [x] 커넥터 길이 1유닛 - 유저 실플레이에서 적이 울타리를 잘 돌아 넘어옴 확인
+- [x] 커넥터 길이 2유닛 - 유저 실플레이에서 적이 잘 못 지나감 → 1유닛으로 원복
+- [x] 커넥터 실제 콜라이더 크기(1×4×1)와 추상 Bounds 일치 - RunCommand로 실측
+- [ ] RelentlessMelee 붉은 틴트 - 프리팹 슬롯 교체만 확인, 확인 시점에 해당 적이 씬에 없어
+  실제 화면으로는 미확인
+- [ ] `BlindChaseGiveUpRange`(12유닛) 포기 동작 - 테스트로만 검증, 실플레이 미확인
+
+### 이슈/메모
+- **2유닛 커넥터에서 막힌 원인은 미확정**. 유력한 추정: 파인딩은 벽의 원래 Bounds만 보고
+  셀을 "열림"으로 판단하는데 이동 클램프는 몸통 반지름(0.5)만큼 부풀린 영역을 막아서, 틈이
+  좁아지면 경로는 있는데 클램프에 밀리는 불일치가 생김. 1유닛에선 틈이 3유닛이라 여유가 있음.
+- `FenceCrossHub`는 커넥터 길이 축소만으로도 밀폐가 구조적으로 불가능해져서 원래 4방향
+  "+"로 되돌려도 됨 - 되돌릴지는 아직 미정(현재 3방향 유지).
+- `EnemyPatrolState.Enter()`의 시드 없는 `Random.insideUnitCircle` 때문에 "Chase→Patrol 포기"를
+  확인하는 테스트가 가끔 Idle로 관측되는 플레이키함 확인 - 테스트는 Patrol/Idle 둘 다 허용하도록
+  처리, Patrol 쪽 근본 수정은 안 함.
+- `EnemyRelentlessMeleeData`의 `searchDuration=300`/`tracksLivePositionWhileBlind=true`는 이제
+  읽히지 않는 값(휴면 로직 전용). `leashRange=200`은 시야 확보 상태의 leash 판정에 여전히 쓰임.
+- 파인딩 셀 수가 약 16배로 늘었는데 A* open list가 선형 탐색이라, 벤치마크로 비용 재확인 필요.
+
+### 다음 작업
+- RelentlessMelee 틴트와 12유닛 포기 거리 실플레이 확인
+- `FenceCrossHub`를 4방향으로 되돌릴지 결정
+- 파인딩 세분화 이후 A* 비용 벤치마크 재측정
+- README/PortfolioDetail의 경로탐색 서술(그리드 A*, 시야 막힐 때만 A*)을 현재 구조로 갱신
+
+---
+
 ## 2026-09-17 (50)
 
 ### 진행 내용
